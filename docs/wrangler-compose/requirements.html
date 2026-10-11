@@ -172,7 +172,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
-  <li>実際の名前は既定では道具が環境の名前を付けて決め(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;名前&gt;</code>)、<code>name</code> に書けばそれを使う</li>
+  <li>実際の名前は既定では道具が環境の名前を付けて決め(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、複数形は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;-&lt;名前&gt;</code>)、<code>name</code> に書けばそれを使う</li>
   <li>D1・R2・KV・Queue は、1 つのサービスに複数を名前つきで定義できる。1 つなら省略形で書いてよく、そのときの名前はサービスの名前から決まる</li>
   <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルにバケットごとに書き、手元にもリモートにも同じに入れる</li>
   <li><code>down</code> はデータを残し、データは <code>--purge</code> のときだけ消す。手元の <code>--purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
@@ -216,7 +216,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 </table>
 <ul>
   <li><strong>省略形と複数形</strong>: <code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code> は、1 つのサービスに資源を複数定義できる(複数形。<code>buckets</code>・<code>databases</code>・<code>namespaces</code>・<code>queues</code> の下に名前を付けて並べる)。1 つだけなら、サービスそのものを 1 つの資源として書いてよい(省略形。資源の名前はサービスの名前)。1 つのサービスで両方は書けない</li>
-  <li>資源の名前(省略形ならサービスの名前、複数形なら並べた名前)は、同じ型の中でプロジェクト全体で重ならない。英小文字・数字・<code>-</code> だけ</li>
+  <li>複数形で並べる名前は、そのサービスの中で重ならなければよい(サービスの名前はプロジェクトの中で重ならないので、<code>&lt;サービス&gt;.&lt;名前&gt;</code> の組で必ず 1 つに決まる)。英小文字・数字・<code>-</code> だけ</li>
   <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
   <li>R2 のバケットのキーは、本物の R2 のバケットの設定と同じ意味を持つ: <code>public</code>(公開の URL で配る)・<code>cors</code>(CORS の決まり)・<code>lifecycle</code>(期限で消す・保管の種類を変える)・<code>notifications</code>(変化を同じプロジェクトの Queue へ送る)・<code>lock</code>(消せない期間)・<code>storage_class</code>(保管の種類)・<code>jurisdiction</code>(置き場の管轄)。どれも手元でも同じに効く(REQ-009)</li>
   <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_date</code>・<code>compatibility_flags</code> は Workers の互換の指定</li>
@@ -253,9 +253,10 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-006"><span class="id">REQ-006</span>環境</h3>
 <ul>
   <li>環境は <code>--env</code> で選ぶ。<code>local</code> は手元、それ以外はリモート(名前は自由。<code>pr-123</code> のように並べて建てられる)</li>
-  <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>(例: <code>shop-staging-files</code>)。同じアカウントに環境を並べても名前がぶつからない(利用者の決定)</li>
+  <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>。資源の名前は、省略形はサービスの名前、複数形は <code>&lt;サービス&gt;-&lt;名前&gt;</code>(例: 省略形の <code>cache</code> は <code>shop-staging-cache</code>、<code>storage</code> の <code>files</code> は <code>shop-staging-storage-files</code>)。同じアカウントに環境を並べても名前がぶつからない(利用者の決定)</li>
+  <li>決めた名前が Cloudflare の名前の決まり(長さなど)に合わなければ、何もせずに止まり、<code>name</code> で短い名前を書くよう示す</li>
   <li><code>name</code> を書けば、その名前を使う(既存のものを使う、環境ごとに <code>${VAR}</code> で変えるなど)。同じ名前のものがすでにあれば、それを使う(作り直さない)</li>
-  <li>手元では、資源の名前(<code>files</code> など)をそのまま使う</li>
+  <li>手元では、資源の名前(<code>cache</code>・<code>storage-files</code> など)をそのまま使う</li>
   <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
   <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
 </ul>

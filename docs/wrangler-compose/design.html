@@ -85,7 +85,7 @@
 
 <h3 id="des-004"><span class="id">DES-004</span>実際の名前と見つけ直し <span class="refs">REQ-006</span></h3>
 <ul>
-  <li>実際の名前は、<code>name</code>、無ければ Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>。手元では資源の名前のまま。Cloudflare の名前の決まりに合わなければ止まる</li>
+  <li>実際の名前は、<code>name</code>、無ければ Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>(資源の名前は、省略形はサービスの名前、複数形は <code>&lt;サービス&gt;-&lt;名前&gt;</code>)。手元では資源の名前のまま。Cloudflare の名前の決まりに合わなければ止まる</li>
   <li>ID の記録(<code>.wrangler/compose/&lt;環境&gt;/resources.json</code>)は写しにすぎない。<code>up</code> のたびに名前で Cloudflare を引き直す(<code>d1 list</code>・<code>kv namespace list</code>・<code>r2 bucket list</code>・<code>queues list</code>)ので、記録を失っても別の PC からでも同じものにつながる。無ければ作り、あれば使う</li>
   <li>初めての環境かは、その環境の名前の Worker か資源が Cloudflare にあるかで見る(REQ-015)</li>
 </ul>
