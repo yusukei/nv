@@ -52,6 +52,7 @@
   <tr><td>設定は <code>require("wrangler").unstable_readConfig({ env })</code> で、環境を当てはめた値(Worker 名・D1・R2・ルート・Cron・Durable Objects・ビルドのコマンド)が読める。環境の一覧は <code>experimental_readRawConfig</code> の <code>env</code></td><td>marche-ar の <code>workers/delivery/wrangler.jsonc</code> で実測</td></tr>
   <tr><td>D1 の書き出しは、表の作りと中身と、移行の履歴の表 <code>d1_migrations</code> を含む。D1 の内部の表 <code>_cf_METADATA</code>・<code>sqlite_sequence</code> は表を消しても残る</td><td>手元の D1 で実測(<code>--local</code>)</td></tr>
   <tr><td>表をすべて消した D1 に書き出しの SQL を流し、移行を適用すると、控えのあとに足した移行だけが当たる</td><td>手元の D1 で実測(<code>--local</code>)</td></tr>
+  <tr><td>Cloudflare の側の D1 の書き出し(<code>--remote</code>)も <code>d1_migrations</code> を含み、<code>restore --drop</code> のあと控えのあとの移行だけが当たる</td><td>testing 環境で実測(wrangler-compose 0.1.0)</td></tr>
   <tr><td>D1 の書き出しの間、その D1 は問い合わせに応えない</td><td><code>d1 export</code> の注意文</td></tr>
   <tr><td>R2 の S3 API の口は <code>https://&lt;アカウント ID&gt;.r2.cloudflarestorage.com</code>、管轄のあるバケットは <code>https://&lt;アカウント ID&gt;.&lt;管轄&gt;.r2.cloudflarestorage.com</code>。署名の地域は <code>auto</code>。ListObjectsV2・DeleteObjects・GetObject・PutObject を受ける</td><td><a href="https://developers.cloudflare.com/r2/api/s3/api/">R2 S3 API</a>・<a href="https://developers.cloudflare.com/r2/reference/data-location/">Data location</a></td></tr>
   <tr><td><code>wrangler whoami --json</code> はログインしたアカウントを <code>accounts</code> の配列で返し、ログインしていなければ 0 以外で終わる</td><td><code>whoami</code> の実装</td></tr>
@@ -130,6 +131,7 @@
 </ul>
 
 <h3 id="des-009"><span class="id">DES-009</span>down <span class="refs">REQ-005</span></h3>
+<p>Worker があるかは、<code>wrangler secret list</code>(読み取り)の結果で見る。Wrangler に「あるか」を問う口が無く、無い Worker には「not found」で失敗するため(testing 環境での dry-run で確認)。無ければ、消すものは無いと示して終わる。</p>
 <ol>
   <li>消えるものを示す: Worker 名、シークレットの名前(<code>wrangler secret list</code>)、設定のルート・カスタムドメイン・Cron・Durable Objects</li>
   <li>打ち直しの確かめ(DES-008)</li>
@@ -150,8 +152,9 @@
   <li>API キーを確かめ(DES-010)、各バケットのオブジェクトの数を数える</li>
   <li>消すものを示す(DES-009 の 1 に加えて、D1 の名前、バケットの名前とオブジェクトの数、<code>database_id</code> を書いた D1 は次の <code>up</code> で作られないこと)</li>
   <li>打ち直しの確かめ</li>
-  <li>Worker を消す → 各バケットのオブジェクトを消してバケットを消す(<code>wrangler r2 bucket delete</code>) → 各 D1 を消す(<code>wrangler d1 delete -y</code>)。Worker を先に消すのは、消している途中のデータを人に見せないため</li>
+  <li>Worker を消す(すでに無ければ飛ばす。<code>down</code> のあとの <code>--purge</code>) → 各バケットのオブジェクトを消してバケットを消す(<code>wrangler r2 bucket delete</code>) → 各 D1 を消す(<code>wrangler d1 delete -y</code>)。Worker を先に消すのは、消している途中のデータを人に見せないため</li>
   <li>途中で止まったら、消し終えたものと残っているものを並べて示す</li>
+  <li>すでに無いバケット・D1(途中で止まった前回の <code>--purge</code> で消えたもの)は飛ばして、残りを消す。打ち直せば最後まで消せる。何も残っていなければ、そう示して終わる(testing 環境で確認)</li>
 </ol>
 
 <h3 id="des-012"><span class="id">DES-012</span>backup <span class="refs">REQ-007</span></h3>
@@ -211,8 +214,6 @@
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
-  <li>Cloudflare の側の D1 の書き出し(<code>--remote</code>)が、手元と同じく <code>d1_migrations</code> を含むこと(手元の D1 でだけ確かめた)</li>
-  <li>一度 <code>down</code> した(Worker の無い)環境で <code>down --purge</code> を打ったとき、<code>wrangler delete</code> が失敗してデータの消去へ進めない恐れ(Cloudflare の応答を見て、Worker が無いなら削除を飛ばす形に直す)</li>
   <li>Cloudflare の側の D1 で、外部キーのある表を <code>defer_foreign_keys</code> を付けて消せること</li>
   <li>R2 の PutObject の 1 回の上限を超える大きなオブジェクト(分割アップロードが要るもの)。当面は上限を超えるものがあれば restore の前に止める</li>
 </ul>

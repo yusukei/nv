@@ -228,6 +228,27 @@ impl Project {
         Ok(())
     }
 
+    /// Whether the Worker of this environment exists on Cloudflare. Wrangler
+    /// has no "exists" query, so this lists its secrets (read-only) and reads
+    /// Wrangler's "not found" answer (DES-009).
+    pub fn worker_exists(&self) -> Result<bool> {
+        let mut cmd = self.wrangler_cmd(["secret", "list", "--format", "json"]);
+        let shown = describe(&cmd);
+        let out = cmd
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .with_context(|| format!("cannot start {shown}"))?;
+        if out.status.success() {
+            return Ok(true);
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("not found") {
+            return Ok(false);
+        }
+        bail!("`{shown}` failed ({}): {}", out.status, err.trim());
+    }
+
     /// Run Wrangler and parse the JSON it prints on stdout.
     pub fn wrangler_json<I, S>(&self, args: I) -> Result<Value>
     where

@@ -147,7 +147,9 @@ fn plan(
     }
     eprintln!("  checking that {} builds:", project.config.worker);
     build(project)?;
+    // A Worker that was never deployed has no secrets to compare with.
     if let Some(s) = secrets
+        && project.worker_exists()?
         && let Err(e) = report_leftover_secrets(project, s)
     {
         eprintln!("wrangler-compose: note: could not list the Worker's secrets: {e:#}");

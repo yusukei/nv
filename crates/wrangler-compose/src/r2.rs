@@ -109,6 +109,18 @@ pub struct Object {
     pub size: u64,
 }
 
+/// R2 answered 404 for the bucket.
+#[derive(Debug)]
+pub struct NoSuchBucket(pub String);
+
+impl std::fmt::Display for NoSuchBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "R2 bucket {} does not exist", self.0)
+    }
+}
+
+impl std::error::Error for NoSuchBucket {}
+
 /// A downloaded object: its hash, the headers worth keeping and its user metadata.
 pub struct Downloaded {
     pub sha256: String,
@@ -160,7 +172,7 @@ impl Store {
                 "the R2 API keys were refused for bucket {} ({status})",
                 self.bucket_name
             ),
-            404 => bail!("R2 bucket {} does not exist", self.bucket_name),
+            404 => return Err(NoSuchBucket(self.bucket_name.clone()).into()),
             _ => bail!(
                 "listing R2 bucket {} failed ({status}): {}",
                 self.bucket_name,
@@ -184,6 +196,15 @@ impl Store {
     pub fn check_access(&self) -> Result<bool> {
         let (objects, _) = self.list_page(None, Some(1))?;
         Ok(!objects.is_empty())
+    }
+
+    /// Whether the bucket exists; errors still mean "keys refused" and the like.
+    pub fn exists(&self) -> Result<bool> {
+        match self.list_page(None, Some(1)) {
+            Ok(_) => Ok(true),
+            Err(e) if e.downcast_ref::<NoSuchBucket>().is_some() => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn list_all(&self) -> Result<Vec<Object>> {

@@ -20,8 +20,15 @@ fn secret_names(project: &Project) -> Vec<String> {
         .collect()
 }
 
-fn show_worker_losses(project: &Project) {
+fn show_worker_losses(project: &Project, exists: bool) {
     let c = &project.config;
+    if !exists {
+        eprintln!(
+            "  Worker:          {} does not exist (nothing to delete)",
+            c.worker
+        );
+        return;
+    }
     eprintln!("  Worker:          {}", c.worker);
     let secrets = secret_names(project);
     let list = |v: &[String]| {
@@ -49,10 +56,20 @@ pub fn down(project: &Project) -> Result<()> {
         confirm::require_terminal("down")?;
     }
     interrupt::check()?;
+    if !project.worker_exists()? {
+        eprintln!(
+            "wrangler-compose: Worker {} does not exist in {env}; nothing to delete",
+            project.config.worker
+        );
+        if project.dry_run {
+            dry_run_done();
+        }
+        return Ok(());
+    }
     eprintln!(
         "wrangler-compose: `down` deletes the Worker and everything below. D1 and R2 data are kept."
     );
-    show_worker_losses(project);
+    show_worker_losses(project, true);
     if project.dry_run {
         dry_run_done();
         return Ok(());
@@ -78,27 +95,43 @@ pub fn purge(project: &Project) -> Result<()> {
     read_env_file(project)?;
 
     // Keys first: without working keys nothing at all is deleted (REQ-006).
+    // Buckets that are already gone (an earlier, interrupted purge) are
+    // skipped, so purge can be run again to finish the rest.
     let mut stores = Vec::new();
+    let mut missing_buckets = Vec::new();
     if !project.config.r2.is_empty() {
         let creds = r2::credentials(project)
             .ok_or_else(|| anyhow!("{}; nothing was deleted", r2::missing_keys_message()))?;
         let account = r2::account_id(project)?;
         for b in &project.config.r2 {
             let store = Store::new(&account, b, &creds)?;
-            store
-                .check_access()
+            let exists = store
+                .exists()
                 .map_err(|e| anyhow!("{e:#}; nothing was deleted"))?;
-            stores.push(store);
+            if exists {
+                stores.push((store, b));
+            } else {
+                missing_buckets.push(b);
+            }
         }
     }
     let mut counts = Vec::new();
-    for s in &stores {
+    for (s, _) in &stores {
         counts.push(s.list_all()?.len());
     }
 
+    let worker_exists = project.worker_exists()?;
+    let remote = d1::remote(project)?;
     eprintln!("wrangler-compose: `down --purge` deletes the Worker AND its data:");
-    show_worker_losses(project);
+    show_worker_losses(project, worker_exists);
     for d in &project.config.d1 {
+        if !d1::exists(d, &remote) {
+            eprintln!(
+                "  D1 database:     {} ({}) does not exist",
+                d.name, d.binding
+            );
+            continue;
+        }
         eprintln!("  D1 database:     {} ({})", d.name, d.binding);
         if d.id.is_some() {
             eprintln!(
@@ -106,11 +139,25 @@ pub fn purge(project: &Project) -> Result<()> {
             );
         }
     }
-    for (s, n) in stores.iter().zip(&counts) {
+    for ((s, _), n) in stores.iter().zip(&counts) {
         eprintln!(
             "  R2 bucket:       {} ({}), {n} objects",
             s.bucket_name, s.binding
         );
+    }
+    for b in &missing_buckets {
+        eprintln!(
+            "  R2 bucket:       {} ({}) does not exist",
+            b.bucket, b.binding
+        );
+    }
+    let any_d1 = project.config.d1.iter().any(|d| d1::exists(d, &remote));
+    if !worker_exists && stores.is_empty() && !any_d1 {
+        eprintln!("wrangler-compose: nothing of {env} is left to delete");
+        if project.dry_run {
+            dry_run_done();
+        }
+        return Ok(());
     }
     if project.dry_run {
         dry_run_done();
@@ -120,9 +167,12 @@ pub fn purge(project: &Project) -> Result<()> {
 
     let mut done: Vec<String> = Vec::new();
     let result = (|| -> Result<()> {
-        project.wrangler_interactive(["delete"])?;
-        done.push(format!("Worker {}", project.config.worker));
-        for (s, b) in stores.iter().zip(&project.config.r2) {
+        // After `down` the Worker is already gone; go straight to the data.
+        if worker_exists {
+            project.wrangler_interactive(["delete"])?;
+            done.push(format!("Worker {}", project.config.worker));
+        }
+        for (s, b) in &stores {
             let mut n = 0;
             if let Err(e) = s.delete_all(&mut n) {
                 if n > 0 {
