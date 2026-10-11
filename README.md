@@ -5,7 +5,7 @@ Node・npm を uv のように扱う `nv` と、Cloudflare Workers の環境を 
 | コマンド | 受け持つもの | 持たないもの | 要求仕様 |
 |---|---|---|---|
 | `nv` | Node・npm を uv のように扱う(Node の版の固定と取得、`sync`・`run`・`x`、スキル、`self update`) | Cloudflare に触れること・Wrangler を動かすこと | [docs/nv](docs/nv/requirements.html) |
-| `wrangler-compose` | Wrangler を docker compose のように扱う(`--env <環境名> up / build / down [--purge] / backup / restore`) | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements.html) |
+| `wrangler-compose` | 手元で開発した Workers のサービス群を docker compose のように動かし、リモートへ展開する(`--env <環境名> up / build / down [--purge] / ps / logs / backup / restore`) | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements.html) |
 
 ## 2 つの境目
 
@@ -70,19 +70,22 @@ nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ�
 
 ## wrangler-compose の使い方
 
-nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`)。
+nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`、4.149.0 以上)。
+
+プロジェクトの一番上に `wrangler-compose.yaml` を 1 つ置き、docker compose と同じ形でサービス(`type: worker / d1 / r2 / kv / queue`)を並べる。環境ごとの違いは `${変数}` だけで書き、値は環境変数か `.env.<環境名>`(git に入れない)から入る。例は [tests/fixture](crates/wrangler-compose/tests/fixture/wrangler-compose.yaml)。
 
 ```bash
-wrangler-compose --env staging --dry-run up   # 何も変えずに、何をするかを示す(どの操作にも付く)
-wrangler-compose --env staging build      # 組むだけ(何も上げない)
-wrangler-compose --env staging up         # D1 の移行 → デプロイ(初回も更新も)
-wrangler-compose --env staging backup     # D1・R2 を backups/staging/<日時>/ へ
-wrangler-compose --env staging restore --drop backups/staging/<日時>
-wrangler-compose --env staging down       # Worker だけ消す(データは残る)
-wrangler-compose --env staging down --purge
+wrangler-compose --env local up           # 手元で全サービスを起動(ソースを直すと組み直す。Ctrl-C で止める)
+wrangler-compose --env local ps           # 動いているか・URL・未適用の D1 移行
+wrangler-compose --env local logs -f api  # サービス名つきのログ
+wrangler-compose --env local backup       # D1・R2・KV を backups/local/<日時>/ へ
+wrangler-compose --env local restore --drop backups/local/<日時>
+wrangler-compose --env local down         # 止める(データは残る)
+wrangler-compose --env local down --purge # データも消す
+wrangler-compose --env local --dry-run up # 何も変えずに、何をするかを示す(どの操作にも付く)
 ```
 
-シークレットは `.env.<環境名>` に書く(git に入れない)。R2 を扱う `--purge`・`backup`・`restore` には、同じファイルに `WRANGLER_COMPOSE_R2_ACCESS_KEY_ID`・`WRANGLER_COMPOSE_R2_SECRET_ACCESS_KEY` が要る。
+今動くのは `--env local`(手元)だけ。リモートの環境への展開はこれから作る。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
 
 ## 進め方
 
