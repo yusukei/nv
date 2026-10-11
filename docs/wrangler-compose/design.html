@@ -116,7 +116,7 @@
 <ul>
   <li>すべての Worker(利用者のものと道具のサービス)を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;Worker&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同時の書き込みで壊れない</li>
   <li>入口は道具のサービス(DES-011)で、<code>ports</code> を持つ Worker へのつながりを持ち、要求の URL のポートで振り分ける。道具は <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(WebSocket もそのまま通る)</li>
-  <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)</li>
+  <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)。<code>ports</code> のある r2 のサービスのバケットには、Worker のポートの S3 互換の口は答えない(404。本番の Worker のアドレスにも S3 の口は無い)ので、<code>cors</code> を飛ばして届くことは無い。そのため Worker のポートは 1 つの接続に 1 つの要求(<code>Connection: close</code>)で受け、要求ごとに行き先を確かめる。WebSocket などの upgrade はそのまま通す</li>
   <li><strong>ログ</strong>: 手元では、Worker のログにどの Worker のものかが付かない(実測)。そこで道具がサービスごとに小さな tail の受け手(<code>wc-logs-&lt;サービス&gt;</code>)を置き、受け手が届いたログにサービス名を付けて出す。道具は Wrangler 自身の行(起動・再読み込み・エラー)と受け手の行だけを画面と <code>.wrangler/compose/local/logs/up.log</code> に出し、名前の付かない生の行は出さない</li>
   <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る</li>
   <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。git の外)</li>
@@ -160,7 +160,7 @@
 <ul>
   <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる</li>
   <li>消す前の数え(表・オブジェクト・キーの数)もデータのサービスと Wrangler で行う。打ち直しは 0.1 系のものを引き継ぐ</li>
-  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す</li>
+  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す。サービスを名前で指すと、そのサービスの資源とつなぐ資源(Durable Object の保存先を含む)だけを空にし、名前に無い Worker もつながる資源があれば、何も止めず何も消さずに止まる</li>
 </ul>
 
 <h3 id="des-013"><span class="id">DES-013</span>ps・logs <span class="refs">REQ-012</span></h3>
@@ -202,6 +202,7 @@
 <h3 id="des-019"><span class="id">DES-019</span>手元の R2 の口 <span class="refs">REQ-009</span></h3>
 <ul>
   <li>手元の模擬の S3 互換の口は、バケットの CORS の設定によらず、すべての送り元を許す(実測)。そのままでは手元で通って本番で失敗するので、<code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受ける</li>
+  <li><strong>キーの渡し方</strong>: 公開の URL のキーも、データのサービスへ渡すキーも、パスではなく問い合わせ(<code>?key=</code>)に入れる。キーの <code>.</code> や <code>..</code> がパスの段として読まれて、バケットの外やほかの資源に届くことは無い。メタデータは百分率符号化して見出しで渡す(日本語も落ちない)。控えの目録が指すファイルは控えのフォルダの中だけで、外を指す目録は何もせずに止まる</li>
   <li><strong>S3 互換の口</strong>(<code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code>): ブラウザの事前確認(<code>OPTIONS</code>)には、道具が compose ファイルの <code>cors</code> どおりに答える(合わなければ 403)。ほかの要求は、見出しを変えずに(署名がそのまま通る)入口の内側のポートの手元の模擬へ渡し、答えの CORS の見出しを捨てて <code>cors</code> どおりに付け直す。送り元の決まりは R2 と同じ(送り元に <code>*</code> を 1 つ書ける)</li>
   <li><strong>公開の URL</strong>: <code>Host</code> が <code>&lt;バケット名&gt;.localhost</code> の要求は、<code>public: true</code> のバケットだけ、データのサービスから中身を取って配る(内容の種類などの見出しを付ける)。範囲指定の取得(<code>Range</code>)と <code>ETag</code> には答えない</li>
   <li>1 つの接続で 1 つの要求だけを受け、答えたら閉じる(<code>Connection: close</code>)。HTTP の読み取りを見出しだけにするため</li>

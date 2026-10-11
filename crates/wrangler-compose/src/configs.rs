@@ -364,8 +364,12 @@ export default {
     if (!env.WC_TOKEN || !same(auth, `Bearer ${env.WC_TOKEN}`)) return new Response(null, { status: 404 });
     const url = new URL(request.url);
     if (url.pathname === "/__wc/notify/tick") return json({ sent: await tick(env) });
-    const [, , kind, key, op, ...rest] = url.pathname.split("/");
-    const name = decodeURIComponent(rest.join("/"));
+    // The object or value key travels in the query, never in the path, so
+    // no "." or ".." in it can be read as a path step.
+    const [, , kind, key, op] = url.pathname.split("/");
+    const name = url.searchParams.get("key");
+    const meta = () => JSON.parse(decodeURIComponent(request.headers.get("x-wc-meta") || "") || "{}");
+    const sendMeta = (m) => ({ "x-wc-meta": encodeURIComponent(JSON.stringify(m)) });
     const binding = env.WC_MAP[kind] && env.WC_MAP[kind][key];
     if (!binding) return json({ error: `no ${kind} ${key}` }, 404);
     const b = env[binding];
@@ -386,6 +390,7 @@ export default {
           return json({ ok: true });
         }
       }
+      if ((op === "object" || op === "value") && name === null) return json({ error: "no key" }, 400);
       if (kind === "r2") {
         if (op === "list") {
           const r = await b.list({ cursor: url.searchParams.get("cursor") || undefined, include: ["httpMetadata", "customMetadata"] });
@@ -397,11 +402,11 @@ export default {
         if (op === "object" && request.method === "GET") {
           const o = await b.get(name);
           if (!o) return json({ error: "not found" }, 404);
-          return new Response(o.body, { headers: { "x-wc-meta": JSON.stringify({ http: o.httpMetadata || {}, custom: o.customMetadata || {} }) } });
+          return new Response(o.body, { headers: sendMeta({ http: o.httpMetadata || {}, custom: o.customMetadata || {} }) });
         }
         if (op === "object" && request.method === "PUT") {
-          const meta = JSON.parse(request.headers.get("x-wc-meta") || "{}");
-          await b.put(name, request.body, { httpMetadata: meta.http, customMetadata: meta.custom });
+          const m = meta();
+          await b.put(name, request.body, { httpMetadata: m.http, customMetadata: m.custom });
           return json({ ok: true });
         }
         if (op === "delete") {
@@ -418,13 +423,13 @@ export default {
         if (op === "value" && request.method === "GET") {
           const r = await b.getWithMetadata(name, { type: "arrayBuffer" });
           if (r.value === null) return json({ error: "not found" }, 404);
-          return new Response(r.value, { headers: { "x-wc-meta": JSON.stringify({ metadata: r.metadata }) } });
+          return new Response(r.value, { headers: sendMeta({ metadata: r.metadata }) });
         }
         if (op === "value" && request.method === "PUT") {
-          const meta = JSON.parse(request.headers.get("x-wc-meta") || "{}");
+          const m = meta();
           const opts = {};
-          if (meta.metadata != null) opts.metadata = meta.metadata;
-          if (meta.expiration) opts.expiration = meta.expiration;
+          if (m.metadata != null) opts.metadata = m.metadata;
+          if (m.expiration) opts.expiration = m.expiration;
           await b.put(name, await request.arrayBuffer(), opts);
           return json({ ok: true });
         }

@@ -12,8 +12,9 @@ use crate::files::hex;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -162,7 +163,7 @@ impl Client {
     pub fn r2_get(&self, bucket: &str, key: &str, dest: &Path) -> Result<(String, u64, Value)> {
         let res = self
             .agent
-            .get(self.url(&format!("r2/{bucket}/object/{}", enc(key))))
+            .get(self.url(&format!("r2/{bucket}/object?key={}", enc(key))))
             .header("authorization", format!("Bearer {}", self.token))
             .call()?;
         if res.status().as_u16() != 200 {
@@ -171,12 +172,7 @@ impl Client {
                 "cannot read {key} from {bucket}"
             ));
         }
-        let meta: Value = res
-            .headers()
-            .get("x-wc-meta")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(Value::Null);
+        let meta = meta_of(res.headers())?;
         let mut reader = res.into_body().into_reader();
         let (hash, size) = copy_hashing(&mut reader, dest)?;
         Ok((hash, size, meta))
@@ -188,10 +184,10 @@ impl Client {
         let len = file.metadata()?.len();
         let mut res = self
             .agent
-            .put(self.url(&format!("r2/{bucket}/object/{}", enc(key))))
+            .put(self.url(&format!("r2/{bucket}/object?key={}", enc(key))))
             .header("authorization", format!("Bearer {}", self.token))
             .header("content-length", len.to_string())
-            .header("x-wc-meta", meta.to_string())
+            .header("x-wc-meta", enc(&meta.to_string()))
             .send(ureq::SendBody::from_reader(&mut BufReader::new(file)))?;
         if res.status().as_u16() != 200 {
             let t = res.body_mut().read_to_string().unwrap_or_default();
@@ -222,18 +218,18 @@ impl Client {
     pub fn kv_get(&self, ns: &str, key: &str) -> Result<Option<(Vec<u8>, Value)>> {
         let res = self
             .agent
-            .get(self.url(&format!("kv/{ns}/value/{}", enc(key))))
+            .get(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
             .header("authorization", format!("Bearer {}", self.token))
             .call()?;
-        if res.status().as_u16() == 404 {
-            return Ok(None);
+        match res.status().as_u16() {
+            200 => {}
+            404 => return Ok(None),
+            _ => bail!(crate::tr!(
+                "{ns} の {key} を読めません",
+                "cannot read {key} from {ns}"
+            )),
         }
-        let meta: Value = res
-            .headers()
-            .get("x-wc-meta")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(Value::Null);
+        let meta = meta_of(res.headers())?;
         let mut body = Vec::new();
         res.into_body().into_reader().read_to_end(&mut body)?;
         Ok(Some((body, meta)))
@@ -242,9 +238,9 @@ impl Client {
     pub fn kv_put(&self, ns: &str, key: &str, value: &[u8], meta: &Value) -> Result<()> {
         let mut res = self
             .agent
-            .put(self.url(&format!("kv/{ns}/value/{}", enc(key))))
+            .put(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
             .header("authorization", format!("Bearer {}", self.token))
-            .header("x-wc-meta", meta.to_string())
+            .header("x-wc-meta", enc(&meta.to_string()))
             .send(value)?;
         if res.status().as_u16() != 200 {
             let t = res.body_mut().read_to_string().unwrap_or_default();
@@ -259,7 +255,7 @@ impl Client {
     pub fn kv_delete(&self, ns: &str, key: &str) -> Result<()> {
         let res = self
             .agent
-            .delete(self.url(&format!("kv/{ns}/value/{}", enc(key))))
+            .delete(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
             .header("authorization", format!("Bearer {}", self.token))
             .call()?;
         if res.status().as_u16() != 200 {
@@ -272,11 +268,43 @@ impl Client {
     }
 }
 
-/// Percent-encode everything but unreserved characters and `/`.
-fn enc(s: &str) -> String {
+/// The metadata the data service sends with a value (percent-encoded JSON,
+/// so any character survives the header).
+pub fn meta_of(h: &ureq::http::HeaderMap) -> Result<Value> {
+    let raw = h
+        .get("x-wc-meta")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| anyhow::anyhow!("the data service sent no metadata"))?;
+    Ok(serde_json::from_slice(&dec(raw))?)
+}
+
+/// Percent-decode.
+pub fn dec(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(h) = std::str::from_utf8(&b[i + 1..i + 3])
+            && let Ok(v) = u8::from_str_radix(h, 16)
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Percent-encode everything but unreserved characters, for a query value
+/// or a header (`/`, `.` and `..` mean nothing there).
+pub fn enc(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b"-._~/".contains(&b) {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
             out.push(b as char);
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -341,7 +369,8 @@ pub fn resources(c: &Compose) -> Vec<(&'static str, String)> {
 fn d1_objects(client: &Client, db: &str) -> Result<Vec<(String, String, Option<String>)>> {
     let (_, rows) = client.query(
         db,
-        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY rowid",
+        // substr, not LIKE: `_` is a wildcard there and LIKE ignores case.
+        "SELECT type, name, sql FROM sqlite_master WHERE lower(substr(name, 1, 7)) <> 'sqlite_' AND substr(name, 1, 4) <> '_cf_' ORDER BY rowid",
         vec![],
     )?;
     Ok(rows
@@ -390,11 +419,25 @@ fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
     let mut rows_written = 0u64;
     for (_, name, sql) in objects.iter().filter(|(t, _, _)| t == "table") {
         writeln!(out, "{}", json!({ "schema": sql }))?;
+        // Stored columns only: generated ones are computed again on insert.
+        let (_, cols) = client.query(
+            db,
+            "SELECT name FROM pragma_table_xinfo(?) WHERE hidden = 0",
+            vec![json!(name)],
+        )?;
+        let cols: Vec<String> = cols
+            .iter()
+            .filter_map(|r| r.first().and_then(Value::as_str).map(quote))
+            .collect();
         let mut offset = 0usize;
         loop {
             let (cols, rows) = client.query(
                 db,
-                &format!("SELECT * FROM {} LIMIT 500 OFFSET {offset}", quote(name)),
+                &format!(
+                    "SELECT {} FROM {} LIMIT 500 OFFSET {offset}",
+                    cols.join(", "),
+                    quote(name)
+                ),
                 vec![],
             )?;
             for r in &rows {
@@ -432,11 +475,43 @@ fn drop_d1(client: &Client, db: &str) -> Result<()> {
 }
 
 fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
-    let file = File::open(src)?;
+    // 1. Every table first, so rows never wait for a table that comes later
+    //    in the file; note where each table's rows are.
     let mut schema = Vec::new();
     let mut post = Vec::new();
-    let mut pending: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut spans: Vec<(String, u64, u64)> = Vec::new();
+    let mut reader = BufReader::new(File::open(src)?);
+    let mut pos = 0u64;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line)? as u64;
+        if n == 0 {
+            break;
+        }
+        let v: Value = serde_json::from_str(&line)?;
+        if let Some(s) = v["schema"].as_str() {
+            schema.push((s.to_string(), vec![]));
+        } else if let Some(s) = v["post"].as_str() {
+            post.push((s.to_string(), vec![]));
+        } else if let Some(t) = v["t"].as_str() {
+            match spans.last_mut() {
+                Some((name, _, end)) if name == t => *end = pos + n,
+                _ => spans.push((t.to_string(), pos, pos + n)),
+            }
+        }
+        pos += n;
+    }
+    client.batch(db, schema)?;
+
+    // 2. Rows, parents before the tables that reference them.
+    let order = parents_first(
+        client,
+        db,
+        spans.iter().map(|(t, _, _)| t.clone()).collect(),
+    )?;
     let mut rows = 0u64;
+    let mut pending: Vec<(String, Vec<Value>)> = Vec::new();
     let flush = |pending: &mut Vec<(String, Vec<Value>)>| -> Result<()> {
         if !pending.is_empty() {
             let mut st = vec![("PRAGMA defer_foreign_keys = true".to_string(), vec![])];
@@ -445,39 +520,73 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
         }
         Ok(())
     };
-    for line in BufReader::new(file).lines() {
-        let v: Value = serde_json::from_str(&line?)?;
-        if let Some(s) = v["schema"].as_str() {
-            schema.push((s.to_string(), vec![]));
-        } else if let Some(s) = v["post"].as_str() {
-            post.push((s.to_string(), vec![]));
-        } else if let Some(t) = v["t"].as_str() {
-            if !schema.is_empty() {
-                client.batch(db, std::mem::take(&mut schema))?;
-            }
-            let cols: Vec<String> = v["c"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|c| c.as_str().map(quote))
-                .collect();
-            let marks = vec!["?"; cols.len()].join(", ");
-            let sql = format!(
-                "INSERT INTO {} ({}) VALUES ({marks})",
-                quote(t),
-                cols.join(", ")
-            );
-            pending.push((sql, v["r"].as_array().cloned().unwrap_or_default()));
-            rows += 1;
-            if pending.len() >= 50 {
-                flush(&mut pending)?;
+    let mut file = File::open(src)?;
+    for table in order {
+        for (_, start, end) in spans.iter().filter(|(t, _, _)| *t == table) {
+            file.seek(SeekFrom::Start(*start))?;
+            let part = BufReader::new((&mut file).take(end - start));
+            for line in part.lines() {
+                let v: Value = serde_json::from_str(&line?)?;
+                let cols: Vec<String> = v["c"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c.as_str().map(quote))
+                    .collect();
+                let marks = vec!["?"; cols.len()].join(", ");
+                let sql = format!(
+                    "INSERT INTO {} ({}) VALUES ({marks})",
+                    quote(&table),
+                    cols.join(", ")
+                );
+                pending.push((sql, v["r"].as_array().cloned().unwrap_or_default()));
+                rows += 1;
+                if pending.len() >= 50 {
+                    flush(&mut pending)?;
+                }
             }
         }
+        flush(&mut pending)?;
     }
-    client.batch(db, schema)?;
-    flush(&mut pending)?;
+
+    // 3. Indexes, triggers and views last.
     client.batch(db, post)?;
     Ok(rows)
+}
+
+/// Tables ordered so a table comes after the tables its foreign keys point
+/// at (tables in a cycle keep their order).
+fn parents_first(client: &Client, db: &str, tables: Vec<String>) -> Result<Vec<String>> {
+    let mut parents: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for t in &tables {
+        let (_, rows) = client.query(
+            db,
+            "SELECT \"table\" FROM pragma_foreign_key_list(?)",
+            vec![json!(t)],
+        )?;
+        let ps = rows
+            .iter()
+            .filter_map(|r| r.first().and_then(Value::as_str).map(str::to_string))
+            .filter(|p| p != t && tables.contains(p))
+            .collect();
+        parents.insert(t.clone(), ps);
+    }
+    let mut done: Vec<String> = Vec::new();
+    let mut left = tables;
+    while !left.is_empty() {
+        let ready: Vec<String> = left
+            .iter()
+            .filter(|t| parents[*t].iter().all(|p| done.contains(p)))
+            .cloned()
+            .collect();
+        if ready.is_empty() {
+            done.append(&mut left);
+            break;
+        }
+        left.retain(|t| !ready.contains(t));
+        done.extend(ready);
+    }
+    Ok(done)
 }
 
 /// Pending migrations of every D1 with a migrations folder (for `ps`).
@@ -619,11 +728,7 @@ fn kv_all(client: &Client, ns: &str) -> Result<Vec<Value>> {
 pub fn counts(c: &Compose, client: &Client) -> Result<Vec<(&'static str, String, usize)>> {
     let mut out = Vec::new();
     for (t, key) in resources(c) {
-        let n = match t {
-            "d1" => d1_table_count(client, &key)?,
-            "r2" => r2_all(client, &key)?.len(),
-            _ => kv_all(client, &key)?.len(),
-        };
+        let n = count(client, t, &key)?;
         out.push((t, key, n));
     }
     Ok(out)
@@ -803,6 +908,18 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
             )],
         };
         for (rel, sha) in files {
+            // Only files inside the backup folder (a shared backup must not
+            // pull other files of this machine into the local data).
+            let inside = !rel.is_empty()
+                && Path::new(&rel)
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)));
+            if !inside {
+                bail!(crate::tr!(
+                    "控えの目録が、控えのフォルダの外のファイル {rel} を指しています(何もしていません)",
+                    "the backup's manifest points outside the backup folder: {rel} (nothing was done)"
+                ));
+            }
             let path = from.join(&rel);
             if sha256_file(&path).ok().as_deref() != Some(sha.as_str()) {
                 bail!(crate::tr!(
@@ -822,26 +939,43 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
 /// Delete the current contents of the backup's resources.
 pub fn drop_targets(client: &Client, plan: &RestorePlan) -> Result<()> {
     for e in &plan.entries {
-        let key = e["key"].as_str().unwrap_or_default();
-        match e["type"].as_str().unwrap_or_default() {
-            "d1" => drop_d1(client, key)?,
-            "r2" => {
-                let keys: Vec<String> = r2_all(client, key)?
-                    .iter()
-                    .filter_map(|o| o["key"].as_str().map(str::to_string))
-                    .collect();
-                for chunk in keys.chunks(1000) {
-                    client.r2_delete(key, chunk)?;
-                }
+        empty(
+            client,
+            e["type"].as_str().unwrap_or_default(),
+            e["key"].as_str().unwrap_or_default(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Delete everything in one D1 database, R2 bucket or KV namespace.
+pub fn empty(client: &Client, t: &str, key: &str) -> Result<()> {
+    match t {
+        "d1" => drop_d1(client, key)?,
+        "r2" => {
+            let keys: Vec<String> = r2_all(client, key)?
+                .iter()
+                .filter_map(|o| o["key"].as_str().map(str::to_string))
+                .collect();
+            for chunk in keys.chunks(1000) {
+                client.r2_delete(key, chunk)?;
             }
-            _ => {
-                for k in kv_all(client, key)? {
-                    client.kv_delete(key, k["name"].as_str().unwrap_or_default())?;
-                }
+        }
+        _ => {
+            for k in kv_all(client, key)? {
+                client.kv_delete(key, k["name"].as_str().unwrap_or_default())?;
             }
         }
     }
     Ok(())
+}
+
+pub fn count(client: &Client, t: &str, key: &str) -> Result<usize> {
+    Ok(match t {
+        "d1" => d1_table_count(client, key)?,
+        "r2" => r2_all(client, key)?.len(),
+        _ => kv_all(client, key)?.len(),
+    })
 }
 
 /// Resources of the backup that are not empty now.
@@ -1023,7 +1157,8 @@ mod tests {
     }
 
     #[test]
-    fn encodes_object_keys_for_paths() {
-        assert_eq!(enc("a b/c?.txt"), "a%20b/c%3F.txt");
+    fn encodes_keys_and_metadata() {
+        assert_eq!(enc("a b/../c?.txt"), "a%20b%2F..%2Fc%3F.txt");
+        assert_eq!(dec(&enc("é/日本 %")), "é/日本 %".as_bytes());
     }
 }

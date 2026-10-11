@@ -10,6 +10,7 @@ use crate::compose::Cors;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const S3_PREFIX: &str = "/cdn-cgi/local/r2/s3/";
@@ -29,15 +30,111 @@ pub struct Shared {
     pub token: String,
 }
 
-pub fn serve(listener: TcpListener, shared: Arc<Shared>) {
-    for conn in listener.incoming() {
-        let Ok(client) = conn else { continue };
+/// Accept connections until `stop` is set, then drop the listener so the
+/// port is free again (a restart binds it anew).
+pub fn accept_until<F>(listener: TcpListener, stop: Arc<AtomicBool>, on_conn: F)
+where
+    F: Fn(TcpStream) + Send + 'static,
+{
+    if listener.set_nonblocking(true).is_err() {
+        return;
+    }
+    while !stop.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((conn, _)) => {
+                let _ = conn.set_nonblocking(false);
+                on_conn(conn);
+            }
+            // Nothing waiting, or an error such as too many open files:
+            // wait a little instead of spinning.
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
+pub fn serve(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) {
+    accept_until(listener, stop, move |client| {
         let shared = shared.clone();
         std::thread::spawn(move || {
             let _ = client.set_read_timeout(Some(Duration::from_secs(300)));
             let _ = handle(client, &shared);
         });
+    });
+}
+
+/// A Worker's port: everything goes to the gateway as it came, except the
+/// simulator's S3 API for buckets whose r2 service has its own port. Those
+/// answer only there, with the bucket's CORS rules, as in production where
+/// a Worker's address has no S3 API at all. Each connection carries one
+/// request (`Connection: close`) so every request is seen; upgrades
+/// (WebSocket) pass through untouched.
+pub fn forward_worker(
+    listener: TcpListener,
+    gateway: SocketAddr,
+    guarded: Arc<Vec<String>>,
+    stop: Arc<AtomicBool>,
+) {
+    accept_until(listener, stop, move |client| {
+        let guarded = guarded.clone();
+        std::thread::spawn(move || {
+            let _ = forward_one(client, gateway, &guarded);
+        });
+    });
+}
+
+fn forward_one(
+    mut client: TcpStream,
+    gateway: SocketAddr,
+    guarded: &[String],
+) -> std::io::Result<()> {
+    // A connection that never sends a request does not hold a thread for
+    // ever; once the head is in, the connection may stay as long as it likes
+    // (WebSocket).
+    let _ = client.set_read_timeout(Some(Duration::from_secs(300)));
+    let Some((buf, len)) = read_head(&mut client)? else {
+        return Ok(());
+    };
+    let _ = client.set_read_timeout(None);
+    let Some(head) = parse(&buf, len, true) else {
+        return respond(&mut client, 400, &[], b"bad request");
+    };
+    if let Some(rest) = head.path.strip_prefix(S3_PREFIX) {
+        let bucket = rest.split(['/', '?']).next().unwrap_or_default();
+        if guarded.iter().any(|g| g == bucket) {
+            return respond(
+                &mut client,
+                404,
+                &[],
+                b"wrangler-compose: this bucket's S3-compatible API is on its r2 service's port",
+            );
+        }
     }
+    let mut up = TcpStream::connect(gateway)?;
+    if head.get("upgrade").is_some() {
+        up.write_all(&buf)?;
+    } else {
+        let mut out = format!("{} {} HTTP/1.1\r\n", head.method, head.path);
+        for (k, v) in &head.headers {
+            if !k.eq_ignore_ascii_case("connection") && !k.eq_ignore_ascii_case("keep-alive") {
+                out.push_str(&format!("{k}: {v}\r\n"));
+            }
+        }
+        out.push_str("connection: close\r\n\r\n");
+        up.write_all(out.as_bytes())?;
+        up.write_all(&buf[head.raw_len..])?;
+    }
+    let (mut c_read, mut u_write) = (client.try_clone()?, up.try_clone()?);
+    let t = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut c_read, &mut u_write);
+        let _ = u_write.shutdown(Shutdown::Write);
+    });
+    let _ = std::io::copy(&mut up, &mut client);
+    // The answer is complete: end both directions so the request side's
+    // thread stops too.
+    let _ = client.shutdown(Shutdown::Both);
+    let _ = up.shutdown(Shutdown::Both);
+    let _ = t.join();
+    Ok(())
 }
 
 struct Head {
@@ -309,8 +406,11 @@ fn public_get(
     if head.method != "GET" && head.method != "HEAD" {
         return respond(&mut client, 405, &[("allow", "GET, HEAD".into())], b"");
     }
+    // The key as R2 sees it: the path without its leading `/`, decoded. It
+    // goes to the data service as a query value, so `..` stays part of the
+    // key instead of stepping out of the bucket.
     let path = head.path.split('?').next().unwrap_or("/");
-    let key = path.trim_start_matches('/');
+    let key = String::from_utf8_lossy(&crate::data::dec(path.trim_start_matches('/'))).into_owned();
     if key.is_empty() {
         return respond(&mut client, 404, &[], b"not found");
     }
@@ -320,8 +420,10 @@ fn public_get(
         .build()
         .into();
     let url = format!(
-        "http://{}/__wc/r2/{}/object/{key}",
-        shared.gateway, site.key
+        "http://{}/__wc/r2/{}/object?key={}",
+        shared.gateway,
+        site.key,
+        crate::data::enc(&key)
     );
     let res = match agent
         .get(&url)
@@ -339,12 +441,7 @@ fn public_get(
             b"not found",
         );
     }
-    let meta: serde_json::Value = res
-        .headers()
-        .get("x-wc-meta")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default();
+    let meta = crate::data::meta_of(res.headers()).unwrap_or_default();
     let mut h = cors_headers(site, origin, &head.method);
     for (field, name) in [
         ("contentType", "content-type"),
@@ -353,7 +450,10 @@ fn public_get(
         ("contentEncoding", "content-encoding"),
         ("contentLanguage", "content-language"),
     ] {
-        if let Some(v) = meta["http"][field].as_str() {
+        // Stored values come back as headers: never let one break the head.
+        if let Some(v) = meta["http"][field].as_str()
+            && !v.contains(['\r', '\n'])
+        {
             h.push((name, v.to_string()));
         }
     }

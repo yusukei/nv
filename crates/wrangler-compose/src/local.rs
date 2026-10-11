@@ -2,7 +2,7 @@
 //! runs on this machine, in one runtime, without touching Cloudflare.
 
 use crate::build::{self, Built};
-use crate::compose::{Kind, Service};
+use crate::compose::{Kind, Service, Target};
 use crate::configs;
 use crate::ctx::Ctx;
 use anyhow::{Context, Result, anyhow, bail};
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,11 +76,12 @@ fn read_record(p: &Paths) -> Option<Value> {
 
 pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
     let p = Paths::new(ctx);
-    let services = ctx.compose.closure(names)?;
-    notices(&services);
     if ctx.dry_run {
+        let services = ctx.compose.closure(names)?;
+        notices(&services);
         return dry_run(ctx, &services);
     }
+    tool_dir_ignored(ctx)?;
     let Some(_lock) = try_lock(&p)? else {
         let urls = read_record(&p).map(|r| urls_text(&r)).unwrap_or_default();
         bail!(crate::tr!(
@@ -88,24 +89,25 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
             "--env local up is already running for this project{urls}; stop it with --env local down"
         ));
     };
-    match run_once(ctx, &p, &services, rebuild)? {
-        Stop::Done => Ok(()),
-        Stop::Restart => {
-            say(crate::tr!(
-                "compose ファイルか .env.local が変わったので、動かし直します",
-                "the compose file or .env.local changed; restarting"
-            ));
-            // Re-read the compose file and start over in a new process so
-            // every derived value is fresh.
-            let exe = std::env::current_exe()?;
-            let mut args: Vec<String> = std::env::args().skip(1).collect();
-            if !args.iter().any(|a| a == "--env" || a == "-e") {
-                args.splice(0..0, ["--env".to_string(), "local".to_string()]);
+    // A restart re-reads the compose file in this process, keeping the lock.
+    let mut reopened: Option<Ctx> = None;
+    let mut rebuild = rebuild;
+    loop {
+        let c = reopened.as_ref().unwrap_or(ctx);
+        let services = c.compose.closure(names)?;
+        notices(&services);
+        let next = match run_once(c, &p, &services, rebuild)? {
+            Stop::Done => return Ok(()),
+            Stop::Restart => {
+                say(crate::tr!(
+                    "compose ファイルか .env.local が変わったので、動かし直します",
+                    "the compose file or .env.local changed; restarting"
+                ));
+                Ctx::open(&ctx.env, false)?
             }
-            drop(_lock);
-            let status = Command::new(exe).args(&args).status()?;
-            std::process::exit(status.code().unwrap_or(1));
-        }
+        };
+        reopened = Some(next);
+        rebuild = false;
     }
 }
 
@@ -293,10 +295,23 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         return Ok(Stop::Done);
     };
 
-    // 6. Forward every declared port to the gateway, then say where things are.
+    // 6. Forward every declared port to the gateway, then say where things
+    //    are. The listeners close when this run ends, so a restart can bind
+    //    the same ports again.
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut accepters = Vec::new();
+    let guarded: Arc<Vec<String>> = Arc::new(
+        r2_sites
+            .iter()
+            .flat_map(|(_, _, _, sites)| sites.iter().map(|x| x.key.clone()))
+            .collect(),
+    );
     for (_, l) in listeners {
         let target: SocketAddr = format!("127.0.0.1:{gateway_port}").parse()?;
-        std::thread::spawn(move || forward(l, target));
+        let (guarded, stop) = (guarded.clone(), stop.clone());
+        accepters.push(std::thread::spawn(move || {
+            crate::r2proxy::forward_worker(l, target, guarded, stop)
+        }));
     }
     let mut r2_urls = Vec::new();
     for (svc, port, l, sites) in r2_sites {
@@ -317,7 +332,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             gateway: format!("127.0.0.1:{gateway_port}").parse()?,
             token: token.clone(),
         });
-        std::thread::spawn(move || crate::r2proxy::serve(l, shared));
+        let stop = stop.clone();
+        accepters.push(std::thread::spawn(move || {
+            crate::r2proxy::serve(l, shared, stop)
+        }));
     }
     let mut urls = Vec::new();
     for (s, w) in &workers {
@@ -336,7 +354,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     // 7. Watch: rebuild a Worker when its code changes (Wrangler reloads
     //    the bundle); restart when the compose file or .env.local changes.
     let compose_files = [ctx.compose.file.clone(), ctx.root().join(".env.local")];
-    let compose_stamp = stamps(&compose_files);
+    let mut compose_stamp = stamps(&compose_files);
     let mut seen: BTreeMap<String, Option<SystemTime>> = workers
         .iter()
         .map(|(s, w)| (s.name.clone(), build::newest_change(&w.build)))
@@ -372,8 +390,18 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
                 "Wrangler stopped ({status})"
             ));
         }
-        if stamps(&compose_files) != compose_stamp {
-            break Stop::Restart;
+        let now_stamp = stamps(&compose_files);
+        if now_stamp != compose_stamp {
+            // Restart only into a compose file that loads; a half-edited one
+            // keeps the running services as they are.
+            compose_stamp = now_stamp;
+            match crate::compose::load(&ctx.compose.file, &ctx.env) {
+                Ok(_) => break Stop::Restart,
+                Err(e) => say(crate::tr!(
+                    "compose ファイルを読めないので、直るまで今のまま動かします: {e:#}",
+                    "cannot load the compose file, so the services keep running as they are until it is fixed: {e:#}"
+                )),
+            }
         }
         if last_watch.elapsed() < Duration::from_millis(500) {
             continue;
@@ -395,6 +423,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         }
     };
     stop_child(&mut child);
+    stop.store(true, Ordering::SeqCst);
+    for a in accepters {
+        let _ = a.join();
+    }
     let _ = std::fs::remove_file(p.record());
     if matches!(result, Stop::Done) {
         say(crate::tr!("止めました", "stopped"));
@@ -654,8 +686,20 @@ fn spawn_runtime(
 
 /// Run `f` against the data service: the running `up`'s, or a temporary
 /// runtime with only the gateway and the data service (DES-011).
+/// Secrets (.dev.vars) and the data service's token are written under the
+/// tool's folder, so it must stay out of git (REQ-007, REQ-015).
+fn tool_dir_ignored(ctx: &Ctx) -> Result<()> {
+    std::fs::create_dir_all(ctx.tool_dir())?;
+    crate::git::require_ignored(
+        ctx.root(),
+        &ctx.tool_dir(),
+        crate::tr!("道具の作業フォルダ", "the tool's folder").as_str(),
+    )
+}
+
 fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<T>) -> Result<T> {
     let p = Paths::new(ctx);
+    tool_dir_ignored(ctx)?;
     match try_lock(&p)? {
         None => {
             let rec = read_record(&p).ok_or_else(|| {
@@ -702,8 +746,17 @@ fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<
 pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
     let p = Paths::new(ctx);
     if !names.is_empty() {
-        // Locally everything runs as one process (REQ-011 local note).
         ctx.compose.closure(names)?;
+    }
+    // `--purge <services>` deletes only what those services hold and stops
+    // before anything when a service that stays uses it (REQ-011).
+    let targets = if purge && !names.is_empty() {
+        Some(purge_targets(&ctx.compose, names)?)
+    } else {
+        None
+    };
+    if !names.is_empty() {
+        // Locally everything runs as one process.
         say(crate::tr!(
             "手元ではすべてのサービスが 1 つにまとまって動くので、まとめて止めます",
             "locally all services run together, so all of them are stopped"
@@ -711,15 +764,35 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
     }
     if purge {
         let state = p.state();
-        say(crate::tr!(
-            "手元のデータを消します: {}",
-            "this deletes the local data: {}",
-            state.display()
-        ));
+        match &targets {
+            None => say(crate::tr!(
+                "手元のデータを消します: {}",
+                "this deletes the local data: {}",
+                state.display()
+            )),
+            Some(_) => say(crate::tr!(
+                "{} の手元のデータを消します",
+                "this deletes the local data of {}",
+                names.join(", ")
+            )),
+        }
         if state.exists() {
-            let counts = with_data(ctx, |c, _| crate::data::counts(&ctx.compose, c))?;
+            let counts = with_data(ctx, |c, _| match &targets {
+                None => crate::data::counts(&ctx.compose, c),
+                Some(t) => t
+                    .iter()
+                    .filter(|(k, _)| *k != "do")
+                    .map(|(k, key)| Ok((*k, key.clone(), crate::data::count(c, k, key)?)))
+                    .collect(),
+            })?;
             for (t, key, n) in counts {
                 eprintln!("  {}", crate::data::describe_count(t, &key, n));
+            }
+            for (_, key) in targets.iter().flatten().filter(|(k, _)| *k == "do") {
+                eprintln!(
+                    "  {}",
+                    crate::tr!("Durable Object {key}", "Durable Object {key}")
+                );
             }
         }
         if ctx.dry_run {
@@ -741,20 +814,111 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
         return Ok(());
     }
     stop_running(&p)?;
-    if purge {
-        let _lock = try_lock(&p)?
-            .ok_or_else(|| anyhow!(crate::tr!("up が止まりません", "up did not stop")))?;
-        if p.state().exists() {
-            std::fs::remove_dir_all(p.state()).with_context(|| {
-                crate::tr!("{} を消せません", "cannot delete {}", p.state().display())
+    if !purge {
+        return Ok(());
+    }
+    match &targets {
+        None => {
+            let _lock = try_lock(&p)?
+                .ok_or_else(|| anyhow!(crate::tr!("up が止まりません", "up did not stop")))?;
+            if p.state().exists() {
+                std::fs::remove_dir_all(p.state()).with_context(|| {
+                    crate::tr!("{} を消せません", "cannot delete {}", p.state().display())
+                })?;
+            }
+        }
+        Some(targets) if p.state().exists() => {
+            let state = p.state();
+            with_data(ctx, |c, _| {
+                for (t, key) in targets {
+                    if *t == "do" {
+                        // Durable Object storage: one folder per class.
+                        let dir = state.join("v3").join("do").join(key);
+                        if dir.exists() {
+                            std::fs::remove_dir_all(&dir).with_context(|| {
+                                crate::tr!("{} を消せません", "cannot delete {}", dir.display())
+                            })?;
+                        }
+                    } else {
+                        crate::data::empty(c, t, key)?;
+                    }
+                }
+                Ok(())
             })?;
         }
-        say(crate::tr!(
-            "手元のデータを消しました",
-            "deleted the local data"
+        Some(_) => {}
+    }
+    say(crate::tr!(
+        "手元のデータを消しました",
+        "deleted the local data"
+    ));
+    Ok(())
+}
+
+/// The data a service holds or uses: its own D1 databases, R2 buckets and
+/// KV namespaces, and for a Worker, what it binds and its Durable Objects'
+/// storage (`<worker>-<Class>`).
+fn data_of(s: &Service) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    match &s.kind {
+        Kind::Worker(w) => {
+            for (_, t) in &w.bindings {
+                match t {
+                    Target::D1(k) => out.push(("d1", k.clone())),
+                    Target::R2(k) => out.push(("r2", k.clone())),
+                    Target::Kv(k) => out.push(("kv", k.clone())),
+                    Target::DurableObject { service, class } => {
+                        out.push(("do", format!("{service}-{class}")))
+                    }
+                    Target::Worker(_) | Target::Queue(_) => {}
+                }
+            }
+            for class in &w.durable_objects {
+                out.push(("do", format!("{}-{class}", s.name)));
+            }
+        }
+        Kind::D1(l) => out.extend(l.iter().map(|r| ("d1", r.key.clone()))),
+        Kind::R2(l) => out.extend(l.iter().map(|r| ("r2", r.key.clone()))),
+        Kind::Kv(l) => out.extend(l.iter().map(|r| ("kv", r.key.clone()))),
+        Kind::Queue(_) => {}
+    }
+    out
+}
+
+/// What `down --purge <names>` deletes; an error when a Worker that is not
+/// named also uses any of it.
+fn purge_targets(
+    c: &crate::compose::Compose,
+    names: &[String],
+) -> Result<Vec<(&'static str, String)>> {
+    let mut targets: Vec<(&'static str, String)> = Vec::new();
+    for s in c.services.iter().filter(|s| names.contains(&s.name)) {
+        for d in data_of(s) {
+            if !targets.contains(&d) {
+                targets.push(d);
+            }
+        }
+    }
+    let mut shared = Vec::new();
+    for s in c.services.iter().filter(|s| !names.contains(&s.name)) {
+        if !matches!(s.kind, Kind::Worker(_)) {
+            continue;
+        }
+        for d in data_of(s) {
+            if targets.contains(&d) {
+                shared.push(format!("{} ({})", d.1, s.name));
+            }
+        }
+    }
+    if !shared.is_empty() {
+        bail!(crate::tr!(
+            "{} は残るサービスも使っているので、何も消さずに止めました: {}。一緒に消すなら、そのサービスも名前に加えてください",
+            "stopped without deleting anything: {} is also used by services that stay: {}; name those services too to delete it",
+            names.join(", "),
+            shared.join(", ")
         ));
     }
-    Ok(())
+    Ok(targets)
 }
 
 /// Stop a running `up` (from another terminal) and wait until it is gone.
@@ -1146,28 +1310,6 @@ fn stamps(files: &[PathBuf]) -> Vec<Option<SystemTime>> {
 
 /// Copy bytes both ways between each accepted connection and the gateway.
 /// Nothing is parsed, so WebSockets and streams pass through unchanged.
-fn forward(listener: TcpListener, target: SocketAddr) {
-    for conn in listener.incoming() {
-        let Ok(client) = conn else { continue };
-        std::thread::spawn(move || {
-            let Ok(upstream) = TcpStream::connect(target) else {
-                return;
-            };
-            let (Ok(c2), Ok(u2)) = (client.try_clone(), upstream.try_clone()) else {
-                return;
-            };
-            let a = std::thread::spawn(move || pipe(client, upstream));
-            pipe(u2, c2);
-            let _ = a.join();
-        });
-    }
-}
-
-fn pipe(mut from: TcpStream, mut to: TcpStream) {
-    let _ = std::io::copy(&mut from, &mut to);
-    let _ = to.shutdown(std::net::Shutdown::Write);
-}
-
 #[cfg(unix)]
 fn own_group(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;

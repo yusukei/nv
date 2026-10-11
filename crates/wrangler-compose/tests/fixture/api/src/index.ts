@@ -8,6 +8,25 @@ export default {
     if (u.pathname === "/write") { await env.DB.prepare("INSERT INTO items(src) VALUES (?)").bind(u.searchParams.get("src") ?? "api").run(); return new Response("ok"); }
     if (u.pathname === "/upload") { await env.UPLOADS.put("up/" + (u.searchParams.get("k") ?? "x"), "data"); return new Response("uploaded"); }
     if (u.pathname === "/remove") { await env.UPLOADS.delete("up/" + (u.searchParams.get("k") ?? "x")); return new Response("removed"); }
+    if (u.pathname === "/seed") {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO authors(id, name) VALUES (1, 'Ann')"),
+        env.DB.prepare("INSERT INTO posts(author, title) VALUES (1, 'Hello')"),
+        env.DB.prepare("INSERT INTO acf_fields(k) VALUES ('x')"),
+      ]);
+      await env.FILES.put("meta.txt", "m", { customMetadata: { title: "café 日本" }, httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+      await env.FILES.put("d/../e", "dot");
+      await env.CACHE.put("ü", "v", { metadata: { note: "日本" } });
+      return new Response("seeded");
+    }
+    if (u.pathname === "/blog") {
+      const r = await env.DB.prepare("SELECT a.name, p.slug, (SELECT count(*) FROM acf_fields) AS c FROM posts p JOIN authors a ON a.id = p.author").first();
+      const m = await env.FILES.head("meta.txt");
+      const d = await env.FILES.get("d/../e");
+      const e = await env.FILES.get("e");
+      const k = await env.CACHE.getWithMetadata("ü");
+      return Response.json({ ...r, title: m?.customMetadata?.title, dot: d ? await d.text() : null, e: e ? "present" : null, kv: k.metadata });
+    }
     if (u.pathname === "/count") { const r = await env.DB.prepare("SELECT count(*) n FROM items").first(); return Response.json(r); }
     await env.FILES.put("a.txt", "from-api");
     await env.CACHE.put("k", "v");

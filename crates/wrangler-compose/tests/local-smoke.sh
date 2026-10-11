@@ -20,7 +20,13 @@ start() {
 }
 
 "$WC" --env local build
+# The tool's folder holds secrets: up refuses while git does not ignore it.
+cp .gitignore gi.bak && grep -v '^.wrangler/$' gi.bak > .gitignore
+if "$WC" --env local up > refused.out 2>&1; then fail "up ran with .wrangler/ not ignored"; fi
+grep -q 'not ignored by git' refused.out || fail "gitignore message: $(cat refused.out)"
+mv gi.bak .gitignore
 start
+running() { grep -c 'running locally' up.out || true; }
 # Two Workers, a service binding, D1, R2, KV, Queue, Durable Object, secret.
 web=$(curl -fsS localhost:8787/)
 [[ "$web" == "web <- api hello do=1 secret=yes | file=from-api | secret=none" ]] || fail "web: $web"
@@ -43,6 +49,35 @@ K="wrangler-compose-local:wrangler-compose-local-secret"
 curl -fsS -o /dev/null "localhost:8788/upload?k=n1"
 for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out && break; sleep 1; done
 grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out || fail "notification"
+# A Worker's port has no S3 API for buckets with their own port, so their
+# CORS rules cannot be skipped (REQ-009).
+[[ $(curl -s -o /dev/null -w '%{http_code}' localhost:8787/cdn-cgi/local/r2/s3/storage-files/x) == 404 ]] || fail "S3 API on a Worker port"
+# A public URL stays inside its bucket.
+out=$(curl -s --path-as-is -H 'Host: storage-files.localhost:9000' "http://127.0.0.1:9000/../../../kv/cache/list")
+[[ "$out" != *keys* ]] || fail "public URL left its bucket: $out"
+# Data that a careless restore loses: parents after children, generated
+# columns, odd table names, non-ASCII metadata, keys with "..".
+[[ $(curl -fsS localhost:8788/seed) == seeded ]] || fail "seed"
+BLOG='{"name":"Ann","slug":"hello","c":1,"title":"café 日本","dot":"dot","e":null,"kv":{"note":"日本"}}'
+[[ $(curl -fsS localhost:8788/blog) == "$BLOG" ]] || fail "blog: $(curl -sS localhost:8788/blog)"
+# --purge of a service whose data another service uses stops first (AC-011).
+if "$WC" --env local down --purge api > purge.out 2>&1; then fail "purge of shared data"; fi
+grep -q 'storage-files (web)' purge.out || fail "purge message: $(cat purge.out)"
+curl -fsS -o /dev/null localhost:8787/ || fail "purge refusal stopped the services"
+# Editing the compose file restarts on the same ports; a broken edit keeps
+# the services running until it is fixed (REQ-009).
+cp wrangler-compose.yaml compose.bak
+echo "# edited" >> wrangler-compose.yaml
+for _ in $(seq 1 120); do [[ $(running) -ge 2 ]] && break; sleep 1; done
+[[ $(running) -ge 2 ]] || fail "restart"
+[[ $(curl -fsS localhost:8787/write -o /dev/null -w '%{http_code}') == 200 ]] || fail "after restart"
+echo "services: [" >> wrangler-compose.yaml
+for _ in $(seq 1 20); do grep -q 'cannot load the compose file' up.out && break; sleep 1; done
+grep -q 'cannot load the compose file' up.out || fail "broken compose not reported"
+curl -fsS -o /dev/null localhost:8787/ || fail "broken compose stopped the services"
+cp compose.bak wrangler-compose.yaml
+for _ in $(seq 1 120); do [[ $(running) -ge 3 ]] && break; sleep 1; done
+[[ $(running) -ge 3 ]] || fail "restart after fix"
 # Logs carry the service name (AC-012).
 grep -q '^api  *| api handled /' up.out || fail "tagged logs"
 "$WC" --env local ps | grep -q 'running' || fail "ps"
@@ -56,6 +91,7 @@ if curl -s -m 2 localhost:8787/ >/dev/null; then fail "still answering after dow
 rm -rf .wrangler/compose/local/state
 "$WC" --env local restore "$(ls -d backups/local/* | tail -1)"
 start
-[[ $(curl -fsS localhost:8788/count) == '{"n":200}' ]] || fail "restored rows"
+[[ $(curl -fsS localhost:8788/count) == '{"n":201}' ]] || fail "restored rows"
+[[ $(curl -fsS localhost:8788/blog) == "$BLOG" ]] || fail "restored blog: $(curl -sS localhost:8788/blog)"
 "$WC" --env local down
 echo "local smoke test passed"
