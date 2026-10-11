@@ -1,0 +1,20 @@
+[package]
+name = "nv"
+description = "Manage Node.js and npm per project, uv style"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+flate2 = "1.1.10"
+serde_json = "1.0.152"
+sha2 = "0.11.0"
+tar = "0.4.46"
+ureq = "3.4.2"
+zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
+
+[target."cfg(windows)".dependencies]
+ctrlc = "3.5.2"

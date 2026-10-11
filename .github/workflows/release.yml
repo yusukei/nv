@@ -1,0 +1,70 @@
+name: release
+
+# Push a tag like v0.1.0 to publish nv (and later wrangler-compose) for every
+# platform, with SHA256SUMS and VERSION for `nv self update` (DES-010).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  # Executables published per target. Add wrangler-compose once it exists.
+  BINS: nv
+  NV_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/latest/download
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: .exe }
+          - { os: macos-latest, target: aarch64-apple-darwin, ext: "" }
+          - { os: macos-latest, target: x86_64-apple-darwin, ext: "" }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, ext: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag matches Cargo.toml version
+        shell: bash
+        run: |
+          want="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          test "${GITHUB_REF_NAME#v}" = "$want" || { echo "tag $GITHUB_REF_NAME != version $want"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target ${{ matrix.target }} --workspace
+      - name: collect
+        shell: bash
+        run: |
+          mkdir dist
+          for bin in $BINS; do
+            cp "target/${{ matrix.target }}/release/${bin}${{ matrix.ext }}" "dist/${bin}-${{ matrix.target }}${{ matrix.ext }}"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums and version
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          echo "${GITHUB_REF_NAME#v}" > VERSION
+          cat SHA256SUMS
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nv 設計</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="requirements.html">nv 要求仕様</a></li>
+    <li><a href="acceptance.html">nv 受け入れ条件</a></li>
+    <li><a class="current" href="design.html">nv 設計</a></li>
+    <li><a href="../wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="../wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+  <ul>
+    <li><a href="#facts">確かめた事実</a></li>
+    <li><a href="#des-001">DES-001 作りの全体</a></li>
+    <li><a href="#des-002">DES-002 ~/.nv の中身</a></li>
+    <li><a href="#des-003">DES-003 プロジェクトと版</a></li>
+    <li><a href="#des-004">DES-004 Node の取得</a></li>
+    <li><a href="#des-005">DES-005 sync</a></li>
+    <li><a href="#des-006">DES-006 run</a></li>
+    <li><a href="#des-007">DES-007 x</a></li>
+    <li><a href="#des-008">DES-008 node list/install/uninstall</a></li>
+    <li><a href="#des-009">DES-009 スキル</a></li>
+    <li><a href="#des-010">DES-010 配り方</a></li>
+    <li><a href="#des-011">DES-011 self update</a></li>
+    <li><a href="#des-012">DES-012 出力と終了コード</a></li>
+    <li><a href="#des-013">DES-013 試験</a></li>
+    <li><a href="#unverified">確かめていないこと</a></li>
+  </ul>
+</nav>
+<main>
+<h1>nv 設計</h1>
+<p class="lead">nv の要求仕様(REQ)と受け入れ条件(AC)を満たす作り。各 DES に、採る方式・却下した方式・成り立たない場合を書く。</p>
+
+<h2 id="facts">確かめた事実</h2>
+<table>
+  <tr><th>事実</th><th style="width:28%">出典</th></tr>
+  <tr><td>Node の配布物は <code>node-v&lt;版&gt;-&lt;OS&gt;-&lt;CPU&gt;.tar.gz</code>(darwin・linux。<code>.tar.xz</code> もある)と <code>node-v&lt;版&gt;-win-x64.zip</code>(<code>.7z</code> もある)。検証値は同じフォルダの <code>SHASUMS256.txt</code></td><td><a href="https://nodejs.org/dist/v24.11.1/SHASUMS256.txt">nodejs.org/dist/v24.11.1/SHASUMS256.txt</a></td></tr>
+  <tr><td>npm のロックファイル(lockfileVersion 3)の <code>packages</code> の各項目に、そのパッケージが入れる道具の名前と入口(<code>bin</code>)が載る。例: wrangler 4.128.0 は <code>{"wrangler":"bin/wrangler.js", …}</code></td><td>marche-ar の <code>workers/delivery/package-lock.json</code> で実測</td></tr>
+  <tr><td>Rust の <code>Command</code> は Windows で、子に渡した <code>PATH</code> を最初に探す。<code>.exe</code> 以外は拡張子を付けないと見つからない</td><td><a href="https://doc.rust-lang.org/std/process/struct.Command.html">std::process::Command</a></td></tr>
+  <tr><td>Rust 1.77.2 以降、<code>.bat</code>・<code>.cmd</code> へ渡す引数を安全に包めないとき、<code>Command</code> は起動時に <code>InvalidInput</code> で失敗する(正しい引数を拒むこともある)</td><td>CVE-2024-24576(<a href="https://tenable.com/cve/CVE-2024-24576">Tenable</a>・<a href="https://security-tracker.debian.org/tracker/CVE-2024-24576">Debian</a>)</td></tr>
+  <tr><td><code>std::fs::File::lock</code>(排他、取れるまで待つ)は Rust 1.89.0 で安定。Unix は <code>flock</code>、Windows は <code>LockFileEx</code></td><td><a href="https://doc.rust-lang.org/std/fs/struct.File.html#method.lock">std::fs::File::lock</a></td></tr>
+  <tr><td>ureq 3 の <code>Proxy::try_from_env()</code> は <code>ALL_PROXY</code>・<code>HTTPS_PROXY</code>・<code>HTTP_PROXY</code> を読み、<code>NO_PROXY</code> も効く。既定の設定がこれを使う(ureq 3.4.2 の <code>src/config.rs</code> の既定値 <code>proxy: Proxy::try_from_env()</code>)</td><td><a href="https://docs.rs/ureq/latest/ureq/struct.Proxy.html">ureq::Proxy</a>・ソース</td></tr>
+  <tr><td>Codex が利用者全体のスキルを読む場所は <code>$HOME/.agents/skills</code></td><td><a href="https://learn.chatgpt.com/docs/build-skills.md">OpenAI「Build skills」</a></td></tr>
+</table>
+
+<h2>設計</h2>
+
+<h3 id="des-001"><span class="id">DES-001</span>作りの全体 <span class="refs">REQ-009</span></h3>
+<ul>
+  <li>Rust の 1 つのワークスペースに、実行ファイルごとのクレート <code>crates/nv</code> と <code>crates/wrangler-compose</code> を置く。2 つは互いのコードに頼らない(要求の境目のとおり)。nv が wrangler-compose について知るのは、実行ファイルの名前とスキルの中身だけ</li>
+  <li>Rust の最低の版は 1.89(<code>File::lock</code> を使うため)</li>
+  <li>頼るクレート: <code>clap</code>(引数)、<code>ureq</code> 3(HTTP。TLS は rustls)、<code>sha2</code>、<code>flate2</code>+<code>tar</code>(<code>.tar.gz</code>)、<code>zip</code>(Windows)、<code>serde_json</code>(ロックファイル)</li>
+  <li>却下: <code>reqwest</code>(非同期の実行環境を抱え、実行ファイルが大きくなる。nv の取得は 1 本ずつで足りる)</li>
+  <li>却下: <code>.tar.xz</code> を取る(小さいが、xz の展開に C のライブラリか重いクレートが要る。<code>.tar.gz</code> は純 Rust で展開できる)</li>
+</ul>
+
+<h3 id="des-002"><span class="id">DES-002</span>~/.nv の中身 <span class="refs">REQ-002・REQ-003・REQ-005・REQ-007</span></h3>
+<table>
+  <tr><th style="width:40%">場所</th><th>中身</th></tr>
+  <tr><td><code>~/.nv/cache/node/&lt;版&gt;/</code></td><td>展開した Node(macOS・Linux は <code>bin/node</code>、Windows は <code>node.exe</code>)。npm は Node に付いてくるものを使う</td></tr>
+  <tr><td><code>~/.nv/cache/npm/</code></td><td>nv が動かす npm のキャッシュ</td></tr>
+  <tr><td><code>~/.nv/cache/tools/&lt;パッケージ&gt;@&lt;版&gt;/node-&lt;Node の版&gt;/</code></td><td><code>nv x</code> で入れた道具(スコープの <code>/</code> は <code>+</code> に置き換える)</td></tr>
+  <tr><td><code>~/.nv/cache/tmp/</code></td><td>取得と展開の途中のもの。置き場と同じディスクに置き、済んだら名前の付け替えで移す</td></tr>
+  <tr><td><code>~/.nv/cache/locks/</code></td><td>取り合いを防ぐ錠のファイル</td></tr>
+</table>
+<ul>
+  <li>ホームは、Windows は <code>USERPROFILE</code>、ほかは <code>HOME</code> から得る</li>
+  <li>環境変数 <code>NV_HOME</code> があれば <code>~/.nv</code> の代わりに使う(試験で、利用者の <code>~/.nv</code> を汚さずに回すため。利用者向けには書かない)</li>
+  <li>却下: OS の作法に従って分ける(uv の形)。利用者の決定で <code>~/.nv</code> にまとめる</li>
+</ul>
+
+<h3 id="des-003"><span class="id">DES-003</span>プロジェクトと Node の版の見つけ方 <span class="refs">REQ-001・REQ-005</span></h3>
+<ul>
+  <li>いまいるフォルダから上へたどり、最初に <code>package.json</code> があるフォルダをプロジェクトとする</li>
+  <li><code>.node-version</code> と <code>package-lock.json</code> は、そのプロジェクトのフォルダにあるものだけを読む(上へは探さない。「1 か所で決める」ため)</li>
+  <li><code>.node-version</code> は前後の空白と行末を除いた 1 行。先頭の <code>v</code> は受ける(fnm などが書く形)。それ以外は <code>数.数.数</code> だけを受ける</li>
+  <li>成り立たない場合: npm のワークスペースの子のフォルダで打つと、子の <code>package.json</code> がプロジェクトになり、ロックファイルが無くて止まる。ワークスペースは範囲外として、止まったときに上のフォルダで打つよう示す</li>
+</ul>
+
+<h3 id="des-004"><span class="id">DES-004</span>Node の取得 <span class="refs">REQ-002</span></h3>
+<ol>
+  <li>錠 <code>locks/node-&lt;版&gt;.lock</code> を取る(<code>File::lock</code>。取れるまで待つ)。取ったあと、置き場にその版があれば何もしない(先に取った nv が入れたもの)</li>
+  <li>取り先(既定 <code>https://nodejs.org/dist</code>。環境変数 <code>NV_NODE_MIRROR</code> で差し替え)から <code>v&lt;版&gt;/SHASUMS256.txt</code> と配布物を <code>tmp/</code> へ取る</li>
+  <li>配布物の SHA-256 を <code>SHASUMS256.txt</code> の行と照らす。合わない・行が無いときは消して止まる</li>
+  <li><code>tmp/</code> の中で展開し、配布物の一番上のフォルダ(<code>node-v&lt;版&gt;-&lt;OS&gt;-&lt;CPU&gt;</code>)を <code>cache/node/&lt;版&gt;</code> へ名前の付け替えで移す。移すのが最後の一手なので、途中で止まっても半端な版は置き場に無い</li>
+  <li>起動のたびに、<code>tmp/</code> に残った古いもの(1 日より前)を消す</li>
+</ol>
+<ul>
+  <li>HTTP はすべて ureq の既定の設定の 1 つの Agent で行う(環境変数のプロキシを読む)</li>
+  <li>却下: 置き場に「済み」の印のファイルを書いて見分ける(印と中身がずれうる。名前の付け替えなら、ある=完成している)</li>
+  <li>成り立たない場合: 取り先を差し替えると、<code>SHASUMS256.txt</code> も同じ取り先から来るので、壊れていないことは分かるが本物であることは保証しない(公式の署名 <code>SHASUMS256.txt.asc</code> は確かめない。要求の範囲)</li>
+</ul>
+
+<h3 id="des-005"><span class="id">DES-005</span>sync と「依存が揃っているか」 <span class="refs">REQ-003・REQ-004</span></h3>
+<ul>
+  <li>依存を入れるのは <code>npm ci</code>。npm は Node に付いてくる <code>npm-cli.js</code> を <code>node</code> で直接動かす(Windows で <code>npm.cmd</code> を通さない)</li>
+  <li>npm には環境変数 <code>npm_config_cache=~/.nv/cache/npm</code> を渡す</li>
+  <li>入れ終えたら <code>node_modules/.nv-sync</code> に、<code>package-lock.json</code> の SHA-256 と Node の版を書く。次の <code>nv run</code> は、この 2 つがいまと同じなら入れ直さない。違えば(ロックファイルを変えた・Node の版を変えた)入れ直す</li>
+  <li>入れ直すときは、プロジェクトのフォルダごとの錠を取る(同じプロジェクトで 2 つの nv が同時に <code>npm ci</code> を走らせて <code>node_modules</code> を壊さない)。錠を取ったあと印を見直し、先の nv が入れ終えていれば入れ直さない</li>
+  <li>却下: npm が書く <code>node_modules/.package-lock.json</code> と比べる(npm の内部の形で、版によって変わりうる)</li>
+  <li>却下: ファイルの更新時刻で比べる(git の取り直しで時刻が変わり、当てにならない)</li>
+  <li>成り立たない場合: 利用者が nv を通さずに <code>node_modules</code> の中を書き換えると、印は合ったままなので気付かない。<code>nv sync</code> を打てば、印に関係なく入れ直す</li>
+</ul>
+
+<h3 id="des-006"><span class="id">DES-006</span>run <span class="refs">REQ-004</span></h3>
+<p>コマンドの名前から、動かすものを次の順に決める。</p>
+<ol>
+  <li><code>node</code> → 揃えた Node の実行ファイル</li>
+  <li><code>npm</code>・<code>npx</code> → <code>node</code> で Node に付いた <code>npm-cli.js</code>・<code>npx-cli.js</code></li>
+  <li>プロジェクトの依存の道具 → <code>package-lock.json</code> の <code>packages</code> の <code>bin</code> から、その名前の入口のファイルを引く。入口が JavaScript(拡張子が <code>.js</code>・<code>.mjs</code>・<code>.cjs</code>、または先頭行が <code>node</code> を指す <code>#!</code>)なら <code>node &lt;入口&gt; 引数…</code> で動かす。そうでなければ(esbuild のような実行ファイル)そのまま動かす</li>
+  <li>どれでもなければ、子の <code>PATH</code> から探す(Windows で <code>.cmd</code> しか無ければ、その <code>.cmd</code> を拡張子付きで起動し、引数は Rust の標準の包み方に任せる)</li>
+</ol>
+<ul>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、依存を揃えずに Node だけを揃えて動かす(最初の <code>nv run npm install</code> でロックファイルを作れるようにする)</li>
+  <li><code>nv run</code>・<code>nv x</code> の後ろの引数はすべて動かすコマンドのもので、<code>--help</code>・<code>--version</code> も nv は受け取らない</li>
+  <li>子の環境: <code>PATH</code> の先頭に、Node のフォルダ → プロジェクトの <code>node_modules/.bin</code> の順で足す(子がさらに起こす <code>node</code>・<code>npm</code> も揃えたものになる)。<code>npm_config_cache</code> も渡す</li>
+  <li>シェルは通さない。macOS・Linux では <code>exec</code> で nv 自身を置き換える(終了コードとシグナルがそのまま利用者に届く)。Windows では起こして待ち、終了コードを返す(Ctrl+C は子にも届くので、nv はそれで終わらず子の終わりを待つ)</li>
+  <li>却下: 常に <code>node_modules/.bin</code> の <code>.cmd</code> を起動する(Windows で引数が <code>cmd.exe</code> の解釈を通り、<code>&amp;</code> などが壊れる・拒まれる。入口を引けば <code>cmd.exe</code> を通らない)</li>
+  <li>成り立たない場合: ロックファイルに <code>bin</code> の無い古い形(lockfileVersion 1)では入口を引けず、4 の <code>.cmd</code> に落ちる。Windows でそのとき、<code>%</code> などを含む引数は拒まれることがある(拒まれたら、その旨を示して止まる)</li>
+</ul>
+
+<h3 id="des-007"><span class="id">DES-007</span>x <span class="refs">REQ-005</span></h3>
+<ul>
+  <li>入れる先は <code>cache/tools/&lt;パッケージ&gt;@&lt;版&gt;/node-&lt;Node の版&gt;/</code>(Node の版ごとに分ける。ネイティブの部品が Node の版に縛られるため)</li>
+  <li>無ければ、錠を取り、<code>tmp/</code> の中に空の <code>package.json</code> を作って <code>npm install &lt;パッケージ&gt;@&lt;版&gt;</code> を動かし、済んだら名前の付け替えで移す(DES-004 と同じ形)</li>
+  <li>動かす道具は、入れたパッケージの <code>package.json</code> の <code>bin</code> から選ぶ。1 つならそれ、複数ならパッケージ名(スコープを除く)と同じ名前のもの。どちらでもなければ、選べる名前を示して止まる</li>
+  <li>動かし方は DES-006 の 3 と同じ</li>
+</ul>
+
+<h3 id="des-008"><span class="id">DES-008</span>node list / install / uninstall <span class="refs">REQ-006</span></h3>
+<ul>
+  <li><code>list</code> は <code>cache/node/</code> のフォルダ名を版の順に並べる。<code>install</code> は DES-004。<code>uninstall</code> は錠を取ってフォルダを消す</li>
+</ul>
+
+<h3 id="des-009"><span class="id">DES-009</span>エージェント用のスキル <span class="refs">REQ-008</span></h3>
+<ul>
+  <li>スキルの中身(<code>SKILL.md</code>)は、nv の実行ファイルに埋め込む(<code>include_str!</code>)。nv の版とスキルの中身が必ず一致する</li>
+  <li>スキルは 2 つ: <code>nv</code> と <code>wrangler-compose</code>。入れる先は <code>~/.agents/skills/&lt;名前&gt;/</code>(常に)と <code>~/.claude/skills/&lt;名前&gt;/</code>(<code>~/.claude</code> があるときだけ)</li>
+  <li>nv が入れたことの印として、各フォルダに <code>.nv-managed</code>(入れた nv の版)を置く。<code>uninstall skill</code> は印のあるフォルダだけを消す。入れる先に印の無い同じ名前のフォルダがあれば、上書きせずにそのことを示す(利用者が自分で置いたものを壊さない)</li>
+  <li>入れるときは、<code>tmp/</code> に作ってから付け替える(2 回打っても 1 つ)</li>
+  <li>成り立たない場合: Codex が置き場を変えたら、入れても効かない。置き場は 1 か所の定数にして、変わったら nv の版を上げて直す</li>
+</ul>
+
+<h3 id="des-010"><span class="id">DES-010</span>配り方 <span class="refs">REQ-009</span></h3>
+<ul>
+  <li>Release に置くもの: 実行ファイルそのもの(包まない)を、<code>nv-&lt;ターゲット&gt;[.exe]</code>・<code>wrangler-compose-&lt;ターゲット&gt;[.exe]</code> の名前で。検証値の一覧 <code>SHA256SUMS</code>。版の文字列だけを書いた <code>VERSION</code></li>
+  <li>ターゲット: <code>x86_64-pc-windows-msvc</code>・<code>aarch64-apple-darwin</code>・<code>x86_64-apple-darwin</code>・<code>x86_64-unknown-linux-musl</code>(静的にリンクし、どの Linux でも動く)</li>
+  <li>GitHub Actions: <code>v*</code> のタグの push で、Windows・macOS・Ubuntu の機械で組み、最後の 1 つの仕事が <code>SHA256SUMS</code> と <code>VERSION</code> を作って Release に上げる。タグの版と <code>Cargo.toml</code> の版が違えば失敗させる</li>
+  <li>最初の導入は README に、OS ごとの取り方(macOS・Linux は <code>curl</code>、Windows は PowerShell の <code>Invoke-WebRequest</code>)を書く</li>
+  <li>却下: <code>.tar.gz</code>・<code>.zip</code> に包む(展開の手間が増えるだけで、単体の実行ファイルには得が無い)</li>
+  <li>成り立たない場合: macOS でブラウザから取ると、隔離の印が付き、署名の無い実行ファイルは止められる。README の取り方は <code>curl</code> にする(印が付かない)。署名と公証は範囲外</li>
+</ul>
+
+<h3 id="des-011"><span class="id">DES-011</span>self update <span class="refs">REQ-010</span></h3>
+<ol>
+  <li>取り先(既定 <code>https://github.com/&lt;持ち主&gt;/&lt;リポジトリ&gt;/releases/latest/download</code>。環境変数 <code>NV_RELEASE_MIRROR</code> で差し替え)から <code>VERSION</code> を取り、いまの版と比べる。新しくなければ「最新」と示して終わる。<code>--check</code> はここで終わる</li>
+  <li><code>SHA256SUMS</code> と、自分のターゲットの <code>nv-…</code>(同じフォルダに wrangler-compose があればそれも)を、入れ替える実行ファイルと同じフォルダの一時ファイルへ取り、照らす。1 つでも合わなければ全部消して止まる</li>
+  <li>入れ替え: いまのファイルを <code>&lt;名前&gt;.old</code> へ名前を付け替え、取ったものを本来の名前へ付け替える(Windows でも、動いている実行ファイルの名前の付け替えはできる)。2 つ目の付け替えに失敗したら、<code>.old</code> を戻す</li>
+  <li>新しい nv を <code>nv install skill --if-installed</code>(内部の引数)で起こし、印のあるスキルだけを新しい中身で入れ直す(古い nv は新しいスキルの中身を持たないため)</li>
+  <li>nv は起動のたびに、自分のフォルダの <code>.old</code> を消す(Windows では入れ替えたときに消せないため)</li>
+</ol>
+<ul>
+  <li>却下: GitHub の API(<code>/repos/…/releases/latest</code>)で版を調べる(認証の無い呼び出しの回数制限があり、プロキシの網で別の口が要る。<code>latest/download</code> なら資産と同じ口で済む)</li>
+  <li>成り立たない場合: 実行ファイルのフォルダに書けない(管理者の場所に置いた)と入れ替えられない。そのときは書けないことと場所を示して止まる</li>
+</ul>
+
+<h3 id="des-012"><span class="id">DES-012</span>出力と終了コード <span class="refs">REQ-004・REQ-007</span></h3>
+<ul>
+  <li>nv 自身の出力は標準エラーに出し、英語にする(公開のリポジトリで、Windows の古いコードページの端末で日本語が化けるのを避ける)。標準出力は動かしたコマンドのものだけにする</li>
+  <li>nv 自身が止まったときの終了コードは 2。動かしたコマンドの終了コードはそのまま返す</li>
+</ul>
+
+<h3 id="des-013"><span class="id">DES-013</span>試験</h3>
+<ul>
+  <li>単体の試験: 版の読み取り、<code>SHASUMS256.txt</code> の照合、ロックファイルの <code>bin</code> の引き方、入口が JavaScript かの見分け</li>
+  <li>結合の試験(<code>NV_HOME</code> を一時のフォルダにして実行ファイルを動かす): 手元で配る偽の取り先(検証値の合わない配布物、途中で切れる応答)で AC-002・AC-010 の失敗の側を確かめる。本物の取り先での取得は CI の 1 つの仕事で行う</li>
+  <li>CI は Windows・macOS・Linux の 3 つで回す。エージェントの振る舞い(AC-008 の 3 回)は手で確かめる</li>
+</ul>
+
+<h2 id="unverified">確かめていないこと(作る前に確かめる)</h2>
+<ul>
+  <li>Windows で、動いている実行ファイルの名前の付け替えが、権限の無い利用者でもできるか(一般に知られた動きだが、実機で確かめる)</li>
+  <li>npm の <code>npm_config_cache</code> が、<code>npm ci</code>・<code>npm install</code> の両方でキャッシュの場所を変えるか</li>
+  <li>macOS の隔離の印が、<code>curl</code> で取ったファイルに付かないこと</li>
+  <li>GitHub の <code>releases/latest/download/&lt;資産&gt;</code> が、リポジトリの持ち主と名前が決まった後の公開リポジトリで期待どおり転送されること(リポジトリの名前が決まるまで、取り先は仮)</li>
+</ul>
+
+<footer>docs/nv/design.html</footer>
+</main>
+</div>
+</body>
+</html>

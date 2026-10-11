@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+      - run: cargo build --release -p nv
+      # Real download from nodejs.org, run through the managed Node (DES-013).
+      - name: smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          nv="$PWD/target/release/nv"
+          export NV_HOME="$RUNNER_TEMP/nvhome"
+          mkdir -p "$RUNNER_TEMP/proj" && cd "$RUNNER_TEMP/proj"
+          echo '{"name":"smoke","private":true}' > package.json
+          echo 24.11.1 > .node-version
+          test "$("$nv" run node --version)" = v24.11.1
+          "$nv" run npm install --no-audit --no-fund semver@7.6.3 >/dev/null
+          test "$("$nv" run semver 1.2.3 -i minor)" = 1.3.0
+          test "$("$nv" run node -e 'console.log(process.argv[1])' 'a&b')" = 'a&b'
