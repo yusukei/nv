@@ -21,68 +21,64 @@
   </ul>
   <ul>
     <li><a href="#definition">定義</a></li>
-    <li><a href="#goals">目的</a></li>
     <li><a href="#principles">理念</a></li>
+    <li><a href="#flow">使い方の流れ</a></li>
     <li><a href="#example">compose ファイルの例</a></li>
-    <li><a href="#commands">コマンド体系</a></li>
+    <li><a href="#commands">コマンド</a></li>
     <li><a href="#decisions">決定</a></li>
     <li><a href="#terms">用語</a></li>
     <li><a href="#req-001">REQ-001 compose ファイル</a></li>
     <li><a href="#req-002">REQ-002 サービスの型</a></li>
     <li><a href="#req-003">REQ-003 つながり</a></li>
-    <li><a href="#req-004">REQ-004 シークレット</a></li>
-    <li><a href="#req-005">REQ-005 変数の展開</a></li>
-    <li><a href="#req-006">REQ-006 環境と資源の名前</a></li>
-    <li><a href="#req-007">REQ-007 Wrangler の設定ファイル</a></li>
-    <li><a href="#req-022">REQ-022 build</a></li>
-    <li><a href="#req-008">REQ-008 up</a></li>
-    <li><a href="#req-009">REQ-009 down</a></li>
-    <li><a href="#req-010">REQ-010 ps</a></li>
-    <li><a href="#req-011">REQ-011 logs</a></li>
-    <li><a href="#req-012">REQ-012 backup・restore</a></li>
-    <li><a href="#req-013">REQ-013 dry-run</a></li>
-    <li><a href="#req-014">REQ-014 手元(local)</a></li>
-    <li><a href="#req-015">REQ-015 手で行う段取りを持たない</a></li>
-    <li><a href="#req-020">REQ-020 手元とリモートを混ぜない</a></li>
-    <li><a href="#req-021">REQ-021 道具のサービス</a></li>
-    <li><a href="#req-016">REQ-016 安全</a></li>
-    <li><a href="#req-017">REQ-017 手元と本番の違いの知らせ</a></li>
-    <li><a href="#req-018">REQ-018 Wrangler と nv</a></li>
+    <li><a href="#req-004">REQ-004 環境ごとの値</a></li>
+    <li><a href="#req-005">REQ-005 シークレット</a></li>
+    <li><a href="#req-006">REQ-006 環境</a></li>
+    <li><a href="#req-007">REQ-007 Worker のフォルダ</a></li>
+    <li><a href="#req-008">REQ-008 build</a></li>
+    <li><a href="#req-009">REQ-009 up(手元)</a></li>
+    <li><a href="#req-010">REQ-010 up(リモート)</a></li>
+    <li><a href="#req-011">REQ-011 down</a></li>
+    <li><a href="#req-012">REQ-012 ps・logs</a></li>
+    <li><a href="#req-013">REQ-013 backup・restore</a></li>
+    <li><a href="#req-014">REQ-014 dry-run</a></li>
+    <li><a href="#req-015">REQ-015 安全</a></li>
+    <li><a href="#req-016">REQ-016 手で行う段取りを持たない</a></li>
+    <li><a href="#req-017">REQ-017 道具のサービス</a></li>
+    <li><a href="#req-018">REQ-018 手元と本番の違いの知らせ</a></li>
     <li><a href="#req-019">REQ-019 配り方・表示の言語</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
 <main>
 <h1>wrangler-compose 要求仕様</h1>
-<p class="lead">wrangler-compose は、<strong>手元で開発したサービスを、安全にリモートへ展開するための道具</strong>である。</p>
+<p class="lead">docker compose のように手元で開発し、それを安全に Cloudflare(リモート)へ展開する道具。この頁は「何ができるべきか」だけを書く。どう作るか(どの道具を中で使うか)は<a href="design.html">設計</a>で決める。</p>
 
 <h2 id="definition">定義</h2>
 <div class="box decision">
-<p><strong>wrangler-compose は、「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong>(利用者の決定。この仕様のすべての要求は、この定義から決める)</p>
+<p><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong>(利用者の決定。すべての要求はこの定義から決める)</p>
 <ul>
-  <li><strong>手元が出発点</strong>: サービスは手元で作り、手元で動かして確かめる。手元だけで開発が完結する(Cloudflare につながなくてよい)</li>
-  <li><strong>リモートは手元の再現</strong>: リモートには、手元で動いたものと同じ構成(同じ compose ファイル・同じコード・同じ移行)を展開する。違ってよいのは、環境ごとの値(<code>.env.&lt;環境&gt;</code>)と、資源の実際の名前だけ</li>
-  <li><strong>安全に</strong>: 展開の前に何が変わるかが分かり、データを壊さず、消す操作は確かめてから行い、本番を誤って変えない</li>
+  <li><strong>手元が出発点</strong>: サービスは compose ファイルに書き、手元で動かして開発する。手元だけで開発が完結する(Cloudflare につながなくてよい)</li>
+  <li><strong>リモートは手元の再現</strong>: リモートには、手元で動いたものと同じもの(同じ compose ファイル・同じ組み立て)を展開する。違ってよいのは、環境ごとの値(<code>.env.&lt;環境&gt;</code>)と、Cloudflare での実際の名前だけ</li>
+  <li><strong>安全に</strong>: 展開の前に何が変わるかが分かる。データを壊さない。消す操作は確かめてから行う。本番を誤って変えない</li>
 </ul>
-<p>docker compose に寄せた書式・コマンド(サービス・<code>type</code>・<code>up</code>・<code>down</code> など)は、この定義を手で行う段取りなしに実現するための手段。</p>
 </div>
-
-
-<h2 id="goals">目的(定義を満たすために要ること)</h2>
-<ol>
-  <li><strong>手元で作ったものを、リモートで安全に再現する</strong>(定義そのもの): 手元で動いたものと同じ構成を、Cloudflare の環境に、何が変わるかを見てから建てる</li>
-  <li><strong>複数のサービスをまとめて扱う</strong>(そのための手段): Worker と、それが使う資源(D1・R2・KV・Queue・シークレット)を、手元でもリモートでも、まとめて建てる・止める・見る・控える</li>
-</ol>
 
 <h2 id="principles">理念(docker compose から)</h2>
 <ul>
-  <li><strong>ファイルが唯一の正</strong>: アプリの構成は compose ファイルだけが持つ。ファイルと <code>.env.&lt;環境&gt;</code> の値があれば、どこでも同じものが建つ</li>
-  <li><strong>手で行う段取りが無い</strong>: 書いたあとは <code>up</code> 1 つで揃う。資源の作成・移行・シークレットの投入・手元の鍵などは、道具が行う(<a href="#req-015">REQ-015</a>)</li>
+  <li><strong>ファイルが唯一の正</strong>: アプリの構成は compose ファイルだけが持つ。compose ファイルとコードと <code>.env.&lt;環境&gt;</code> があれば、どこでも同じものが建つ</li>
+  <li><strong>コマンド 1 つで揃う</strong>: 書いたあとは <code>up</code> だけで動く。人が手で行う段取りを持たない</li>
   <li><strong>宣言した状態に合わせる</strong>: <code>up</code> は何度打っても同じ結果になり、変わったところだけを変える</li>
-  <li><strong>入れ物とデータを分ける</strong>: <code>down</code> は作り直せるもの(Worker)だけを下ろし、データは <code>--purge</code> を付けたときだけ消す</li>
-  <li><strong>論理名で書く</strong>: ファイルにはサービスの名前だけを書き、Cloudflare の実際の名前は道具が決める(<a href="#req-006">REQ-006</a>)</li>
-  <li><strong>名前で呼び合う</strong>: Worker は、つながる相手をサービスの名前で指す</li>
+  <li><strong>作り直せるものとデータを分ける</strong>: <code>down</code> はデータを残し、データは明示したときだけ消す</li>
+  <li><strong>論理名で書き、名前で呼び合う</strong>: compose ファイルにはサービスの名前だけを書き、サービスは互いを名前で指す。実際の名前は道具が決める</li>
+  <li><strong>環境を混ぜない</strong>: 1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れることも、その逆もない</li>
 </ul>
+
+<h2 id="flow">使い方の流れ</h2>
+<pre><code>wrangler-compose --env local up              # 手元で開発する(全サービスが手元で動く)
+wrangler-compose --env staging --dry-run up  # staging に何が起きるかを見る
+wrangler-compose --env staging up            # 手元で動いたものを staging へ展開する
+wrangler-compose --env production --dry-run up
+wrangler-compose --env production up         # 同じものを本番へ展開する</code></pre>
 
 <h2 id="example">compose ファイルの例</h2>
 <pre><code># wrangler-compose.yaml
@@ -96,21 +92,20 @@ services:
     routes: ["${WEB_DOMAIN}"]       # 環境ごとの値は .env.&lt;環境&gt; から展開する
     depends_on: [api]
     bindings:
-      API: api                      # 相手が worker なら、サービスバインディング
+      API: api                      # 相手が worker なら、その Worker を呼べる
       FILES: files
 
   api:
     type: worker
     build: ./api
     ports: ["8788:8788"]
-    compatibility_date: "2026-09-01"
     depends_on: [db, files, cache, jobs]
     bindings:
-      DB: db                        # 相手の type でバインディングの種類が決まる
+      DB: db                        # 相手の型で、つながり方が決まる
       FILES: files
       CACHE: cache
-      JOBS: jobs                    # queue へのバインディングは、送り手
-    consumes: [jobs]                # 受け手
+      JOBS: jobs                    # queue へ送る
+    consumes: [jobs]                # queue から受け取る
     durable_objects: [Counter]      # この Worker のコードにあるクラス
     secrets: [stripe-key]
 
@@ -134,56 +129,37 @@ secrets:                            # docker compose の secrets と同じ形
 WEB_DOMAIN=staging.shop.example.com
 STRIPE_KEY=sk_test_...</code></pre>
 
-<h2 id="commands">コマンド体系</h2>
-<p>形はどの場合も <code>wrangler-compose --env &lt;環境&gt; [--dry-run] &lt;操作&gt; [&lt;操作の引数&gt;…] [サービス…]</code>。<code>--env</code>(短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code>)はどの操作にも要る。docker compose で組み合わせを切り替える <code>-f</code> に当たるのが <code>--env</code> で、<code>-f</code> は持たない。</p>
+<h2 id="commands">コマンド</h2>
+<p>形はどの場合も <code>wrangler-compose --env &lt;環境&gt; [--dry-run] &lt;操作&gt; [&lt;引数&gt;…] [サービス…]</code>。<code>--env</code>(短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code>)はどの操作にも要る。コマンドは docker compose に合わせる。下の表に無い操作・引数は、利用者の決定なしに足さない。表にある操作の意味も docker compose と変えない。</p>
 <table>
-  <tr><th style="width:30%">操作</th><th>local</th><th>リモートの環境</th><th style="width:10%">条項</th></tr>
-  <tr><td><code>build [サービス…]</code></td><td colspan="2">Worker を組み立てるだけ(何も建てない)。組み立てたものは環境によらず同じで、どの環境の <code>up</code> もそれを使う</td><td><a href="#req-022">REQ-022</a></td></tr>
-  <tr><td><code>up [--build] [サービス…]</code></td><td>手元で資源を用意し、移行を当て、Worker を動かす(前面で動き、Ctrl+C で止まる)</td><td>資源を作り、移行を当て、シークレットを入れ、Worker をデプロイする</td><td><a href="#req-008">REQ-008</a></td></tr>
-  <tr><td><code>down [サービス…]</code></td><td>動いているものを止める</td><td>Worker を消す。データは残す</td><td><a href="#req-009">REQ-009</a></td></tr>
-  <tr><td><code>down --purge [サービス…]</code></td><td>手元のデータも消す</td><td>D1・R2・KV・Queue も中身ごと消す</td><td><a href="#req-009">REQ-009</a></td></tr>
-  <tr><td><code>ps</code></td><td colspan="2">サービスごとの状態(あるか・動いているか・URL・未適用の移行)を並べる</td><td><a href="#req-010">REQ-010</a></td></tr>
-  <tr><td><code>logs [-f] [サービス…]</code></td><td colspan="2">Worker のログを、行の頭にサービス名を付けて出す</td><td><a href="#req-011">REQ-011</a></td></tr>
-  <tr><td><code>backup [&lt;書き出し先&gt;]</code></td><td colspan="2">D1・R2・KV の中身を手元のフォルダへ控える</td><td><a href="#req-012">REQ-012</a></td></tr>
-  <tr><td><code>restore [--drop] &lt;控え&gt;</code></td><td colspan="2">控えを戻す。どの環境の控えでも、どの環境へでも戻せる</td><td><a href="#req-012">REQ-012</a></td></tr>
-  <tr><td><code>--dry-run &lt;操作&gt;</code></td><td colspan="2">何も変えずに、何が変わるかを示す</td><td><a href="#req-013">REQ-013</a></td></tr>
-</table>
-
-<h3 id="compose-map">docker compose との対応</h3>
-<p>コマンドは docker compose に合わせる(利用者の決定)。この表に無い操作・引数は、利用者の決定なしに足さない。表にある操作の意味も、docker compose と変えない。</p>
-<table>
-  <tr><th style="width:30%">docker compose</th><th style="width:30%">wrangler-compose</th><th>違い</th></tr>
-  <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>組み合わせの切り替えは <code>--env</code> が受け持つ(利用者の決定)</td></tr>
-  <tr><td><code>build</code></td><td><code>build</code></td><td>イメージの代わりに Worker を組み立てる</td></tr>
-  <tr><td><code>up</code>・<code>up --build</code>・<code>up --remove-orphans</code></td><td>同じ</td><td>コンテナを動かす代わりに、手元では Worker を動かし、リモートではデプロイする</td></tr>
-  <tr><td><code>down</code>・<code>down -v</code></td><td><code>down</code>・<code>down --purge</code></td><td>データを消す引数の名前は <code>--purge</code>(0.1 系からの利用者の決定)</td></tr>
-  <tr><td><code>ps</code>・<code>logs [-f]</code></td><td>同じ</td><td></td></tr>
-  <tr><td><code>--dry-run</code></td><td>同じ</td><td></td></tr>
-  <tr><td>(無し)</td><td><code>backup</code>・<code>restore</code></td><td>データ(D1・R2・KV)の控えと戻し(0.1 系からの利用者の決定)</td></tr>
+  <tr><th style="width:24%">docker compose</th><th style="width:28%">wrangler-compose</th><th>すること</th><th style="width:9%">条項</th></tr>
+  <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>どの組み合わせを扱うかを選ぶ。compose ファイルは 1 つで、<code>-f</code> は持たない</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>build</code></td><td><code>build [サービス…]</code></td><td>Worker を組み立てるだけ。組み立てたものは環境によらず同じ</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>up</code></td><td><code>up [--build] [--remove-orphans] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
+  <tr><td><code>down</code>・<code>down -v</code></td><td><code>down</code>・<code>down --purge</code></td><td>下ろす。<code>--purge</code> ならデータも消す</td><td><a href="#req-011">REQ-011</a></td></tr>
+  <tr><td><code>ps</code>・<code>logs [-f]</code></td><td><code>ps</code>・<code>logs [-f] [サービス…]</code></td><td>状態とログを見る</td><td><a href="#req-012">REQ-012</a></td></tr>
+  <tr><td><code>--dry-run</code></td><td><code>--dry-run</code></td><td>何も変えずに、何が変わるかを示す</td><td><a href="#req-014">REQ-014</a></td></tr>
+  <tr><td>(無し)</td><td><code>backup</code>・<code>restore [--drop]</code></td><td>データを控える・戻す(0.1 系からの利用者の決定)</td><td><a href="#req-013">REQ-013</a></td></tr>
 </table>
 
 <h2 id="decisions">決定(利用者)</h2>
 <div class="box decision">
 <ul>
-  <li>定義: 手元で開発したサービスを、安全にリモートへ展開するためのもの(最も重要な決定)。目的は、手元で作ったものをリモートで安全に再現することと、そのために複数のサービスをまとめて扱うこと</li>
-  <li>Wrangler でできることから組み立てず、compose として何ができるべきかから決める。実現の手段(Wrangler を使うか、自前で作るか)はそのあとに選ぶ</li>
-  <li>手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る)が要る形にしない</li>
+  <li>定義: docker compose のように手元で開発したサービスを、安全にリモートへ展開するためのもの(最も重要)</li>
+  <li>コマンドと書式は docker compose に合わせる。勝手に足したり変えたりしない</li>
+  <li>何ができるべきかから決め、中で使う道具の都合で要求を変えない</li>
+  <li>人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない</li>
   <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code></li>
-  <li>主に使うのは Workers・D1・R2・KV・Queues・Durable Objects・Secrets Store。使うものだけを作り、作るものは本物と互換にする</li>
-  <li>環境の違いは、compose ファイルの中の変数(<code>${VAR}</code>)を <code>.env.&lt;環境&gt;</code> から展開して表す(docker compose と同じ)</li>
-  <li>切り替えの口は <code>--env</code> 1 つ。<code>-f</code> は持たない。compose ファイルは 1 つ</li>
-  <li>Wrangler の設定ファイルは、環境に依存しない組み立て(ビルド)のための内容だけなら残してよい。振る舞いに関わる内容は書けない</li>
-  <li>ローカルで開発できる必要がある(手元の開発に Cloudflare への接続を要らせない)</li>
-  <li>Wrangler に無い機能は、wrangler-compose が自分のサービス(道具のサービス)として初めから持ち、<code>up</code> が利用者のサービスと一緒に各環境へ建てる。操作のたびに使い捨てで作ったり、利用者に補わせたりしない</li>
-  <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす(手元で動くコードから Cloudflare の資源に触れる、Cloudflare で動くコードから手元に触れる、をしない)</li>
-  <li><code>down</code> は作り直せるものだけを消し、データは <code>--purge</code> のときだけ消す</li>
-  <li>Node・npm の扱いは nv が受け持つ。wrangler-compose は Node のことを何も知らない</li>
-  <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く。更新とエージェント用のスキルは nv に寄せる</li>
-  <li>シークレットは Worker のシークレットとして入れる(Secrets Store は使わない)</li>
-  <li>資源の実際の名前は、既定では道具が決め、サービスの <code>name</code> に書けばそれを使う(既存の資源をそのまま使える)</li>
-  <li>手元の <code>down --purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
+  <li>主に使うのは Workers・D1・R2・KV・Queues・Durable Objects・シークレット。使うものだけを作り、作るものは本物と互換にする</li>
+  <li>本物に無い機能が要るときは、道具が自分のサービスとして初めから持つ</li>
+  <li>環境の違いは、compose ファイルの中の変数(<code>${VAR}</code>)を <code>.env.&lt;環境&gt;</code> から展開して表す。切り替えの口は <code>--env</code> 1 つ</li>
+  <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
+  <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
+  <li>シークレットは Worker ごとのシークレットとして入れる</li>
+  <li>実際の名前は既定では道具が決め、サービスの <code>name</code> に書けばそれを使う</li>
+  <li><code>down</code> はデータを残し、データは <code>--purge</code> のときだけ消す。手元の <code>--purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
   <li>Queue の受け手の細かい設定は今は持たず、Cloudflare の既定に任せる</li>
-  <li>リモートの環境の Worker の名前は、資源と同じく <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code></li>
+  <li>Node・npm の扱いは nv が受け持つ。GitHub の Release で nv と一緒に配り、更新とエージェント用のスキルは nv に寄せる</li>
 </ul>
 </div>
 
@@ -194,10 +170,9 @@ STRIPE_KEY=sk_test_...</code></pre>
   <tr><td>プロジェクト</td><td>compose ファイルのあるフォルダと、その中のすべて。名前は compose ファイルの <code>name</code></td></tr>
   <tr><td>サービス</td><td>compose ファイルの <code>services</code> の 1 つ。型(<code>type</code>)を持つ</td></tr>
   <tr><td>環境</td><td>建てる先。<code>local</code>(この PC)か、リモートの環境(<code>staging</code>・<code>production</code>・<code>pr-123</code> など、名前は自由)</td></tr>
-  <tr><td>資源</td><td>型が <code>worker</code> 以外のサービスが、ある環境で実際に作る D1・R2 バケット・KV 名前空間・Queue</td></tr>
-  <tr><td>作り直せるもの</td><td>Worker(コード・ルート・Cron・シークレットの結び付け)。compose ファイルとコードから <code>up</code> で同じものができる</td></tr>
-  <tr><td>データ</td><td>資源の中身と、Durable Objects の中身。作り直せない</td></tr>
-  <tr><td>手元</td><td>この PC。<code>--env local</code> の操作は Cloudflare に触れない</td></tr>
+  <tr><td>組み立てたもの</td><td><code>build</code> が Worker のコードから作るもの。docker のイメージに当たり、環境によらず同じ</td></tr>
+  <tr><td>作り直せるもの</td><td>Worker。compose ファイルとコードから <code>up</code> で同じものができる</td></tr>
+  <tr><td>データ</td><td>D1・R2・KV・Queue の中身と、Durable Objects の中身。作り直せない</td></tr>
 </table>
 
 <h2>要求</h2>
@@ -205,212 +180,162 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-001"><span class="id">REQ-001</span>compose ファイル</h3>
 <ul>
   <li>名前は <code>wrangler-compose.yaml</code>(<code>.yml</code> も読む。両方あれば止まる)。いまのフォルダから上へたどって最初に見つかったものを使う。見つからなければ止まり、書き始め方を示す</li>
-  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>services</code>・<code>secrets</code>。サービスに <code>type</code>・<code>build</code>・<code>ports</code>・<code>depends_on</code> など(<a href="#req-002">REQ-002</a>)</li>
-  <li><code>name</code> を省くと、compose ファイルのあるフォルダ名。英小文字・数字・<code>-</code> だけ</li>
-  <li>サービスの名前は、英小文字・数字・<code>-</code> だけ</li>
+  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>services</code>・<code>secrets</code></li>
+  <li><code>name</code> を省くと、compose ファイルのあるフォルダ名。プロジェクトとサービスの名前は、英小文字・数字・<code>-</code> だけ</li>
   <li><code>x-</code> で始まるキーは、どの階層でも読み飛ばす(docker と同じ)</li>
-  <li>知らないキー、型に合わないキー、無いサービスを指すもの、<code>depends_on</code> の輪は、何もせずに止まり、どこ(<code>services.web.environment</code> など)の何がいけないかを示す</li>
-  <li>compose ファイルは環境によらず 1 つ。環境の違いは変数の展開(<a href="#req-005">REQ-005</a>)だけで表す</li>
+  <li>知らないキー、型に合わないキー、無いサービスを指すもの、<code>depends_on</code> の輪は、何もせずに止まり、どこ(<code>services.web.image</code> など)の何がいけないかを示す</li>
+  <li>compose ファイルは環境によらず 1 つ。環境の違いは変数の展開(<a href="#req-004">REQ-004</a>)だけで表す</li>
 </ul>
 
 <h3 id="req-002"><span class="id">REQ-002</span>サービスの型</h3>
 <table>
-  <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:30%">建つもの</th></tr>
-  <tr><td><code>worker</code></td><td>
-    <code>build</code>(必須。コードのフォルダ)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td>
-    <td>Worker 1 つ</td></tr>
+  <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:28%">建つもの</th></tr>
+  <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
   <tr><td><code>d1</code></td><td><code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
   <tr><td><code>r2</code></td><td><code>name</code></td><td>R2 バケット 1 つ</td></tr>
   <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
-  <tr><td><code>queue</code></td><td><code>name</code>(受け手の細かい設定は持たず、Cloudflare の既定に任せる)</td><td>Queue 1 つ</td></tr>
+  <tr><td><code>queue</code></td><td><code>name</code></td><td>Queue 1 つ</td></tr>
 </table>
 <ul>
   <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
-  <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は Cron の式。どれも環境ごとに違うなら変数で書く</li>
-  <li><code>assets</code> は静的なファイルのフォルダ(Workers の静的なファイル)</li>
-  <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧。Durable Objects は Worker の中のものなので、型にはしない</li>
-  <li>型は使うものから足す(決定)。足すときは、手元で本物と互換に動く手立て(Wrangler の手元の模擬、または自前の代役)を同時に決める</li>
+  <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_date</code>・<code>compatibility_flags</code> は Workers の互換の指定</li>
+  <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧(Durable Objects は Worker の中のものなので、型にはしない)</li>
+  <li>型は使うものから足す。足すときは、手元で本物と互換に動く手立てを同時に決める</li>
 </ul>
 
-<h3 id="req-003"><span class="id">REQ-003</span>つながり(バインディング)</h3>
+<h3 id="req-003"><span class="id">REQ-003</span>つながり</h3>
 <ul>
-  <li>Worker の <code>bindings</code> は「バインディング名: 相手」。Worker のコードからは <code>env.&lt;バインディング名&gt;</code> で見える</li>
-  <li>相手がサービスの名前なら、相手の型でバインディングの種類が決まる: <code>worker</code> → サービスバインディング、<code>d1</code> → D1、<code>r2</code> → R2、<code>kv</code> → KV、<code>queue</code> → Queue の送り手</li>
-  <li>相手が <code>&lt;worker サービス&gt;.&lt;クラス名&gt;</code> なら、そのサービスの Durable Object へのバインディング(相手の <code>durable_objects</code> にそのクラスが無ければ止まる)</li>
-  <li><code>consumes</code> は、その Worker が受け手になる Queue のサービスの一覧</li>
-  <li>つながる相手は、<code>depends_on</code> に書かなくても依存として扱う(相手を先に建てる)。<code>depends_on</code> はそれに足す順</li>
-  <li>つながりは、手元でもリモートでも同じにつながる(手元でも、別のサービスの Worker・Durable Object・Queue へ届く)</li>
+  <li>Worker の <code>bindings</code> は「名前: 相手」。Worker のコードからは <code>env.&lt;名前&gt;</code> で見える</li>
+  <li>相手の型でつながり方が決まる: <code>worker</code> → その Worker を呼べる、<code>d1</code>・<code>r2</code>・<code>kv</code> → その資源を読み書きできる、<code>queue</code> → その Queue へ送れる。<code>&lt;worker&gt;.&lt;クラス&gt;</code> → その Worker の Durable Object を使える</li>
+  <li><code>consumes</code> は、その Worker が受け取る Queue の一覧</li>
+  <li>つながる相手は、<code>depends_on</code> に書かなくても先に建てる。<code>depends_on</code> はそれに足す順</li>
+  <li>つながりは、手元でもリモートでも同じに働く</li>
 </ul>
 
-<h3 id="req-004"><span class="id">REQ-004</span>シークレット</h3>
+<h3 id="req-004"><span class="id">REQ-004</span>環境ごとの値</h3>
 <ul>
-  <li>一番上の <code>secrets</code> に、docker compose と同じ形で宣言する: <code>&lt;名前&gt;: { environment: &lt;変数名&gt; }</code>。値はその変数(<a href="#req-005">REQ-005</a> と同じ探し方)から読む</li>
-  <li>Worker の <code>secrets</code> に並べたシークレットだけが、その Worker から見える(<code>env.&lt;変数名&gt;</code>)</li>
-  <li>リモートの環境では、<code>up</code> が値をその Worker のシークレットとして入れる(足す・変える)。compose ファイルから消したシークレットは、<code>up</code> が Worker からも消す(宣言した状態に合わせる)。Secrets Store は使わない(決定)</li>
-  <li>手元では、<code>up</code> が同じ値を手元に入れる(手で入れる段取りは無い)</li>
-  <li>値が無ければ、何もせずに止まり、無い変数の名前を示す</li>
+  <li>compose ファイルの文字列の中の <code>${VAR}</code> を展開する。書き方は docker compose と同じ: <code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR:?説明}</code>・<code>$$</code></li>
+  <li>値は環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む</li>
+  <li>既定の無い変数が無ければ、何もせずに止まり、無い変数をまとめて示す</li>
+  <li><code>.env.&lt;環境&gt;</code> は git に入れない。git の中で <code>.gitignore</code> で外れていない、またはすでに git に入っていれば止まる</li>
 </ul>
 
-<h3 id="req-005"><span class="id">REQ-005</span>変数の展開(環境の違い)</h3>
+<h3 id="req-005"><span class="id">REQ-005</span>シークレット</h3>
 <ul>
-  <li>compose ファイルの文字列の中の <code>${VAR}</code> を展開する。書き方は docker compose と同じ: <code>${VAR}</code>・<code>${VAR:-既定の値}</code>・<code>${VAR:?無いときの説明}</code>・<code>$$</code>(<code>$</code> そのもの)</li>
-  <li>値は、環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む。環境変数を優先する</li>
-  <li>既定の値の無い変数が無ければ、何もせずに止まり、どの環境のどの変数が無いかをまとめて示す</li>
-  <li>展開はどの操作でも同じに行う(<code>--dry-run</code> でも)。展開した結果は、シークレットの値を除いて <code>--dry-run</code> で見られる</li>
-  <li><code>.env.&lt;環境&gt;</code> は git に入れない。プロジェクトが git の中にあって、そのファイルが <code>.gitignore</code> で外れていないか、すでに git に入っていれば、何もせずに止まる</li>
+  <li>一番上の <code>secrets</code> に docker compose と同じ形で宣言する(<code>&lt;名前&gt;: { environment: &lt;変数名&gt; }</code>)。値は REQ-004 と同じ探し方で読む</li>
+  <li>Worker の <code>secrets</code> に並べたものだけが、その Worker から見える</li>
+  <li><code>up</code> が、手元でもリモートでも、その Worker のシークレットとして入れる。compose ファイルから消したシークレットは、<code>up</code> が消す</li>
+  <li>値が無ければ止まり、無い変数の名前を示す</li>
 </ul>
 
-<h3 id="req-006"><span class="id">REQ-006</span>環境と資源の名前</h3>
+<h3 id="req-006"><span class="id">REQ-006</span>環境</h3>
 <ul>
-  <li>環境の名前は自由(<code>staging</code>・<code>production</code>・<code>pr-123</code> など)。<code>local</code> だけは手元を指す決まった名前</li>
-  <li>リモートの環境の Worker と資源の Cloudflare での名前は、道具が <code>&lt;プロジェクト名&gt;-&lt;環境&gt;-&lt;サービス名&gt;</code> で決める(例: <code>shop-staging-db</code>)。同じ compose ファイルから、名前の違う環境をいくつでも並べて建てられ、互いに混ざらない</li>
-  <li>資源の ID(D1 の ID・KV の ID など)は道具が覚えておき、利用者は書かない。覚えたものを失っても、名前から見つけ直せる</li>
-  <li>サービスに <code>name</code> を書けば、決め方より優先してその名前を使う(既存の資源をそのまま使う、本番の名前を短くするなど)。環境ごとに変えるなら変数で書く(<code>name: ${DB_NAME}</code>)。同じ名前の資源がすでにあれば、作らずにそれを使う</li>
+  <li>環境は <code>--env</code> で選ぶ。<code>local</code> は手元、それ以外はリモート(名前は自由。<code>pr-123</code> のように並べて建てられる)</li>
+  <li>リモートの Worker と資源の Cloudflare での名前は、道具が <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code> で決める。サービスに <code>name</code> を書けばそれを使い、同じ名前のものがすでにあればそれを使う(作り直さない)</li>
+  <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
+  <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
 </ul>
 
-<h3 id="req-007"><span class="id">REQ-007</span>Wrangler の設定ファイル</h3>
+<h3 id="req-007"><span class="id">REQ-007</span>Worker のフォルダ</h3>
 <ul>
-  <li>Wrangler の設定(<code>wrangler.jsonc</code> など)は、wrangler-compose が compose ファイルと環境から作る。利用者は書かなくてよい</li>
-  <li>Worker のフォルダ(<code>build</code>)に Wrangler の設定ファイルを置いてもよいが、書けるのは、環境に依存しない組み立て(ビルド)のための内容だけ: エントリーのファイル(<code>main</code>)・ビルドのコマンド(<code>build</code>)・モジュールの決まり(<code>rules</code>・<code>find_additional_modules</code>・<code>base_dir</code>・<code>preserve_file_names</code>)・<code>no_bundle</code>・<code>minify</code>・<code>tsconfig</code>・<code>alias</code> に当たるもの</li>
-  <li>振る舞いに関わる内容(名前・バインディング・変数・ルート・Cron・環境・互換日付・Durable Objects の移行・配置・上限・ログの送り先など)が書いてあれば、何もせずに止まり、そのキーと、compose ファイルのどこに書くかを示す</li>
-  <li>どのキーが組み立てのためのものかの一覧は、設計で Wrangler の版ごとに決める。一覧に無いキーは、振る舞いに関わるものとして扱う(止まる)</li>
-  <li>wrangler-compose が作った設定は、プロジェクトの git の外(<code>.wrangler/</code> の下など)に置き、プロジェクトのファイルを書き換えない</li>
+  <li>Worker のフォルダ(<code>build</code>)には、コードと、環境に依存しない組み立てのためのもの(どのファイルから組み立てるか、組み立ての手順など)だけを置いてよい</li>
+  <li>振る舞いに関わる設定(名前・つながり・値・ルート・定期実行・環境など)がフォルダの中にあれば、何もせずに止まり、compose ファイルのどこに書くかを示す</li>
+  <li>道具はプロジェクトのファイルを書き換えない。道具が作るものは、git の外の決まった場所に置く</li>
 </ul>
 
-<h3 id="req-022"><span class="id">REQ-022</span>build(組み立てる)</h3>
+<h3 id="req-008"><span class="id">REQ-008</span>build</h3>
 <ul>
-  <li><code>build [サービス…]</code> は、docker compose の <code>build</code> と同じく、Worker のサービスを組み立てるだけで、何も建てない・動かさない。何も指定しなければすべての Worker</li>
-  <li>組み立てたものは、docker のイメージと同じく環境によらず同じで、手元に置く。環境ごとの値(変数・シークレット・資源)は組み立てたものに入れず、<code>up</code> が環境に合わせて渡す</li>
+  <li><code>build [サービス…]</code> は、docker compose の <code>build</code> と同じく、Worker を組み立てるだけで、何も建てない・動かさない</li>
+  <li>組み立てたものは環境によらず同じ。環境ごとの値は組み立てたものに入れず、<code>up</code> が環境に合わせて渡す</li>
   <li>組み立てられなければ、どのサービスがなぜかを示して止まる</li>
 </ul>
 
-<h3 id="req-008"><span class="id">REQ-008</span>up(建てる・合わせる)</h3>
+<h3 id="req-009"><span class="id">REQ-009</span>up(手元)</h3>
 <ul>
-  <li><code>up</code> は、docker compose と同じく、組み立てたもの(REQ-022)を使う。組み立てたものが無ければ組み立ててから使い、<code>--build</code> を付ければ組み立て直してから使う</li>
-  <li><code>up [サービス…]</code> は、指定したサービスと、そのつながり・<code>depends_on</code> をたどった先を、依存の順に、compose ファイルの状態に合わせる。何も指定しなければすべて</li>
-  <li>サービスごとに行うこと: 資源が無ければ作る → D1 は未適用の移行を当てる → Worker はシークレットを入れてデプロイする(手元では動かす)</li>
-  <li>何度打っても同じ結果になる。変わっていないものは変えない(変わっていない Worker を上げ直さない、など)</li>
-  <li>移行が失敗したら、その D1 を使う Worker はデプロイしない。どのサービスまで済んだか、どこで止まったか、なぜかを示す。それより後のサービスは行わない</li>
-  <li>リモートの環境で、compose ファイルから消えたサービスの Worker が残っていれば、それを示す(<code>--remove-orphans</code> を付けたときだけ消す。docker と同じ)。データを持つ資源は、ここでは消さない</li>
-  <li>移行を当てるときに確認を求めない(<code>up</code> を打ったことを確認とみなす)</li>
-</ul>
-
-<h3 id="req-009"><span class="id">REQ-009</span>down(下ろす)</h3>
-<ul>
-  <li><code>down [サービス…]</code> は、指定したサービス(無ければすべて)の Worker を、依存の逆の順に下ろす。資源とデータは残す。そのあと <code>up</code> で、残したデータにつなぎ直して元に戻る</li>
-  <li>Worker と一緒に消えるもの(ルート・Cron・Durable Objects とその中身)を、消す前に示す</li>
-  <li><code>down --purge [サービス…]</code> は、加えて資源を中身ごと消す。下ろさないサービスがつながっている資源は消さずに止まる</li>
-  <li>リモートの環境での <code>down</code>・<code>down --purge</code> は、消す前に、消すもの(Worker の名前、資源の名前と中身の数)を示し、環境名を打ち直して確かめる。打ち直しを受けられない場(端末でない)では止まる</li>
-  <li>手元での <code>down</code> は、動いている <code>up</code> を止めるだけで、確かめを求めない。手元での <code>down --purge</code> は、リモートと同じく <code>local</code> を打ち直して確かめる(決定)</li>
-</ul>
-
-<h3 id="req-010"><span class="id">REQ-010</span>ps(状態を見る)</h3>
-<ul>
-  <li><code>ps</code> は、サービスごとに、その環境での状態を並べる: Worker はデプロイされているか(手元では動いているか)・URL・最後にデプロイした日時。資源はあるか・未適用の移行の数</li>
-  <li>compose ファイルと違うもの(compose にあるのに無い、compose に無いのに残っている)を示す</li>
-  <li>何も変えない</li>
-</ul>
-
-<h3 id="req-011"><span class="id">REQ-011</span>logs(ログを見る)</h3>
-<ul>
-  <li><code>logs [サービス…]</code> は、Worker のログを、docker compose と同じく、行の頭にサービス名を付けて出す。<code>-f</code> で流し続ける</li>
-  <li>リモートの環境では、Cloudflare のその Worker のログ(リアルタイムのもの)を流す</li>
-  <li>手元では、<code>up</code> が動いている間のログを、ほかの端末から見られる</li>
-</ul>
-
-<h3 id="req-012"><span class="id">REQ-012</span>backup・restore(データを控える・戻す)</h3>
-<ul>
-  <li><code>backup</code> は、その環境のすべての <code>d1</code>・<code>r2</code>・<code>kv</code> サービスの中身を、手元のフォルダへ書き出す(既定はプロジェクトの <code>backups/&lt;環境&gt;/&lt;日時&gt;/</code>)。D1 は表の作りと中身と移行の履歴、R2 はオブジェクトとメタデータ、KV はキーと値とメタデータと期限</li>
-  <li><code>restore &lt;控え&gt;</code> は、控えをサービスの名前で照らして、その環境へ戻す。戻す先が空のときだけ戻す。<code>--drop</code> を付けると、いまの中身を消してから戻す(打ち直しで確かめる)</li>
-  <li>控えはどの環境で取ったものでも、どの環境へでも戻せる(本番 → 手元で調べる、手元 → <code>staging</code> を埋める)。戻す前に、控えを取った環境を示す</li>
-  <li>戻したあと、控えのあとに足された移行を当てる</li>
-  <li>控えには環境のデータが丸ごと入るので git に入れない(書き出し先が git の中で外れていなければ止まる)。書きかけの控えは戻さない</li>
-  <li>Durable Objects・Queue の中身・シークレットは控えない(<a href="#out-of-scope">範囲外</a>)</li>
-</ul>
-
-<h3 id="req-013"><span class="id">REQ-013</span>dry-run(何が変わるかを見る)</h3>
-<ul>
-  <li><code>--dry-run</code> はどの操作にも付く。何も変えずに、その操作で何が変わるかを示す: 作る・変える・消す資源と Worker、当てる移行、入れる・消すシークレットの名前(値は出さない)、展開した変数</li>
-  <li>本番の操作が止まる条件は、dry-run でも同じに確かめ、同じに止まる</li>
-  <li>dry-run は、確かめのために Cloudflare へ読み取りだけの問い合わせを行う。打ち直しの確かめは求めない</li>
-</ul>
-
-<h3 id="req-014"><span class="id">REQ-014</span>手元(local)</h3>
-<ul>
-  <li><code>--env local up</code> は、Cloudflare に触れず(ログインも要らず)、すべてのサービスを手元で動かす。前面で動き、Ctrl+C ですべて止まり、手元のプロセスを残さない</li>
-  <li>すべての Worker を 1 つの手元の実行環境で動かす(同じ資源を共有しても、同時の書き込みで壊れない)</li>
+  <li><code>--env local up</code> は、Cloudflare に触れず(ログインも網も要らず)、すべてのサービスを手元で動かす。前面で動き、Ctrl+C ですべて止まり、何も残さない</li>
+  <li>手元の D1・R2・KV・Queue・Durable Objects・シークレットは、本物と同じ使い方で動く。R2 は本物と同じく S3 互換の API(署名付き URL を含む)でも使える</li>
+  <li>同じ資源を使うサービスが同時に書いても、データが失われない</li>
   <li><code>ports</code> を書いた Worker は、それぞれその手元の URL で応える</li>
-  <li>コードが変われば作り直して動かし直す</li>
-  <li>手元の D1・R2・KV・Queue・Durable Objects・シークレットは、本物と同じ使い方で動く(Wrangler の手元の模擬、足りなければ本物と互換の代役)</li>
-  <li>R2 は、バインディングに加えて S3 互換の API(署名付き URL を含む)でも手元で読み書きできる。鍵は道具が決めて示す(利用者が書き足さない)</li>
-  <li>手元のデータは、プロジェクトの <code>.wrangler/</code> の下に置く。<code>down</code> では消えず、<code>down --purge</code> で消える</li>
-  <li>同じプロジェクトで <code>--env local up</code> が動いていれば、2 つ目は止まり、動いているものを示す。ほかの端末からの <code>--env local down</code> で止められる</li>
+  <li>コードが変われば組み立て直して動かし直す。移行は動かす前に当てる</li>
+  <li>手元のデータは <code>down</code> では残り、<code>down --purge</code> で消える</li>
+  <li>同じプロジェクトで 2 つ目の <code>--env local up</code> は止まる。ほかの端末からの <code>--env local down</code> で止められる</li>
 </ul>
 
-<h3 id="req-015"><span class="id">REQ-015</span>手で行う段取りを持たない</h3>
+<h3 id="req-010"><span class="id">REQ-010</span>up(リモート)</h3>
 <ul>
-  <li>利用者が書くのは、compose ファイル・コード・<code>.env.&lt;環境&gt;</code> の値だけ。ほかに要るものは道具が用意する</li>
-  <li>道具が用意するもの: 資源の作成と ID の記録、移行の適用、シークレットの投入(リモート・手元とも)、手元の S3 の鍵、Wrangler の設定</li>
-  <li>Cloudflare へのログイン(<code>wrangler login</code> に当たるもの)だけは、人が 1 度行う。ほかに人が Cloudflare のダッシュボードで行う段取り(API キーの発行など)を要らせない</li>
-  <li>手で行う段取りが要る作りになりそうなら、要求として扱い直す(作りの都合で利用者に段取りを足さない)</li>
+  <li>リモートの <code>up</code> は、手元と同じ組み立てたもの(REQ-008)を展開する。組み立てたものが無ければ組み立て、<code>--build</code> なら組み立て直す(docker と同じ)</li>
+  <li>依存の順に: 資源が無ければ作る → 移行を当てる → シークレットを入れる → Worker を展開する</li>
+  <li>何度打っても同じ結果になる。変わっていないものは変えない</li>
+  <li>移行が失敗したら、その D1 を使う Worker は展開しない。どこまで済み、どこでなぜ止まったかを示し、それより後は行わない</li>
+  <li>compose ファイルから消えたサービスの Worker は示すだけで、<code>--remove-orphans</code> のときだけ消す(docker と同じ)。データは消さない</li>
+  <li>移行を当てるときに確認を求めない</li>
 </ul>
 
-<h3 id="req-020"><span class="id">REQ-020</span>手元とリモートを混ぜない</h3>
+<h3 id="req-011"><span class="id">REQ-011</span>down</h3>
 <ul>
-  <li>1 つの環境のものは、すべてその環境の中で動かす: <code>--env local</code> では、Worker も資源も手元にだけあり、Cloudflare に触れない。リモートの環境では、Worker も資源も Cloudflare にだけあり、そのデータを読み書きするコードも Cloudflare で動く</li>
-  <li>手元で動くコードから Cloudflare の資源につなぐ作り(Wrangler の <code>remote: true</code>・<code>wrangler dev --remote</code> など)は、利用者の Worker にも、wrangler-compose が中で使うものにも使わない。compose ファイルにも書けない</li>
-  <li>環境の間でデータを移す(<code>backup</code>・<code>restore</code>)ときは、手元のファイル(控え)を間に置く: 移し元の環境の中で書き出し、控えにし、移し先の環境の中で読み込む</li>
-  <li>環境の外から行ってよいのは、Cloudflare の管理の操作(資源の作成・削除、デプロイ、D1 の書き出し・取り込みなど Wrangler のコマンドが行うもの)と、控えのファイルの受け渡しだけ</li>
+  <li><code>down [サービス…]</code> は Worker を依存の逆の順に下ろし、データは残す。そのあとの <code>up</code> で元に戻る</li>
+  <li><code>down --purge [サービス…]</code> はデータも消す。下ろさないサービスがつながる資源は消さずに止まる</li>
+  <li>消す前に消すもの(Worker・資源の名前と中身の数)を示し、環境名を打ち直して確かめる(手元の <code>--purge</code> も)。打ち直しを受けられない場では止まる。手元の <code>down</code>(データを消さない)は確かめない</li>
 </ul>
 
-<h3 id="req-021"><span class="id">REQ-021</span>道具のサービス</h3>
+<h3 id="req-012"><span class="id">REQ-012</span>ps・logs</h3>
 <ul>
-  <li>Wrangler に無い機能は、wrangler-compose が持つ Worker(道具のサービス)で受け持つ。道具のサービスは、compose ファイルに書かなくても、<code>up</code> が各環境に利用者のサービスと一緒に建て、<code>down</code> が一緒に下ろす。<code>ps</code> には道具のサービスとして分けて出す</li>
-  <li>道具のサービスは、その環境の中で動き(REQ-020)、その環境の資源に、ふつうのバインディングでつながる</li>
-  <li>いま持つもの
-    <ul>
-      <li><strong>データのサービス</strong>(すべての環境): R2・KV の中身の一覧・読み・書き・消去。<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う</li>
-      <li><strong>入口のサービス</strong>(手元だけ): <code>ports</code> を書いた Worker に、それぞれの手元の URL を持たせる(REQ-014)</li>
-    </ul>
-  </li>
-  <li>道具のサービスは wrangler-compose が呼ぶためだけのもので、外からの要求には応えない(呼ぶための合言葉は道具が作って持つ)</li>
-  <li>機能が足りなければ、道具のサービスを足して受け持つ(作りの都合で利用者に段取りを足さない。REQ-015)</li>
+  <li><code>ps</code> は、サービスごとの状態(あるか・動いているか・URL・未適用の移行)と、compose ファイルとの違い(足りないもの・残っているもの)を示す。何も変えない</li>
+  <li><code>logs [-f] [サービス…]</code> は、Worker のログを docker compose と同じく行の頭にサービス名を付けて出す。手元でもリモートでも同じ</li>
 </ul>
 
-<h3 id="req-016"><span class="id">REQ-016</span>安全</h3>
+<h3 id="req-013"><span class="id">REQ-013</span>backup・restore</h3>
 <ul>
-  <li>消す操作(<code>down</code>・<code>down --purge</code>・<code>restore --drop</code>)は、消すものを示し、環境名を打ち直して確かめる</li>
-  <li>シークレットの値を、どの操作でも、画面・ログ・控えの目録に出さない</li>
-  <li><code>.env.&lt;環境&gt;</code> と控えが git に入る形なら止まる(REQ-005・REQ-012)</li>
-  <li>環境の名前の打ち間違いで新しい環境を建ててしまわないよう、まだ無い環境への初めての <code>up</code> では、新しく作ることを示して確かめる(<code>--dry-run</code> では確かめない)</li>
+  <li><code>backup</code> は、その環境の D1・R2・KV の中身を手元のフォルダ(既定は <code>backups/&lt;環境&gt;/&lt;日時&gt;/</code>)へ書き出す</li>
+  <li><code>restore &lt;控え&gt;</code> は、サービスの名前で照らしてその環境へ戻す。戻す先が空のときだけ戻し、<code>--drop</code> ならいまの中身を消してから戻す(打ち直しで確かめる)。戻したあと、控えのあとの移行を当てる</li>
+  <li>控えはどの環境のものでも、どの環境へでも戻せる。データは控えのファイルを間に置いて移す(移し元の中で書き出し、移し先の中で読み込む)</li>
+  <li>控えは git に入れない。書きかけの控えは戻さない。Durable Objects・Queue の中身とシークレットは控えない</li>
 </ul>
 
-<h3 id="req-017"><span class="id">REQ-017</span>手元と本番の違いの知らせ</h3>
+<h3 id="req-014"><span class="id">REQ-014</span>dry-run</h3>
 <ul>
-  <li>手元で動かしたときに本番と振る舞いが違う点を、<a href="local-support.html">手元で使えないもの</a>に、使う型(Workers・D1・R2・KV・Queues・Durable Objects・シークレット)に絞って列挙する。根拠(実装・資料・実測)を項目ごとに書く</li>
-  <li><code>--env local up</code> は、compose ファイルにそれに当たるもの(ルート・Cron など)があれば、動かす前に、手元ではどうなるか・どう試すかを示す</li>
+  <li><code>--dry-run</code> はどの操作にも付き、何も変えずに何が変わるか(作る・変える・消すもの、当てる移行、入れる・消すシークレットの名前、展開した値)を示す。シークレットの値は出さない</li>
+  <li>本番の操作が止まる条件では、dry-run も同じに止まる</li>
 </ul>
 
-<h3 id="req-018"><span class="id">REQ-018</span>Wrangler と nv</h3>
+<h3 id="req-015"><span class="id">REQ-015</span>安全</h3>
 <ul>
-  <li>Wrangler は中の実行役として使ってよい(compose ファイルが正で、Wrangler の書式を利用者に見せない)。使う Wrangler は、プロジェクトの <code>package.json</code> に入れた版を、nv を通して動かす(<code>nv run wrangler …</code>)</li>
-  <li>Worker のフォルダに自分の <code>package.json</code> があれば、その依存は nv で揃えてから組む</li>
-  <li>nv が無い、Wrangler が無い・古いときは、何もせずに止まり、入れ方を示す</li>
+  <li>リモートに展開するのは、手元と同じ組み立てたものだけ(REQ-010)</li>
+  <li>消す操作は、消すものを示し、環境名の打ち直しで確かめる</li>
+  <li>まだ無い環境への初めての <code>up</code> は、新しく作ることを示して確かめる(環境名の打ち間違いで新しい環境を建てない)</li>
+  <li>シークレットの値を、どの操作でも画面・ログ・控えに出さない</li>
+  <li><code>.env.&lt;環境&gt;</code> と控えが git に入る形なら止まる</li>
+</ul>
+
+<h3 id="req-016"><span class="id">REQ-016</span>手で行う段取りを持たない</h3>
+<ul>
+  <li>利用者が用意するのは、compose ファイル・コード・<code>.env.&lt;環境&gt;</code> だけ。人が行うのは Cloudflare へのログインを 1 度だけ</li>
+  <li>資源の作成、移行、シークレットの投入、手元の S3 互換の API の鍵など、ほかに要るものはすべて道具が用意する</li>
+</ul>
+
+<h3 id="req-017"><span class="id">REQ-017</span>道具のサービス</h3>
+<ul>
+  <li>本物の Cloudflare に無い機能が要るときは、道具が自分のサービスとして初めから持ち、<code>up</code> が利用者のサービスと一緒に各環境に建て、<code>down</code> が一緒に下ろす。<code>ps</code> には分けて出す</li>
+  <li>道具のサービスもその環境の中で動く(REQ-006)。道具だけが使い、外からの要求には応えない</li>
+</ul>
+
+<h3 id="req-018"><span class="id">REQ-018</span>手元と本番の違いの知らせ</h3>
+<ul>
+  <li>手元で動かしたときに本番と振る舞いが違う点を、<a href="local-support.html">手元で使えないもの</a>に、使う型に絞って列挙する</li>
+  <li><code>--env local up</code> は、compose ファイルにそれに当たるもの(<code>routes</code>・<code>crons</code> など)があれば、動かす前に、手元ではどうなるか・どう試すかを示す</li>
 </ul>
 
 <h3 id="req-019"><span class="id">REQ-019</span>配り方・表示の言語</h3>
 <ul>
-  <li>OS ごとの単体の実行ファイルで、nv と同じリポジトリ・同じ版のタグ・同じ Release で配る。nv と同じフォルダに置いて使う。更新とスキルは nv が受け持つ</li>
-  <li>wrangler-compose が自分で出すメッセージと <code>--help</code> は、nv と同じ決め方で日本語か英語で出す(<code>NV_LANG</code> も効く)。打ち直しの確かめで打つのは、言語によらず環境名そのもの</li>
+  <li>OS ごとの単体の実行ファイルで、nv と同じ Release で配る。nv と同じフォルダに置いて使う</li>
+  <li>メッセージと <code>--help</code> は、nv と同じ決め方で日本語か英語で出す。打ち直しの確かめで打つのは環境名そのもの</li>
 </ul>
 
 <h2 id="out-of-scope">範囲外</h2>
 <ul>
-  <li>使わない型(Vectorize・Workers AI・Hyperdrive・Workflows など)。使うときに型を足す(REQ-002)</li>
-  <li>Durable Objects・Queue の中身の控え(Cloudflare に中身を書き出す方法が無い・流れて消える)。シークレットの控え</li>
-  <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code> と重ね合わせ(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
-  <li>DNS・WAF・Access などゾーンの設定(Worker と資源の外のもの)</li>
-  <li>Node・npm の取得と版の管理(nv が受け持つ)</li>
+  <li>使わない型(Vectorize・Workers AI・Hyperdrive・Workflows など)。使うときに型を足す</li>
+  <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code>(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
+  <li>DNS・WAF・Access などゾーンの設定</li>
 </ul>
 
 <footer>docs/wrangler-compose/requirements.html</footer>

@@ -48,6 +48,9 @@
 <main>
 <h1>wrangler-compose 受け入れ条件</h1>
 <p class="lead"><a href="requirements.html">要求仕様</a>の REQ-001〜022 を満たしたと言える条件。<code>--env local</code> の条件は Cloudflare に触れずに確かめ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-&lt;日時&gt;</code>)で、利用者の許可を得てから確かめる。本番の環境では行わない。</p>
+<div class="box open">
+<p>要求仕様を、中で使う道具(Wrangler)に触れない形に書き直した(REQ-001〜019)。この頁は前の要求に合わせたままで、条項の番号も合っていない。要求が固まってから書き直す。</p>
+</div>
 
 <h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形のプロジェクト(<code>web</code>・<code>api</code> の 2 つの Worker、<code>db</code>(D1)・<code>files</code>(R2)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>)。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object を数え、受け手として Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
