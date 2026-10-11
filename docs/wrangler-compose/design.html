@@ -30,7 +30,7 @@
     <li><a href="#des-007">DES-007 リモートの up</a></li>
     <li><a href="#des-008">DES-008 Durable Objects の移行</a></li>
     <li><a href="#des-009">DES-009 手元の up</a></li>
-    <li><a href="#des-010">DES-010 データに触れる口(補助の Worker)</a></li>
+    <li><a href="#des-010">DES-010 データのサービス</a></li>
     <li><a href="#des-011">DES-011 down</a></li>
     <li><a href="#des-012">DES-012 ps・logs</a></li>
     <li><a href="#des-013">DES-013 backup・restore</a></li>
@@ -52,7 +52,8 @@
   <tr><td>最初の Worker を入口にし、ポートごとに TCP をそのまま入口のポートへ中継すると、入口の Worker から見える要求の URL と <code>Host</code> は、利用者がつないだポートのまま。入口がポートで振り分けてサービスバインディングへ渡すと、渡した先の Worker からも元の URL のまま見える</td><td>実測</td></tr>
   <tr><td>R2 バインディングに <code>local_dev.experimental_s3_credentials</code> を書くと、手元の開発で <code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code> に S3 互換の口が開く(SigV4 のヘッダと署名付き URL の両方。違う鍵は 401、署名を変えると 403)。バインディングと同じ中身が見える</td><td>実測・CHANGELOG(4.115.0)</td></tr>
   <tr><td>Wrangler のログイン(OAuth)の既定の権限には、R2 の中身を一覧する REST の口が無い(<code>r2 object</code> は get・put・delete だけ)。一覧には S3 互換の API とその API キーが要る</td><td>実装(<code>DefaultScopes</code>・<code>r2 object</code> の定義)</td></tr>
-  <tr><td>バインディングに <code>remote: true</code> を書くと、手元で動く Worker から Cloudflare の本物の資源(D1・R2・KV・Queue など)をログインの資格で使える(remote bindings。2025-09 に GA)</td><td>資料</td></tr>
+  <tr><td>バインディングに <code>remote: true</code> を書くと、手元で動く Worker から Cloudflare の本物の資源を使える(remote bindings)。手元とリモートが混ざるので、wrangler-compose は使わない(REQ-020)</td><td>資料</td></tr>
+  <tr><td>Worker の R2 バインディングは <code>list</code>(1000 件ずつ、<code>cursor</code> で続き)・<code>get</code>(本体はストリーム)・<code>put</code>(ストリームを受ける)・<code>delete</code>(1000 件まで一度に)を持ち、KV バインディングは <code>list</code>(1000 件ずつ)・<code>getWithMetadata</code>・<code>put</code>(<code>expiration</code>・<code>metadata</code>)・<code>delete</code> を持つ。どれも Worker の中で、その環境の資源に対して動く</td><td>資料(R2・KV の Workers API)</td></tr>
   <tr><td>手元のデータの置き場は <code>--persist-to</code> で決められ、その下に <code>v3/</code> が作られる。<code>d1 migrations apply</code>・<code>d1 export</code>・<code>d1 execute</code> は <code>--local --persist-to</code> で同じ置き場を読み書きする</td><td>実測</td></tr>
   <tr><td>D1 の書き出しは表の作りと中身と <code>d1_migrations</code> を含み、表を消した D1 に流して移行を当てると、控えのあとの移行だけが当たる(手元・Cloudflare とも)</td><td>実測(0.1 系)</td></tr>
   <tr><td>Wrangler の標準入力を空にすると、確かめの問いは既定の答えで進み、自動で作った資源の ID を設定ファイルへ書き戻さない</td><td>実装(0.1 系で確認)</td></tr>
@@ -131,7 +132,7 @@
 <h3 id="des-009"><span class="id">DES-009</span>手元の up <span class="refs">REQ-014・REQ-004</span></h3>
 <ul>
   <li>すべての Worker を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;サービス 1&gt; -c &lt;サービス 2&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同じ資源への同時の書き込みで壊れない(確かめた事実)</li>
-  <li>入口は wrangler-compose が作る小さな Worker で、外から届く唯一の Worker。<code>ports</code> を持つ各サービスへのサービスバインディングを持ち、要求の URL のポートで振り分ける(確かめた事実)。入口のポートは空いている番号を使い、利用者には見せない</li>
+  <li>入口は道具のサービス(入口のサービス。REQ-021) で、外から届く唯一の Worker。<code>ports</code> を持つ各サービスへのサービスバインディングを持ち、要求の URL のポートで振り分ける(確かめた事実)。入口のポートは空いている番号を使い、利用者には見せない</li>
   <li>wrangler-compose は、各サービスの <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(HTTP を読まないので WebSocket もそのまま通る)</li>
   <li>手元の S3 の口(<code>/cdn-cgi/local/r2/s3/</code>)はどのポートからも届く(入口より前で miniflare が受ける)。<code>up</code> は口の URL・バケット名・決まった鍵を示す</li>
   <li>手元のシークレットと <code>vars</code> は、作った設定の横に <code>.dev.vars</code> を書いて渡す(Unix は 0600。<code>.wrangler/</code> の下で git の外)</li>
@@ -140,20 +141,22 @@
   <li>compose ファイルか <code>.env.local</code> が変われば、作った設定を作り直して <code>wrangler dev</code> を動かし直す。コードの変化は <code>wrangler dev</code> に任せる</li>
 </ul>
 
-<h3 id="des-010"><span class="id">DES-010</span>データに触れる口(補助の Worker) <span class="refs">REQ-012・REQ-009・REQ-010・REQ-015</span></h3>
+<h3 id="des-010"><span class="id">DES-010</span>データのサービス <span class="refs">REQ-021・REQ-012・REQ-009・REQ-010・REQ-015・REQ-020</span></h3>
 <ul>
-  <li>R2・KV の中身の一覧・読み・書き・消去は、wrangler-compose が作る補助の Worker で行う。補助の Worker は、その環境のすべての R2・KV へのバインディングを持ち、手元の HTTP の口(<code>127.0.0.1</code>、呼ぶたびに作る使い捨ての合言葉つき)で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける</li>
-  <li>手元の環境では、補助の Worker を手元のバインディングで、リモートの環境では <code>remote: true</code> のバインディングで、どちらも <code>wrangler dev</code> の中で手元で動かす。リモートの資源にはログインの資格で触れるので、API キーが要らない(REQ-015)。補助の Worker は Cloudflare にデプロイしない(何も公開しない)</li>
-  <li>手元で <code>up</code> が動いていれば、補助の Worker をそこに足して動かす(1 つの実行環境を保つ。DES-009)。動いていなければ、操作の間だけ動かす</li>
-  <li>D1 は Wrangler のコマンド(<code>d1 export</code>・<code>d1 execute</code>)で扱う(手元は <code>--local --persist-to</code>、リモートは <code>--remote</code>)</li>
+  <li>道具のサービスの 1 つ。名前は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>(手元では <code>wc-data</code>)。その環境のすべての R2・KV への、ふつうのバインディングを持つ Worker</li>
+  <li><code>up</code> が利用者のサービスと一緒に建てる: リモートでは Cloudflare にデプロイし、手元では同じ <code>wrangler dev</code> の中で動かす(1 つの実行環境。DES-009)。<code>down</code> が一緒に下ろす。R2・KV のサービスが足し引きされれば、<code>up</code> がバインディングを合わせて上げ直す</li>
+  <li>HTTP で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける。wrangler-compose は控えのファイルとの受け渡しだけを行う</li>
+  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚えておく。覚えていない PC(別の PC・記録を消した)では、使う前に合言葉を作り直してシークレットを入れ直す。リモートではルートを持たず <code>workers.dev</code> の URL だけで受け、手元では <code>127.0.0.1</code> だけで受ける</li>
+  <li>D1 は Wrangler の管理の操作(<code>d1 export</code>・<code>d1 execute --file</code>)で扱う(手元は <code>--local --persist-to</code>、リモートは <code>--remote</code>)。要るなら、D1 もデータのサービスに足す</li>
+  <li>却下: 操作のたびに使い捨てでデプロイする(要るサービスは初めから持つ。REQ-021)</li>
+  <li>却下: 手元で動かし <code>remote: true</code> でリモートの資源につなぐ(手元とリモートが混ざる。REQ-020)</li>
   <li>却下: S3 互換の API(人が API キーを発行する段取りが要る。REQ-015)</li>
-  <li>却下: 補助の Worker を Cloudflare にデプロイする(使う間、データに触れる口を公開することになる)</li>
 </ul>
 
 <h3 id="des-011"><span class="id">DES-011</span>down <span class="refs">REQ-009</span></h3>
 <ul>
-  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、続けて資源を消す: D1 は <code>d1 delete</code>、R2 は補助の Worker で空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば、何も消さずに止まる</li>
-  <li>消す前に数える(D1 の表の数・R2 のオブジェクトの数・KV のキーの数)のも補助の Worker と Wrangler で行う。打ち直しの確かめは 0.1 系のものを引き継ぐ</li>
+  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、続けて資源を消す: D1 は <code>d1 delete</code>、R2 はデータのサービス で空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば、何も消さずに止まる</li>
+  <li>消す前に数える(D1 の表の数・R2 のオブジェクトの数・KV のキーの数)のもデータのサービス と Wrangler で行う。打ち直しの確かめは 0.1 系のものを引き継ぐ</li>
   <li>手元: <code>down</code> は動いている <code>up</code> を止める(0.1 系の止め方を引き継ぐ)。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す</li>
 </ul>
 
@@ -183,7 +186,7 @@
 <ul>
   <li>引き継ぐ: <code>dotenv.rs</code>・<code>git.rs</code>・<code>confirm.rs</code>・<code>interrupt.rs</code>・<code>i18n.rs</code>・<code>d1.rs</code> の書き出しと戻しと履歴の表の読み・<code>backup.rs</code> の目録と書きかけの扱い</li>
   <li>作り直す: <code>project.rs</code>(Wrangler の設定を読む → compose ファイルを読んで設定を作る)・<code>up.rs</code>・<code>down.rs</code>・<code>restore.rs</code>・<code>main.rs</code>(コマンド)</li>
-  <li>捨てる: <code>r2.rs</code>(S3 互換の API。DES-010 で補助の Worker に置き換える)</li>
+  <li>捨てる: <code>r2.rs</code>(S3 互換の API。DES-010 でデータのサービス に置き換える)</li>
   <li>0.1 系の使い方(Wrangler の設定を正とする)との互換は持たない。compose ファイルが無いプロジェクトでは、書き始め方を示して止まる(REQ-001)。版は 0.2.0 にする</li>
 </ul>
 
@@ -196,7 +199,7 @@
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
-  <li><strong>補助の Worker の <code>remote: true</code></strong>: R2 の <code>list</code>・大きなオブジェクトの読み書き、KV の <code>list</code> が、ログインの資格だけで通ること(試験用のアカウントが要る)。通らなければ、API キーを人に発行させない別の手立てを探す(REQ-015 を崩さない)</li>
+  <li><strong>リモートのデータのサービス</strong>: アカウントに <code>workers.dev</code> の名前(サブドメイン)がまだ無いときに、人の段取りなしにデプロイして呼べるか(REQ-015)。大きなオブジェクト(Worker の要求の本体の上限を超えるもの)を、分けて受け渡せるか(試験用のアカウントが要る)</li>
   <li><strong>手元の入口の Worker</strong>: WebSocket・大きな本体・Server-Sent Events が、中継と入口を通っても本物と同じに届くこと</li>
   <li><strong>手元のログの見分け</strong>: <code>wrangler dev -c … -c …</code> のログから、どの Worker の行かを見分けられること</li>
   <li><strong>作った設定でのコードの見張り</strong>: 設定ファイルを <code>.wrangler/</code> の下に置いても、<code>wrangler dev</code> が Worker のフォルダのコードの変化を見て作り直すこと</li>

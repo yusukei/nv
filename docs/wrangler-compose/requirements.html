@@ -41,6 +41,8 @@
     <li><a href="#req-013">REQ-013 dry-run</a></li>
     <li><a href="#req-014">REQ-014 手元(local)</a></li>
     <li><a href="#req-015">REQ-015 手で行う段取りを持たない</a></li>
+    <li><a href="#req-020">REQ-020 手元とリモートを混ぜない</a></li>
+    <li><a href="#req-021">REQ-021 道具のサービス</a></li>
     <li><a href="#req-016">REQ-016 安全</a></li>
     <li><a href="#req-017">REQ-017 手元と本番の違いの知らせ</a></li>
     <li><a href="#req-018">REQ-018 Wrangler と nv</a></li>
@@ -145,6 +147,8 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>切り替えの口は <code>--env</code> 1 つ。<code>-f</code> は持たない。compose ファイルは 1 つ</li>
   <li>Wrangler の設定ファイルは、環境に依存しない組み立て(ビルド)のための内容だけなら残してよい。振る舞いに関わる内容は書けない</li>
   <li>ローカルで開発できる必要がある(手元の開発に Cloudflare への接続を要らせない)</li>
+  <li>Wrangler に無い機能は、wrangler-compose が自分のサービス(道具のサービス)として初めから持ち、<code>up</code> が利用者のサービスと一緒に各環境へ建てる。操作のたびに使い捨てで作ったり、利用者に補わせたりしない</li>
+  <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす(手元で動くコードから Cloudflare の資源に触れる、Cloudflare で動くコードから手元に触れる、をしない)</li>
   <li><code>down</code> は作り直せるものだけを消し、データは <code>--purge</code> のときだけ消す</li>
   <li>Node・npm の扱いは nv が受け持つ。wrangler-compose は Node のことを何も知らない</li>
   <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く。更新とエージェント用のスキルは nv に寄せる</li>
@@ -314,6 +318,28 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>道具が用意するもの: 資源の作成と ID の記録、移行の適用、シークレットの投入(リモート・手元とも)、手元の S3 の鍵、Wrangler の設定</li>
   <li>Cloudflare へのログイン(<code>wrangler login</code> に当たるもの)だけは、人が 1 度行う。ほかに人が Cloudflare のダッシュボードで行う段取り(API キーの発行など)を要らせない</li>
   <li>手で行う段取りが要る作りになりそうなら、要求として扱い直す(作りの都合で利用者に段取りを足さない)</li>
+</ul>
+
+<h3 id="req-020"><span class="id">REQ-020</span>手元とリモートを混ぜない</h3>
+<ul>
+  <li>1 つの環境のものは、すべてその環境の中で動かす: <code>--env local</code> では、Worker も資源も手元にだけあり、Cloudflare に触れない。リモートの環境では、Worker も資源も Cloudflare にだけあり、そのデータを読み書きするコードも Cloudflare で動く</li>
+  <li>手元で動くコードから Cloudflare の資源につなぐ作り(Wrangler の <code>remote: true</code>・<code>wrangler dev --remote</code> など)は、利用者の Worker にも、wrangler-compose が中で使うものにも使わない。compose ファイルにも書けない</li>
+  <li>環境の間でデータを移す(<code>backup</code>・<code>restore</code>)ときは、手元のファイル(控え)を間に置く: 移し元の環境の中で書き出し、控えにし、移し先の環境の中で読み込む</li>
+  <li>環境の外から行ってよいのは、Cloudflare の管理の操作(資源の作成・削除、デプロイ、D1 の書き出し・取り込みなど Wrangler のコマンドが行うもの)と、控えのファイルの受け渡しだけ</li>
+</ul>
+
+<h3 id="req-021"><span class="id">REQ-021</span>道具のサービス</h3>
+<ul>
+  <li>Wrangler に無い機能は、wrangler-compose が持つ Worker(道具のサービス)で受け持つ。道具のサービスは、compose ファイルに書かなくても、<code>up</code> が各環境に利用者のサービスと一緒に建て、<code>down</code> が一緒に下ろす。<code>ps</code> には道具のサービスとして分けて出す</li>
+  <li>道具のサービスは、その環境の中で動き(REQ-020)、その環境の資源に、ふつうのバインディングでつながる</li>
+  <li>いま持つもの
+    <ul>
+      <li><strong>データのサービス</strong>(すべての環境): R2・KV の中身の一覧・読み・書き・消去。<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う</li>
+      <li><strong>入口のサービス</strong>(手元だけ): <code>ports</code> を書いた Worker に、それぞれの手元の URL を持たせる(REQ-014)</li>
+    </ul>
+  </li>
+  <li>道具のサービスは wrangler-compose が呼ぶためだけのもので、外からの要求には応えない(呼ぶための合言葉は道具が作って持つ)</li>
+  <li>機能が足りなければ、道具のサービスを足して受け持つ(作りの都合で利用者に段取りを足さない。REQ-015)</li>
 </ul>
 
 <h3 id="req-016"><span class="id">REQ-016</span>安全</h3>
