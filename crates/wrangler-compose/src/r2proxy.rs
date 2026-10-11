@@ -87,11 +87,19 @@ fn parse(buf: &[u8], len: usize, request: bool) -> Option<Head> {
     let (a, b) = (parts.next()?.to_string(), parts.next()?.to_string());
     let headers = lines
         .filter(|l| !l.is_empty())
-        .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+        .filter_map(|l| {
+            l.split_once(':')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
         .collect();
     // For a response, `method` holds the protocol and `path` the status.
     let _ = request;
-    Some(Head { method: a, path: b, headers, raw_len: len })
+    Some(Head {
+        method: a,
+        path: b,
+        headers,
+        raw_len: len,
+    })
 }
 
 fn handle(mut client: TcpStream, shared: &Shared) -> std::io::Result<()> {
@@ -114,17 +122,34 @@ fn handle(mut client: TcpStream, shared: &Shared) -> std::io::Result<()> {
     }
     // Public URL: <bucket>.localhost
     let host = head.get("host").unwrap_or_default().to_ascii_lowercase();
-    let host = host.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or(host);
+    let host = host
+        .rsplit_once(':')
+        .map(|(h, _)| h.to_string())
+        .unwrap_or(host);
     let Some(bucket) = host.strip_suffix(".localhost") else {
-        let names: Vec<String> = shared.sites.iter().filter(|s| s.public).map(|s| format!("{}.localhost", s.key)).collect();
+        let names: Vec<String> = shared
+            .sites
+            .iter()
+            .filter(|s| s.public)
+            .map(|s| format!("{}.localhost", s.key))
+            .collect();
         let msg = format!(
             "wrangler-compose: use {S3_PREFIX}<bucket> for the S3-compatible API, or a public bucket's host ({})",
-            if names.is_empty() { "none".into() } else { names.join(", ") }
+            if names.is_empty() {
+                "none".into()
+            } else {
+                names.join(", ")
+            }
         );
         return respond(&mut client, 404, &[], msg.as_bytes());
     };
     let Some(site) = shared.sites.iter().find(|s| s.key == bucket && s.public) else {
-        return respond(&mut client, 404, &[], b"wrangler-compose: no public bucket by that name");
+        return respond(
+            &mut client,
+            404,
+            &[],
+            b"wrangler-compose: no public bucket by that name",
+        );
     };
     if head.method == "OPTIONS" && head.get("access-control-request-method").is_some() {
         return preflight(&mut client, site, &head);
@@ -144,13 +169,17 @@ fn rule_for<'a>(site: &'a Site, origin: &str, method: &str) -> Option<&'a Cors> 
 fn origin_matches(pattern: &str, origin: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == origin,
-        Some((a, b)) => origin.len() >= a.len() + b.len() && origin.starts_with(a) && origin.ends_with(b),
+        Some((a, b)) => {
+            origin.len() >= a.len() + b.len() && origin.starts_with(a) && origin.ends_with(b)
+        }
     }
 }
 
 fn preflight(client: &mut TcpStream, site: &Site, head: &Head) -> std::io::Result<()> {
     let origin = head.get("origin").unwrap_or_default();
-    let method = head.get("access-control-request-method").unwrap_or_default();
+    let method = head
+        .get("access-control-request-method")
+        .unwrap_or_default();
     let wanted: Vec<String> = head
         .get("access-control-request-headers")
         .unwrap_or_default()
@@ -160,11 +189,18 @@ fn preflight(client: &mut TcpStream, site: &Site, head: &Head) -> std::io::Resul
         .collect();
     let rule = rule_for(site, origin, method).filter(|r| {
         wanted.iter().all(|w| {
-            r.allowed_headers.iter().any(|a| a == "*" || a.eq_ignore_ascii_case(w))
+            r.allowed_headers
+                .iter()
+                .any(|a| a == "*" || a.eq_ignore_ascii_case(w))
         })
     });
     let Some(rule) = rule else {
-        return respond(client, 403, &[], b"CORS preflight did not match the bucket's cors rules");
+        return respond(
+            client,
+            403,
+            &[],
+            b"CORS preflight did not match the bucket's cors rules",
+        );
     };
     let mut h = vec![
         ("access-control-allow-origin", origin.to_string()),
@@ -181,16 +217,33 @@ fn preflight(client: &mut TcpStream, site: &Site, head: &Head) -> std::io::Resul
 }
 
 fn cors_headers(site: &Site, origin: Option<&str>, method: &str) -> Vec<(&'static str, String)> {
-    let Some(origin) = origin else { return Vec::new() };
-    let Some(rule) = rule_for(site, origin, method) else { return Vec::new() };
-    let mut h = vec![("access-control-allow-origin", origin.to_string()), ("vary", "Origin".to_string())];
+    let Some(origin) = origin else {
+        return Vec::new();
+    };
+    let Some(rule) = rule_for(site, origin, method) else {
+        return Vec::new();
+    };
+    let mut h = vec![
+        ("access-control-allow-origin", origin.to_string()),
+        ("vary", "Origin".to_string()),
+    ];
     if !rule.expose_headers.is_empty() {
-        h.push(("access-control-expose-headers", rule.expose_headers.join(", ")));
+        h.push((
+            "access-control-expose-headers",
+            rule.expose_headers.join(", "),
+        ));
     }
     h
 }
 
-fn proxy_s3(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, buf: &[u8], origin: Option<&str>) -> std::io::Result<()> {
+fn proxy_s3(
+    mut client: TcpStream,
+    shared: &Shared,
+    site: &Site,
+    head: &Head,
+    buf: &[u8],
+    origin: Option<&str>,
+) -> std::io::Result<()> {
     let mut up = TcpStream::connect(shared.gateway)?;
     // The request head goes as it came (the signature covers it), except
     // that the connection closes after one response.
@@ -216,7 +269,11 @@ fn proxy_s3(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, bu
     let mut out = format!("HTTP/1.1 {}\r\n", status_line(&rbuf));
     for (k, v) in &rhead.headers {
         let lk = k.to_ascii_lowercase();
-        if lk.starts_with("access-control-") || lk == "connection" || lk == "keep-alive" || lk == "vary" {
+        if lk.starts_with("access-control-")
+            || lk == "connection"
+            || lk == "keep-alive"
+            || lk == "vary"
+        {
             continue;
         }
         out.push_str(&format!("{k}: {v}\r\n"));
@@ -236,11 +293,19 @@ fn proxy_s3(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, bu
 fn status_line(buf: &[u8]) -> String {
     let end = find(buf, b"\r\n").unwrap_or(0);
     let line = String::from_utf8_lossy(&buf[..end]);
-    line.split_once(' ').map(|(_, s)| s.to_string()).unwrap_or_else(|| "502 Bad Gateway".into())
+    line.split_once(' ')
+        .map(|(_, s)| s.to_string())
+        .unwrap_or_else(|| "502 Bad Gateway".into())
 }
 
 /// Serve an object of a public bucket from the data service.
-fn public_get(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, origin: Option<&str>) -> std::io::Result<()> {
+fn public_get(
+    mut client: TcpStream,
+    shared: &Shared,
+    site: &Site,
+    head: &Head,
+    origin: Option<&str>,
+) -> std::io::Result<()> {
     if head.method != "GET" && head.method != "HEAD" {
         return respond(&mut client, 405, &[("allow", "GET, HEAD".into())], b"");
     }
@@ -249,14 +314,30 @@ fn public_get(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, 
     if key.is_empty() {
         return respond(&mut client, 404, &[], b"not found");
     }
-    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).proxy(None).build().into();
-    let url = format!("http://{}/__wc/r2/{}/object/{key}", shared.gateway, site.key);
-    let res = match agent.get(&url).header("authorization", format!("Bearer {}", shared.token)).call() {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .proxy(None)
+        .build()
+        .into();
+    let url = format!(
+        "http://{}/__wc/r2/{}/object/{key}",
+        shared.gateway, site.key
+    );
+    let res = match agent
+        .get(&url)
+        .header("authorization", format!("Bearer {}", shared.token))
+        .call()
+    {
         Ok(r) => r,
         Err(_) => return respond(&mut client, 502, &[], b"no answer from the data service"),
     };
     if res.status().as_u16() != 200 {
-        return respond(&mut client, 404, &cors_headers(site, origin, &head.method), b"not found");
+        return respond(
+            &mut client,
+            404,
+            &cors_headers(site, origin, &head.method),
+            b"not found",
+        );
     }
     let meta: serde_json::Value = res
         .headers()
@@ -285,13 +366,23 @@ fn public_get(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, 
     respond_raw(&mut client, 200, &h, &body)
 }
 
-fn respond(client: &mut TcpStream, status: u16, headers: &[(&str, String)], body: &[u8]) -> std::io::Result<()> {
+fn respond(
+    client: &mut TcpStream,
+    status: u16,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> std::io::Result<()> {
     let mut h: Vec<(&str, String)> = headers.to_vec();
     h.push(("content-length", body.len().to_string()));
     respond_raw(client, status, &h, body)
 }
 
-fn respond_raw(client: &mut TcpStream, status: u16, headers: &[(&str, String)], body: &[u8]) -> std::io::Result<()> {
+fn respond_raw(
+    client: &mut TcpStream,
+    status: u16,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         204 => "No Content",
@@ -321,7 +412,10 @@ mod tests {
             key: "storage-files".into(),
             public: true,
             cors: vec![Cors {
-                origins: vec!["http://localhost:8787".into(), "https://*.example.com".into()],
+                origins: vec![
+                    "http://localhost:8787".into(),
+                    "https://*.example.com".into(),
+                ],
                 methods: vec!["GET".into(), "PUT".into()],
                 allowed_headers: vec!["content-type".into()],
                 expose_headers: vec!["etag".into()],
@@ -338,7 +432,10 @@ mod tests {
         assert!(rule_for(&s, "http://localhost:3000", "PUT").is_none());
         assert!(rule_for(&s, "http://localhost:8787", "DELETE").is_none());
         let h = cors_headers(&s, Some("http://localhost:8787"), "GET");
-        assert!(h.iter().any(|(k, v)| *k == "access-control-allow-origin" && v == "http://localhost:8787"));
+        assert!(
+            h.iter()
+                .any(|(k, v)| *k == "access-control-allow-origin" && v == "http://localhost:8787")
+        );
         assert!(cors_headers(&s, Some("http://evil.test"), "GET").is_empty());
     }
 }

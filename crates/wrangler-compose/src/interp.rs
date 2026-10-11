@@ -175,7 +175,11 @@ mod tests {
     }
 
     fn vars() -> Map {
-        Map(BTreeMap::from([("A", "a"), ("EMPTY", ""), ("HOST", "x.example")]))
+        Map(BTreeMap::from([
+            ("A", "a"),
+            ("EMPTY", ""),
+            ("HOST", "x.example"),
+        ]))
     }
 
     fn run(s: &str) -> (String, Vec<String>) {

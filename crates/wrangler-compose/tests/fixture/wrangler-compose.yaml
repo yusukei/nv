@@ -1,0 +1,52 @@
+name: shop
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    ports: ["8787:8787"]
+    depends_on: [api]
+    bindings:
+      API: api
+      FILES: storage.files
+  api:
+    type: worker
+    build: ./api
+    compatibility_date: "2026-09-01"
+    ports: ["8788:8788"]
+    bindings:
+      DB: db
+      FILES: storage.files
+      UPLOADS: storage.uploads
+      CACHE: cache
+      JOBS: jobs
+      COUNTER: api.Counter
+    consumes: [jobs]
+    durable_objects: [Counter]
+    secrets: [stripe-key]
+    vars:
+      GREETING: hello
+  db:
+    type: d1
+    migrations: ./api/migrations
+  storage:
+    type: r2
+    ports: ["9000:9000"]
+    buckets:
+      files:
+        public: true
+        cors:
+          - origins: ["http://localhost:8787"]
+            methods: [GET, PUT]
+            allowed_headers: [content-type]
+      uploads:
+        notifications:
+          - queue: jobs
+            events: [object-create, object-delete]
+  cache:
+    type: kv
+  jobs:
+    type: queue
+secrets:
+  stripe-key:
+    environment: STRIPE_KEY

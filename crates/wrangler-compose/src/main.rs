@@ -4,12 +4,12 @@
 mod i18n;
 mod build;
 mod compose;
+mod configs;
 mod confirm;
 mod ctx;
 mod data;
 mod dotenv;
 mod files;
-mod configs;
 mod git;
 mod interp;
 mod interrupt;
@@ -88,29 +88,68 @@ enum Cmd {
 
 /// Japanese `--help` (REQ-012), same approach as nv.
 const JA_ABOUT: &[(&str, &str)] = &[
-    ("", "手元で開発したサービスを、docker compose のように動かし、安全にリモートへ展開する"),
-    ("build", "Worker を組み立てるだけで、何も動かさない・上げない"),
-    ("up", "手元(--env local)ですべてを動かす。リモートには手元と同じ組み立てを展開する"),
-    ("down", "Worker を止める(手元)・下ろす(リモート)。データは --purge のときだけ消す"),
+    (
+        "",
+        "手元で開発したサービスを、docker compose のように動かし、安全にリモートへ展開する",
+    ),
+    (
+        "build",
+        "Worker を組み立てるだけで、何も動かさない・上げない",
+    ),
+    (
+        "up",
+        "手元(--env local)ですべてを動かす。リモートには手元と同じ組み立てを展開する",
+    ),
+    (
+        "down",
+        "Worker を止める(手元)・下ろす(リモート)。データは --purge のときだけ消す",
+    ),
     ("ps", "サービスごとの状態を並べる"),
     ("logs", "Worker のログを、行の頭にサービス名を付けて出す"),
-    ("backup", "D1・R2・KV の中身を <書き出し先>/<環境>/<日時>/ に控える(既定は ./backups)"),
+    (
+        "backup",
+        "D1・R2・KV の中身を <書き出し先>/<環境>/<日時>/ に控える(既定は ./backups)",
+    ),
     ("restore", "控えの中身を環境に戻す"),
 ];
 const JA_ARGS: &[(&str, &str, &str)] = &[
-    ("", "env", "環境(local は手元、それ以外はリモート)。CLOUDFLARE_ENV でも指定できる"),
-    ("", "dry_run", "すべて確かめて何をするかを示し、何も変えない"),
-    ("build", "services", "組み立てるサービス(既定はすべての Worker)"),
+    (
+        "",
+        "env",
+        "環境(local は手元、それ以外はリモート)。CLOUDFLARE_ENV でも指定できる",
+    ),
+    (
+        "",
+        "dry_run",
+        "すべて確かめて何をするかを示し、何も変えない",
+    ),
+    (
+        "build",
+        "services",
+        "組み立てるサービス(既定はすべての Worker)",
+    ),
     ("up", "build", "組み立て直してから動かす"),
-    ("up", "remove_orphans", "compose ファイルから消えたサービスの Worker を消す"),
-    ("up", "services", "動かすサービス(依存先も含む。既定はすべて)"),
+    (
+        "up",
+        "remove_orphans",
+        "compose ファイルから消えたサービスの Worker を消す",
+    ),
+    (
+        "up",
+        "services",
+        "動かすサービス(依存先も含む。既定はすべて)",
+    ),
     ("down", "purge", "データ(D1・R2・KV・Queue)も消す"),
     ("down", "services", "下ろすサービス(既定はすべて)"),
     ("logs", "follow", "新しい行を待って出し続ける"),
     ("logs", "services", "出すサービス(既定はすべて)"),
     ("backup", "dest", "書き出し先"),
     ("restore", "drop", "先にいまの中身を消す"),
-    ("restore", "from", "控えのフォルダ(manifest.json のあるもの)"),
+    (
+        "restore",
+        "from",
+        "控えのフォルダ(manifest.json のあるもの)",
+    ),
 ];
 
 fn localize(mut cmd: clap::Command, path: &str) -> clap::Command {
@@ -215,7 +254,11 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
     match cli.command {
         Cmd::Build { services } => build::build(&ctx, &services).map(|_| ()),
-        Cmd::Up { build, remove_orphans: _, services } => local::up(&ctx, build, &services),
+        Cmd::Up {
+            build,
+            remove_orphans: _,
+            services,
+        } => local::up(&ctx, build, &services),
         Cmd::Down { purge, services } => local::down(&ctx, purge, &services),
         Cmd::Ps => local::ps(&ctx),
         Cmd::Logs { follow, services } => local::logs(&ctx, follow, &services),

@@ -6,7 +6,6 @@ use crate::build::Built;
 use crate::compose::{Compose, Kind, Resource, Target, Worker};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The S3-compatible API keys for local R2 (REQ-009, REQ-016): the tool
@@ -22,18 +21,6 @@ pub const GATEWAY: &str = "wc-gateway";
 
 pub fn logs_worker(svc: &str) -> String {
     format!("wc-logs-{svc}")
-}
-
-/// Every resource key → its type ("d1", "r2", …).
-pub fn resource_types(c: &Compose) -> BTreeMap<String, &'static str> {
-    let mut out = BTreeMap::new();
-    for s in &c.services {
-        let t = s.kind.type_name();
-        for k in crate::compose::resource_keys(s) {
-            out.insert(k, t);
-        }
-    }
-    out
 }
 
 /// The local config of one user Worker, running its built bundle.
@@ -57,7 +44,9 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     let mut dos = Vec::new();
     for (binding, target) in &w.bindings {
         match target {
-            Target::D1(k) => d1.push(json!({ "binding": binding, "database_name": k, "database_id": k })),
+            Target::D1(k) => {
+                d1.push(json!({ "binding": binding, "database_name": k, "database_id": k }))
+            }
             Target::R2(k) => r2.push(json!({
                 "binding": binding,
                 "bucket_name": k,
@@ -131,7 +120,10 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     if !w.crons.is_empty() {
         cfg.insert("triggers".into(), json!({ "crons": w.crons }));
     }
-    cfg.insert("tail_consumers".into(), json!([{ "service": logs_worker(svc) }]));
+    cfg.insert(
+        "tail_consumers".into(),
+        json!([{ "service": logs_worker(svc) }]),
+    );
     let _ = c;
     Value::Object(cfg)
 }
@@ -266,8 +258,10 @@ pub fn migrate(c: &Compose, dir: &Path) -> Result<Option<(PathBuf, Vec<String>)>
             for (i, r) in list.iter().enumerate() {
                 let r: &Resource<crate::compose::D1> = r;
                 if let Some(m) = &r.spec.migrations {
-                    dbs.push(json!({ "binding": format!("DB_{}_{i}", s.name.replace('-', "_")),
-                        "database_name": r.key, "database_id": r.key, "migrations_dir": m }));
+                    dbs.push(
+                        json!({ "binding": format!("DB_{}_{i}", s.name.replace('-', "_")),
+                        "database_name": r.key, "database_id": r.key, "migrations_dir": m }),
+                    );
                     names.push(r.key.clone());
                 }
             }
@@ -278,7 +272,10 @@ pub fn migrate(c: &Compose, dir: &Path) -> Result<Option<(PathBuf, Vec<String>)>
     }
     std::fs::create_dir_all(dir)?;
     let script = dir.join("index.js");
-    std::fs::write(&script, "export default { fetch() { return new Response(null, { status: 404 }) } }\n")?;
+    std::fs::write(
+        &script,
+        "export default { fetch() { return new Response(null, { status: 404 }) } }\n",
+    )?;
     let cfg = json!({ "name": "wc-migrate", "main": script, "compatibility_date": "2026-09-01", "d1_databases": dbs });
     let path = dir.join("wrangler.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&cfg)?)?;

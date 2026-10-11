@@ -31,19 +31,22 @@ jobs:
           "$nv" run npm install --no-audit --no-fund semver@7.6.3 >/dev/null
           test "$("$nv" run semver 1.2.3 -i minor)" = 1.3.0
           test "$("$nv" run node -e 'console.log(process.argv[1])' 'a&b')" = 'a&b'
-      # wrangler-compose without touching Cloudflare: build is a dry run.
-      - name: wrangler-compose smoke test
+      # wrangler-compose `--env local` end to end, without Cloudflare.
+      # Windows: stopping the runtime is not verified yet, so only build there.
+      - name: wrangler-compose local test
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          export NV_HOME="$RUNNER_TEMP/nvhome"
+          BIN="$PWD/target/release" bash crates/wrangler-compose/tests/local-smoke.sh
+      - name: wrangler-compose build test
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           bin="$PWD/target/release"
-          wc="$bin/wrangler-compose"
           export NV_HOME="$RUNNER_TEMP/nvhome"
-          mkdir -p "$RUNNER_TEMP/wcproj/src" && cd "$RUNNER_TEMP/wcproj"
-          echo '{"name":"wcproj","private":true}' > package.json
-          echo 24.11.1 > .node-version
-          echo 'export default { fetch() { return new Response("ok") } }' > src/index.js
-          echo '{"name":"wcproj","main":"src/index.js","compatibility_date":"2026-09-01","env":{"staging":{"name":"wcproj-staging"}}}' > wrangler.jsonc
-          "$bin/nv" run npm install --no-audit --no-fund --save-dev wrangler@4.128.0 >/dev/null
-          "$wc" --env staging build
-          if "$wc" up; then echo "up without --env must fail"; exit 1; fi
+          cp -R crates/wrangler-compose/tests/fixture "$RUNNER_TEMP/wcproj" && cd "$RUNNER_TEMP/wcproj"
+          "$bin/nv" run npm install --no-audit --no-fund >/dev/null
+          "$bin/wrangler-compose" --env local build
+          if "$bin/wrangler-compose" up; then echo "up without --env must fail"; exit 1; fi

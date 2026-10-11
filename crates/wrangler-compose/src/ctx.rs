@@ -22,7 +22,11 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn open(env: &str, dry_run: bool) -> Result<Ctx> {
-        if !env.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') || env.is_empty() {
+        if !env
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            || env.is_empty()
+        {
             bail!(crate::tr!(
                 "環境の名前「{env}」には英小文字・数字・- だけを使ってください",
                 "environment name \"{env}\" may only use lowercase letters, digits and -"
@@ -80,23 +84,6 @@ impl Ctx {
         cmd.args(["run", "node", "-e", script]).args(args);
         cmd.current_dir(self.root()).stdin(Stdio::null());
         cmd
-    }
-
-    /// Run Wrangler, its output shown, and fail if it fails.
-    pub fn run_wrangler<I, S>(&self, args: I) -> Result<()>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        let mut cmd = self.wrangler(args);
-        let shown = describe(&cmd);
-        let status = cmd
-            .status()
-            .with_context(|| crate::tr!("{shown} を起動できません", "cannot start {shown}"))?;
-        if !status.success() {
-            bail!(crate::tr!("`{shown}` が失敗しました({status})", "`{shown}` failed ({status})"));
-        }
-        Ok(())
     }
 
     /// Run a node script and read the JSON it prints after `@@WC@@`.
@@ -177,14 +164,6 @@ fn nv_path() -> Result<PathBuf> {
         ));
     }
     Ok(nv)
-}
-
-pub fn describe(cmd: &Command) -> String {
-    cmd.get_args()
-        .skip(1)
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn parse_version(s: &str) -> (u64, u64, u64) {

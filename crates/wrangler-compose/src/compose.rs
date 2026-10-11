@@ -39,7 +39,7 @@ pub struct Service {
 
 #[derive(Debug)]
 pub enum Kind {
-    Worker(Worker),
+    Worker(Box<Worker>),
     D1(Vec<Resource<D1>>),
     R2(Vec<Resource<Bucket>>),
     Kv(Vec<Resource<()>>),
@@ -62,11 +62,13 @@ impl Kind {
 #[derive(Debug)]
 pub struct Resource<T> {
     /// `None` in the short form (the service itself is the resource).
+    #[allow(dead_code)] // for remote environments (not built yet)
     pub sub: Option<String>,
     /// The resource's own name: the service name, or `<service>-<sub>`
     /// (REQ-006). Locally this is also its actual name.
     pub key: String,
     /// Explicit actual name on Cloudflare (`name:`).
+    #[allow(dead_code)] // for remote environments (not built yet)
     pub name: Option<String>,
     pub spec: T,
 }
@@ -194,7 +196,10 @@ impl Compose {
     pub fn closure(&self, names: &[String]) -> Result<Vec<&Service>> {
         for n in names {
             if self.service(n).is_none() {
-                bail!(crate::tr!("サービス「{n}」はありません", "there is no service \"{n}\""));
+                bail!(crate::tr!(
+                    "サービス「{n}」はありません",
+                    "there is no service \"{n}\""
+                ));
             }
         }
         if names.is_empty() {
@@ -211,7 +216,11 @@ impl Compose {
                 }
             }
         }
-        Ok(self.services.iter().filter(|s| want.contains(&s.name)).collect())
+        Ok(self
+            .services
+            .iter()
+            .filter(|s| want.contains(&s.name))
+            .collect())
     }
 }
 
@@ -220,7 +229,9 @@ struct Vars(BTreeMap<String, String>);
 
 impl Lookup for Vars {
     fn get(&self, name: &str) -> Option<String> {
-        std::env::var(name).ok().or_else(|| self.0.get(name).cloned())
+        std::env::var(name)
+            .ok()
+            .or_else(|| self.0.get(name).cloned())
     }
 }
 
@@ -265,15 +276,15 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     let env_file = root.join(format!(".env.{env}"));
-    let file_vars = if env_file.is_file() {
-        crate::git::require_ignored(&root, &env_file, ".env")?;
-        crate::dotenv::parse(
-            &std::fs::read_to_string(&env_file)
-                .with_context(|| crate::tr!("{} を読めません", "cannot read {}", env_file.display()))?,
-        )
-    } else {
-        BTreeMap::new()
-    };
+    let file_vars =
+        if env_file.is_file() {
+            crate::git::require_ignored(&root, &env_file, ".env")?;
+            crate::dotenv::parse(&std::fs::read_to_string(&env_file).with_context(|| {
+                crate::tr!("{} を読めません", "cannot read {}", env_file.display())
+            })?)
+        } else {
+            BTreeMap::new()
+        };
     let text = std::fs::read_to_string(file)
         .with_context(|| crate::tr!("{} を読めません", "cannot read {}", file.display()))?;
     let raw: Value = serde_saphyr::from_str(&text).map_err(|e| {
@@ -333,7 +344,11 @@ fn missing_message(missing: &BTreeSet<Missing>, env: &str, env_file: &Path) -> S
 fn expand_tree(v: Value, vars: &dyn Lookup, missing: &mut BTreeSet<Missing>) -> Value {
     match v {
         Value::String(s) => Value::String(interp::expand(&s, vars, missing)),
-        Value::Array(a) => Value::Array(a.into_iter().map(|x| expand_tree(x, vars, missing)).collect()),
+        Value::Array(a) => Value::Array(
+            a.into_iter()
+                .map(|x| expand_tree(x, vars, missing))
+                .collect(),
+        ),
         Value::Object(o) => Value::Object(
             o.into_iter()
                 .map(|(k, x)| (k, expand_tree(x, vars, missing)))
@@ -350,12 +365,32 @@ struct Checker {
 }
 
 const WORKER_KEYS: &[&str] = &[
-    "type", "build", "name", "ports", "depends_on", "bindings", "consumes", "durable_objects",
-    "secrets", "vars", "routes", "crons", "compatibility_date", "compatibility_flags", "assets",
+    "type",
+    "build",
+    "name",
+    "ports",
+    "depends_on",
+    "bindings",
+    "consumes",
+    "durable_objects",
+    "secrets",
+    "vars",
+    "routes",
+    "crons",
+    "compatibility_date",
+    "compatibility_flags",
+    "assets",
 ];
 const D1_KEYS: &[&str] = &["name", "migrations"];
 const BUCKET_KEYS: &[&str] = &[
-    "name", "public", "cors", "lifecycle", "notifications", "lock", "storage_class", "jurisdiction",
+    "name",
+    "public",
+    "cors",
+    "lifecycle",
+    "notifications",
+    "lock",
+    "storage_class",
+    "jurisdiction",
 ];
 const NAME_ONLY: &[&str] = &["name"];
 
@@ -373,14 +408,20 @@ impl Checker {
         vars: &Vars,
     ) -> Option<Compose> {
         let Value::Object(top) = v else {
-            self.err("(top)", crate::tr!("中身は対応表(キーと値)にしてください", "must be a mapping"));
+            self.err(
+                "(top)",
+                crate::tr!("中身は対応表(キーと値)にしてください", "must be a mapping"),
+            );
             return None;
         };
         self.unknown_keys("(top)", &top, &["name", "services", "secrets"]);
         let name = match top.get("name") {
             Some(Value::String(s)) => s.clone(),
             Some(_) => {
-                self.err("name", crate::tr!("文字列にしてください", "must be a string"));
+                self.err(
+                    "name",
+                    crate::tr!("文字列にしてください", "must be a string"),
+                );
                 String::new()
             }
             None => dir_name.to_lowercase(),
@@ -396,7 +437,13 @@ impl Checker {
         }
         let secrets = self.secrets(top.get("secrets"), vars);
         let Some(Value::Object(svcs)) = top.get("services") else {
-            self.err("services", crate::tr!("サービスを 1 つ以上書いてください", "define at least one service"));
+            self.err(
+                "services",
+                crate::tr!(
+                    "サービスを 1 つ以上書いてください",
+                    "define at least one service"
+                ),
+            );
             return None;
         };
         // First pass: names and types, so references can be resolved.
@@ -404,14 +451,29 @@ impl Checker {
         for (sname, sv) in svcs {
             let at = format!("services.{sname}");
             if !valid_name(sname) {
-                self.err(&at, crate::tr!("サービスの名前には英小文字・数字・- だけを使ってください", "service names may only use lowercase letters, digits and -"));
+                self.err(
+                    &at,
+                    crate::tr!(
+                        "サービスの名前には英小文字・数字・- だけを使ってください",
+                        "service names may only use lowercase letters, digits and -"
+                    ),
+                );
             }
             let Value::Object(o) = sv else {
-                self.err(&at, crate::tr!("対応表(キーと値)にしてください", "must be a mapping"));
+                self.err(
+                    &at,
+                    crate::tr!("対応表(キーと値)にしてください", "must be a mapping"),
+                );
                 continue;
             };
             let Some(Value::String(t)) = o.get("type") else {
-                self.err(&format!("{at}.type"), crate::tr!("型(worker・d1・r2・kv・queue)を書いてください", "set a type (worker, d1, r2, kv or queue)"));
+                self.err(
+                    &format!("{at}.type"),
+                    crate::tr!(
+                        "型(worker・d1・r2・kv・queue)を書いてください",
+                        "set a type (worker, d1, r2, kv or queue)"
+                    ),
+                );
                 continue;
             };
             let plural_key = plural_key(t);
@@ -425,21 +487,71 @@ impl Checker {
         for (sname, sv) in svcs {
             let at = format!("services.{sname}");
             let Value::Object(o) = sv else { continue };
-            let Some((t, _, _)) = types.get(sname).cloned() else { continue };
+            let Some((t, _, _)) = types.get(sname).cloned() else {
+                continue;
+            };
             let kind = match t.as_str() {
-                "worker" => self.worker(&at, o, root, &types, &secrets).map(Kind::Worker),
-                "d1" => Some(Kind::D1(self.resources(&at, sname, o, "databases", D1_KEYS, &[], |c, at, m| c.d1(at, m, root)))),
-                "r2" => Some(Kind::R2(self.resources(&at, sname, o, "buckets", BUCKET_KEYS, &["ports"], |c, at, m| c.bucket(at, m, &types)))),
-                "kv" => Some(Kind::Kv(self.resources(&at, sname, o, "namespaces", NAME_ONLY, &[], |_, _, _| ()))),
-                "queue" => Some(Kind::Queue(self.resources(&at, sname, o, "queues", NAME_ONLY, &[], |_, _, _| ()))),
+                "worker" => self
+                    .worker(&at, o, root, &types, &secrets)
+                    .map(|w| Kind::Worker(Box::new(w))),
+                "d1" => Some(Kind::D1(self.resources(
+                    &at,
+                    sname,
+                    o,
+                    "databases",
+                    D1_KEYS,
+                    &[],
+                    |c, at, m| c.d1(at, m, root),
+                ))),
+                "r2" => Some(Kind::R2(self.resources(
+                    &at,
+                    sname,
+                    o,
+                    "buckets",
+                    BUCKET_KEYS,
+                    &["ports"],
+                    |c, at, m| c.bucket(at, m, &types),
+                ))),
+                "kv" => Some(Kind::Kv(self.resources(
+                    &at,
+                    sname,
+                    o,
+                    "namespaces",
+                    NAME_ONLY,
+                    &[],
+                    |_, _, _| (),
+                ))),
+                "queue" => Some(Kind::Queue(self.resources(
+                    &at,
+                    sname,
+                    o,
+                    "queues",
+                    NAME_ONLY,
+                    &[],
+                    |_, _, _| (),
+                ))),
                 other => {
-                    self.err(&format!("{at}.type"), crate::tr!("知らない型「{other}」です(worker・d1・r2・kv・queue のどれか)", "unknown type \"{other}\" (use worker, d1, r2, kv or queue)"));
+                    self.err(
+                        &format!("{at}.type"),
+                        crate::tr!(
+                            "知らない型「{other}」です(worker・d1・r2・kv・queue のどれか)",
+                            "unknown type \"{other}\" (use worker, d1, r2, kv or queue)"
+                        ),
+                    );
                     None
                 }
             };
             if let Some(kind) = kind {
-                let ports = if t == "r2" { self.ports(&format!("{at}.ports"), o.get("ports")) } else { Vec::new() };
-                services.push(Service { name: sname.clone(), kind, ports });
+                let ports = if t == "r2" {
+                    self.ports(&format!("{at}.ports"), o.get("ports"))
+                } else {
+                    Vec::new()
+                };
+                services.push(Service {
+                    name: sname.clone(),
+                    kind,
+                    ports,
+                });
             }
         }
         let mut used: BTreeMap<u16, String> = BTreeMap::new();
@@ -450,7 +562,14 @@ impl Checker {
             };
             for p in ports {
                 if let Some(other) = used.insert(p.port, s.name.clone()) {
-                    self.err(&format!("services.{}.ports", s.name), crate::tr!("ポート {} は {other} も使っています", "port {} is also used by {other}", p.port));
+                    self.err(
+                        &format!("services.{}.ports", s.name),
+                        crate::tr!(
+                            "ポート {} は {other} も使っています",
+                            "port {} is also used by {other}",
+                            p.port
+                        ),
+                    );
                 }
             }
         }
@@ -473,7 +592,10 @@ impl Checker {
             self.err(
                 &format!("{at}.{k}").replace("(top).", ""),
                 match hint {
-                    Some(h) => crate::tr!("このキーは使えません。{h}", "this key is not supported; {h}"),
+                    Some(h) => crate::tr!(
+                        "このキーは使えません。{h}",
+                        "this key is not supported; {h}"
+                    ),
                     None => crate::tr!("このキーは使えません", "this key is not supported"),
                 },
             );
@@ -484,14 +606,23 @@ impl Checker {
         let mut out = BTreeMap::new();
         let Some(v) = v else { return out };
         let Value::Object(m) = v else {
-            self.err("secrets", crate::tr!("対応表にしてください", "must be a mapping"));
+            self.err(
+                "secrets",
+                crate::tr!("対応表にしてください", "must be a mapping"),
+            );
             return out;
         };
         let mut missing = Vec::new();
         for (name, sv) in m {
             let at = format!("secrets.{name}");
             let Value::Object(o) = sv else {
-                self.err(&at, crate::tr!("environment: <変数名> を書いてください", "write environment: <variable>"));
+                self.err(
+                    &at,
+                    crate::tr!(
+                        "environment: <変数名> を書いてください",
+                        "write environment: <variable>"
+                    ),
+                );
                 continue;
             };
             self.unknown_keys(&at, o, &["environment"]);
@@ -500,12 +631,24 @@ impl Checker {
                 continue;
             };
             if !valid_binding(var) {
-                self.err(&format!("{at}.environment"), crate::tr!("変数名「{var}」は英字・数字・_ だけにしてください", "variable name \"{var}\" may only use letters, digits and _"));
+                self.err(
+                    &format!("{at}.environment"),
+                    crate::tr!(
+                        "変数名「{var}」は英字・数字・_ だけにしてください",
+                        "variable name \"{var}\" may only use letters, digits and _"
+                    ),
+                );
                 continue;
             }
             match vars.get(var) {
                 Some(value) => {
-                    out.insert(name.clone(), Secret { var: var.clone(), value });
+                    out.insert(
+                        name.clone(),
+                        Secret {
+                            var: var.clone(),
+                            value,
+                        },
+                    );
                 }
                 None => missing.push(var.clone()),
             }
@@ -523,6 +666,7 @@ impl Checker {
         out
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resources<T>(
         &mut self,
         at: &str,
@@ -540,19 +684,34 @@ impl Checker {
                 allowed.extend_from_slice(service_keys);
                 self.unknown_keys(at, o, &allowed);
                 if items.is_empty() {
-                    self.err(&format!("{at}.{plural}"), crate::tr!("1 つ以上書いてください", "define at least one"));
+                    self.err(
+                        &format!("{at}.{plural}"),
+                        crate::tr!("1 つ以上書いてください", "define at least one"),
+                    );
                 }
                 for (sub, iv) in items {
                     let iat = format!("{at}.{plural}.{sub}");
                     if !valid_name(sub) {
-                        self.err(&iat, crate::tr!("名前には英小文字・数字・- だけを使ってください", "names may only use lowercase letters, digits and -"));
+                        self.err(
+                            &iat,
+                            crate::tr!(
+                                "名前には英小文字・数字・- だけを使ってください",
+                                "names may only use lowercase letters, digits and -"
+                            ),
+                        );
                     }
                     let empty = Map::new();
                     let m = match iv {
                         Value::Object(m) => m,
                         Value::Null => &empty,
                         _ => {
-                            self.err(&iat, crate::tr!("対応表にしてください(設定が無ければ {{}})", "must be a mapping ({{}} when it has no settings)"));
+                            self.err(
+                                &iat,
+                                crate::tr!(
+                                    "対応表にしてください(設定が無ければ {{}})",
+                                    "must be a mapping ({{}} when it has no settings)"
+                                ),
+                            );
                             continue;
                         }
                     };
@@ -567,7 +726,13 @@ impl Checker {
                     });
                 }
             }
-            Some(_) => self.err(&format!("{at}.{plural}"), crate::tr!("名前をキーにした対応表にしてください", "must be a mapping keyed by name")),
+            Some(_) => self.err(
+                &format!("{at}.{plural}"),
+                crate::tr!(
+                    "名前をキーにした対応表にしてください",
+                    "must be a mapping keyed by name"
+                ),
+            ),
             None => {
                 let mut allowed = vec!["type"];
                 allowed.extend_from_slice(keys);
@@ -575,60 +740,129 @@ impl Checker {
                 self.unknown_keys(at, o, &allowed);
                 let name = self.opt_string(&format!("{at}.name"), o.get("name"));
                 let spec = spec(self, at, o);
-                out.push(Resource { sub: None, key: service.to_string(), name, spec });
+                out.push(Resource {
+                    sub: None,
+                    key: service.to_string(),
+                    name,
+                    spec,
+                });
             }
         }
         out
     }
 
     fn d1(&mut self, at: &str, m: &Map<String, Value>, root: &Path) -> D1 {
-        let migrations = self.opt_string(&format!("{at}.migrations"), m.get("migrations")).map(|p| root.join(p));
+        let migrations = self
+            .opt_string(&format!("{at}.migrations"), m.get("migrations"))
+            .map(|p| root.join(p));
         if let Some(dir) = &migrations
             && !dir.is_dir()
         {
-            self.err(&format!("{at}.migrations"), crate::tr!("フォルダ {} がありません", "folder {} does not exist", dir.display()));
+            self.err(
+                &format!("{at}.migrations"),
+                crate::tr!(
+                    "フォルダ {} がありません",
+                    "folder {} does not exist",
+                    dir.display()
+                ),
+            );
         }
         D1 { migrations }
     }
 
-    fn bucket(&mut self, at: &str, m: &Map<String, Value>, types: &BTreeMap<String, (String, bool, Vec<String>)>) -> Bucket {
+    fn bucket(
+        &mut self,
+        at: &str,
+        m: &Map<String, Value>,
+        types: &BTreeMap<String, (String, bool, Vec<String>)>,
+    ) -> Bucket {
         let mut b = Bucket {
             public: match m.get("public") {
                 None => false,
                 Some(Value::Bool(x)) => *x,
                 Some(_) => {
-                    self.err(&format!("{at}.public"), crate::tr!("true か false にしてください", "must be true or false"));
+                    self.err(
+                        &format!("{at}.public"),
+                        crate::tr!("true か false にしてください", "must be true or false"),
+                    );
                     false
                 }
             },
             ..Bucket::default()
         };
-        for (i, rule) in self.list_of_maps(&format!("{at}.cors"), m.get("cors")).into_iter().enumerate() {
+        for (i, rule) in self
+            .list_of_maps(&format!("{at}.cors"), m.get("cors"))
+            .into_iter()
+            .enumerate()
+        {
             let rat = format!("{at}.cors[{i}]");
-            self.unknown_keys(&rat, &rule, &["origins", "methods", "allowed_headers", "expose_headers", "max_age"]);
+            self.unknown_keys(
+                &rat,
+                &rule,
+                &[
+                    "origins",
+                    "methods",
+                    "allowed_headers",
+                    "expose_headers",
+                    "max_age",
+                ],
+            );
             let cors = Cors {
                 origins: self.strings(&format!("{rat}.origins"), rule.get("origins")),
                 methods: self.strings(&format!("{rat}.methods"), rule.get("methods")),
-                allowed_headers: self.strings(&format!("{rat}.allowed_headers"), rule.get("allowed_headers")),
-                expose_headers: self.strings(&format!("{rat}.expose_headers"), rule.get("expose_headers")),
+                allowed_headers: self.strings(
+                    &format!("{rat}.allowed_headers"),
+                    rule.get("allowed_headers"),
+                ),
+                expose_headers: self
+                    .strings(&format!("{rat}.expose_headers"), rule.get("expose_headers")),
                 max_age: rule.get("max_age").and_then(Value::as_u64),
             };
             if cors.origins.is_empty() || cors.methods.is_empty() {
-                self.err(&rat, crate::tr!("origins と methods を書いてください", "set origins and methods"));
+                self.err(
+                    &rat,
+                    crate::tr!(
+                        "origins と methods を書いてください",
+                        "set origins and methods"
+                    ),
+                );
             }
             for meth in &cors.methods {
                 if !["GET", "PUT", "POST", "DELETE", "HEAD"].contains(&meth.as_str()) {
-                    self.err(&format!("{rat}.methods"), crate::tr!("「{meth}」は使えません(GET・PUT・POST・DELETE・HEAD)", "\"{meth}\" is not allowed (GET, PUT, POST, DELETE, HEAD)"));
+                    self.err(
+                        &format!("{rat}.methods"),
+                        crate::tr!(
+                            "「{meth}」は使えません(GET・PUT・POST・DELETE・HEAD)",
+                            "\"{meth}\" is not allowed (GET, PUT, POST, DELETE, HEAD)"
+                        ),
+                    );
                 }
             }
             b.cors.push(cors);
         }
-        for (i, rule) in self.list_of_maps(&format!("{at}.lifecycle"), m.get("lifecycle")).into_iter().enumerate() {
+        for (i, rule) in self
+            .list_of_maps(&format!("{at}.lifecycle"), m.get("lifecycle"))
+            .into_iter()
+            .enumerate()
+        {
             let rat = format!("{at}.lifecycle[{i}]");
-            self.unknown_keys(&rat, &rule, &["prefix", "expire_after_days", "transition_to_ia_after_days", "abort_multipart_after_days"]);
+            self.unknown_keys(
+                &rat,
+                &rule,
+                &[
+                    "prefix",
+                    "expire_after_days",
+                    "transition_to_ia_after_days",
+                    "abort_multipart_after_days",
+                ],
+            );
             b.lifecycle.push(Value::Object(rule));
         }
-        for (i, rule) in self.list_of_maps(&format!("{at}.notifications"), m.get("notifications")).into_iter().enumerate() {
+        for (i, rule) in self
+            .list_of_maps(&format!("{at}.notifications"), m.get("notifications"))
+            .into_iter()
+            .enumerate()
+        {
             let rat = format!("{at}.notifications[{i}]");
             self.unknown_keys(&rat, &rule, &["queue", "events", "prefix", "suffix"]);
             let queue = match rule.get("queue") {
@@ -640,18 +874,36 @@ impl Checker {
                     }
                 },
                 _ => {
-                    self.err(&format!("{rat}.queue"), crate::tr!("送り先の queue のサービスを書いてください", "set the queue service to send to"));
+                    self.err(
+                        &format!("{rat}.queue"),
+                        crate::tr!(
+                            "送り先の queue のサービスを書いてください",
+                            "set the queue service to send to"
+                        ),
+                    );
                     String::new()
                 }
             };
             let events = self.strings(&format!("{rat}.events"), rule.get("events"));
             for e in &events {
                 if !["object-create", "object-delete"].contains(&e.as_str()) {
-                    self.err(&format!("{rat}.events"), crate::tr!("「{e}」は使えません(object-create・object-delete)", "\"{e}\" is not allowed (object-create, object-delete)"));
+                    self.err(
+                        &format!("{rat}.events"),
+                        crate::tr!(
+                            "「{e}」は使えません(object-create・object-delete)",
+                            "\"{e}\" is not allowed (object-create, object-delete)"
+                        ),
+                    );
                 }
             }
             if events.is_empty() {
-                self.err(&format!("{rat}.events"), crate::tr!("object-create か object-delete を書いてください", "set object-create and/or object-delete"));
+                self.err(
+                    &format!("{rat}.events"),
+                    crate::tr!(
+                        "object-create か object-delete を書いてください",
+                        "set object-create and/or object-delete"
+                    ),
+                );
             }
             b.notifications.push(Notification {
                 queue,
@@ -660,22 +912,39 @@ impl Checker {
                 suffix: self.opt_string(&format!("{rat}.suffix"), rule.get("suffix")),
             });
         }
-        for (i, rule) in self.list_of_maps(&format!("{at}.lock"), m.get("lock")).into_iter().enumerate() {
+        for (i, rule) in self
+            .list_of_maps(&format!("{at}.lock"), m.get("lock"))
+            .into_iter()
+            .enumerate()
+        {
             let rat = format!("{at}.lock[{i}]");
-            self.unknown_keys(&rat, &rule, &["prefix", "retain_days", "retain_until", "indefinite"]);
+            self.unknown_keys(
+                &rat,
+                &rule,
+                &["prefix", "retain_days", "retain_until", "indefinite"],
+            );
             b.lock.push(Value::Object(rule));
         }
         b.storage_class = self.opt_string(&format!("{at}.storage_class"), m.get("storage_class"));
         if let Some(sc) = &b.storage_class
             && !["Standard", "InfrequentAccess"].contains(&sc.as_str())
         {
-            self.err(&format!("{at}.storage_class"), crate::tr!("Standard か InfrequentAccess にしてください", "must be Standard or InfrequentAccess"));
+            self.err(
+                &format!("{at}.storage_class"),
+                crate::tr!(
+                    "Standard か InfrequentAccess にしてください",
+                    "must be Standard or InfrequentAccess"
+                ),
+            );
         }
         b.jurisdiction = self.opt_string(&format!("{at}.jurisdiction"), m.get("jurisdiction"));
         if let Some(j) = &b.jurisdiction
             && !["eu", "fedramp"].contains(&j.as_str())
         {
-            self.err(&format!("{at}.jurisdiction"), crate::tr!("eu か fedramp にしてください", "must be eu or fedramp"));
+            self.err(
+                &format!("{at}.jurisdiction"),
+                crate::tr!("eu か fedramp にしてください", "must be eu or fedramp"),
+            );
         }
         b
     }
@@ -694,10 +963,23 @@ impl Checker {
             Some(Value::String(p)) => {
                 w.build = root.join(p);
                 if !w.build.is_dir() {
-                    self.err(&format!("{at}.build"), crate::tr!("フォルダ {} がありません", "folder {} does not exist", w.build.display()));
+                    self.err(
+                        &format!("{at}.build"),
+                        crate::tr!(
+                            "フォルダ {} がありません",
+                            "folder {} does not exist",
+                            w.build.display()
+                        ),
+                    );
                 }
             }
-            _ => self.err(&format!("{at}.build"), crate::tr!("Worker のコードのフォルダを書いてください", "set the folder with the Worker's code")),
+            _ => self.err(
+                &format!("{at}.build"),
+                crate::tr!(
+                    "Worker のコードのフォルダを書いてください",
+                    "set the folder with the Worker's code"
+                ),
+            ),
         }
         w.name = self.opt_string(&format!("{at}.name"), o.get("name"));
         w.ports = self.ports(&format!("{at}.ports"), o.get("ports"));
@@ -705,13 +987,23 @@ impl Checker {
             Some(Value::Object(m)) => {
                 for (dep, cond) in m {
                     let cond_ok = match cond {
-                        Value::Object(c) => matches!(c.get("condition"), None | Some(Value::String(_)))
-                            && c.get("condition").and_then(Value::as_str).is_none_or(|s| s == "service_started"),
+                        Value::Object(c) => {
+                            matches!(c.get("condition"), None | Some(Value::String(_)))
+                                && c.get("condition")
+                                    .and_then(Value::as_str)
+                                    .is_none_or(|s| s == "service_started")
+                        }
                         Value::Null => true,
                         _ => false,
                     };
                     if !cond_ok {
-                        self.err(&format!("{at}.depends_on.{dep}"), crate::tr!("condition は service_started だけが使えます", "only condition: service_started is supported"));
+                        self.err(
+                            &format!("{at}.depends_on.{dep}"),
+                            crate::tr!(
+                                "condition は service_started だけが使えます",
+                                "only condition: service_started is supported"
+                            ),
+                        );
                     }
                 }
                 m.keys().cloned().collect()
@@ -720,7 +1012,13 @@ impl Checker {
         };
         for dep in &w.depends_on {
             if !types.contains_key(dep) {
-                self.err(&format!("{at}.depends_on"), crate::tr!("サービス「{dep}」はありません", "there is no service \"{dep}\""));
+                self.err(
+                    &format!("{at}.depends_on"),
+                    crate::tr!(
+                        "サービス「{dep}」はありません",
+                        "there is no service \"{dep}\""
+                    ),
+                );
             }
         }
         match o.get("bindings") {
@@ -732,7 +1030,13 @@ impl Checker {
                         self.err(&bat, crate::tr!("名前は英字・数字・_ だけにしてください(コードから env.<名前> で見えます)", "names may only use letters, digits and _ (seen as env.<name>)"));
                     }
                     let Value::String(t) = target else {
-                        self.err(&bat, crate::tr!("相手のサービスを書いてください", "set the service it points at"));
+                        self.err(
+                            &bat,
+                            crate::tr!(
+                                "相手のサービスを書いてください",
+                                "set the service it points at"
+                            ),
+                        );
                         continue;
                     };
                     match resolve_target(t, types) {
@@ -741,7 +1045,13 @@ impl Checker {
                     }
                 }
             }
-            Some(_) => self.err(&format!("{at}.bindings"), crate::tr!("「名前: 相手」の対応表にしてください", "must be a mapping of name: target")),
+            Some(_) => self.err(
+                &format!("{at}.bindings"),
+                crate::tr!(
+                    "「名前: 相手」の対応表にしてください",
+                    "must be a mapping of name: target"
+                ),
+            ),
         }
         for q in self.strings(&format!("{at}.consumes"), o.get("consumes")) {
             match resolve_resource(&q, "queue", types) {
@@ -749,17 +1059,30 @@ impl Checker {
                 Err(e) => self.err(&format!("{at}.consumes"), e),
             }
         }
-        w.durable_objects = self.strings(&format!("{at}.durable_objects"), o.get("durable_objects"));
+        w.durable_objects =
+            self.strings(&format!("{at}.durable_objects"), o.get("durable_objects"));
         w.secrets = self.strings(&format!("{at}.secrets"), o.get("secrets"));
         for s in &w.secrets {
             if !secrets.contains_key(s) && !self.errors.iter().any(|e| e.starts_with("secrets")) {
-                self.err(&format!("{at}.secrets"), crate::tr!("シークレット「{s}」が一番上の secrets にありません", "secret \"{s}\" is not in the top-level secrets"));
+                self.err(
+                    &format!("{at}.secrets"),
+                    crate::tr!(
+                        "シークレット「{s}」が一番上の secrets にありません",
+                        "secret \"{s}\" is not in the top-level secrets"
+                    ),
+                );
             }
         }
         match o.get("vars") {
             None => {}
             Some(Value::Object(m)) => w.vars = m.clone(),
-            Some(_) => self.err(&format!("{at}.vars"), crate::tr!("「名前: 値」の対応表にしてください", "must be a mapping of name: value")),
+            Some(_) => self.err(
+                &format!("{at}.vars"),
+                crate::tr!(
+                    "「名前: 値」の対応表にしてください",
+                    "must be a mapping of name: value"
+                ),
+            ),
         }
         w.routes = self.strings(&format!("{at}.routes"), o.get("routes"));
         w.crons = self.strings(&format!("{at}.crons"), o.get("crons"));
@@ -767,12 +1090,24 @@ impl Checker {
             Some(Value::String(d)) if is_date(d) => w.compatibility_date = d.clone(),
             _ => self.err(&format!("{at}.compatibility_date"), crate::tr!("互換の日付を \"2026-09-01\" の形で書いてください(Worker の振る舞いを決めるので省けません)", "set the compatibility date like \"2026-09-01\" (it decides how the Worker behaves, so it is required)")),
         }
-        w.compatibility_flags = self.strings(&format!("{at}.compatibility_flags"), o.get("compatibility_flags"));
-        w.assets = self.opt_string(&format!("{at}.assets"), o.get("assets")).map(|p| root.join(p));
+        w.compatibility_flags = self.strings(
+            &format!("{at}.compatibility_flags"),
+            o.get("compatibility_flags"),
+        );
+        w.assets = self
+            .opt_string(&format!("{at}.assets"), o.get("assets"))
+            .map(|p| root.join(p));
         if let Some(dir) = &w.assets
             && !dir.is_dir()
         {
-            self.err(&format!("{at}.assets"), crate::tr!("フォルダ {} がありません", "folder {} does not exist", dir.display()));
+            self.err(
+                &format!("{at}.assets"),
+                crate::tr!(
+                    "フォルダ {} がありません",
+                    "folder {} does not exist",
+                    dir.display()
+                ),
+            );
         }
         Some(w)
     }
@@ -786,7 +1121,13 @@ impl Checker {
             }
         }
         if out.len() > 1 {
-            self.err(at, crate::tr!("1 つのサービスに書けるポートは 1 つです", "a service takes one port"));
+            self.err(
+                at,
+                crate::tr!(
+                    "1 つのサービスに書けるポートは 1 つです",
+                    "a service takes one port"
+                ),
+            );
         }
         out
     }
@@ -810,13 +1151,19 @@ impl Checker {
                 .filter_map(|x| match x {
                     Value::String(s) => Some(s.clone()),
                     _ => {
-                        self.err(at, crate::tr!("文字列の一覧にしてください", "must be a list of strings"));
+                        self.err(
+                            at,
+                            crate::tr!("文字列の一覧にしてください", "must be a list of strings"),
+                        );
                         None
                     }
                 })
                 .collect(),
             Some(_) => {
-                self.err(at, crate::tr!("一覧にしてください([...])", "must be a list ([...])"));
+                self.err(
+                    at,
+                    crate::tr!("一覧にしてください([...])", "must be a list ([...])"),
+                );
                 Vec::new()
             }
         }
@@ -830,7 +1177,10 @@ impl Checker {
                 .filter_map(|x| match x {
                     Value::Object(m) => Some(m.clone()),
                     _ => {
-                        self.err(at, crate::tr!("対応表の一覧にしてください", "must be a list of mappings"));
+                        self.err(
+                            at,
+                            crate::tr!("対応表の一覧にしてください", "must be a list of mappings"),
+                        );
                         None
                     }
                 })
@@ -848,7 +1198,11 @@ impl Checker {
         let names: Vec<String> = services.iter().map(|s| s.name.clone()).collect();
         let resource_service: BTreeMap<String, String> = services
             .iter()
-            .flat_map(|s| resource_keys(s).into_iter().map(move |k| (k, s.name.clone())))
+            .flat_map(|s| {
+                resource_keys(s)
+                    .into_iter()
+                    .map(move |k| (k, s.name.clone()))
+            })
             .collect();
         let mut hard: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut soft: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -890,11 +1244,18 @@ impl Checker {
             .collect();
         let order = topo(&names, &combined).or_else(|| topo(&names, &hard));
         let Some(order) = order else {
-            self.err("depends_on", crate::tr!("depends_on が輪になっています", "depends_on forms a cycle"));
+            self.err(
+                "depends_on",
+                crate::tr!("depends_on が輪になっています", "depends_on forms a cycle"),
+            );
             return services;
         };
-        let mut by_name: BTreeMap<String, Service> = services.into_iter().map(|s| (s.name.clone(), s)).collect();
-        order.into_iter().filter_map(|n| by_name.remove(&n)).collect()
+        let mut by_name: BTreeMap<String, Service> =
+            services.into_iter().map(|s| (s.name.clone(), s)).collect();
+        order
+            .into_iter()
+            .filter_map(|n| by_name.remove(&n))
+            .collect()
     }
 }
 
@@ -942,7 +1303,10 @@ fn resolve_target(t: &str, types: &Types) -> std::result::Result<Target, String>
         None => (t, None),
     };
     let Some((ty, _, _)) = types.get(svc) else {
-        return Err(crate::tr!("サービス「{svc}」はありません", "there is no service \"{svc}\""));
+        return Err(crate::tr!(
+            "サービス「{svc}」はありません",
+            "there is no service \"{svc}\""
+        ));
     };
     if ty == "worker" {
         return Ok(match sub {
@@ -969,21 +1333,33 @@ fn resolve_resource(t: &str, want: &str, types: &Types) -> std::result::Result<S
         None => (t, None),
     };
     let Some((ty, plural, subs)) = types.get(svc) else {
-        return Err(crate::tr!("サービス「{svc}」はありません", "there is no service \"{svc}\""));
+        return Err(crate::tr!(
+            "サービス「{svc}」はありません",
+            "there is no service \"{svc}\""
+        ));
     };
     if ty != want {
-        return Err(crate::tr!("「{t}」は {want} ではありません({ty} です)", "\"{t}\" is not a {want} (it is a {ty})"));
+        return Err(crate::tr!(
+            "「{t}」は {want} ではありません({ty} です)",
+            "\"{t}\" is not a {want} (it is a {ty})"
+        ));
     }
     match (plural, sub) {
         (false, None) => Ok(svc.to_string()),
-        (false, Some(_)) => Err(crate::tr!("サービス「{svc}」は 1 つだけの形なので、「{svc}」と書いてください", "service \"{svc}\" holds a single resource; write \"{svc}\"")),
+        (false, Some(_)) => Err(crate::tr!(
+            "サービス「{svc}」は 1 つだけの形なので、「{svc}」と書いてください",
+            "service \"{svc}\" holds a single resource; write \"{svc}\""
+        )),
         (true, None) => Err(crate::tr!(
             "サービス「{svc}」には複数あるので、「{svc}.<名前>」で指してください({})",
             "service \"{svc}\" holds several; write \"{svc}.<name>\" ({})",
             subs.join(", ")
         )),
         (true, Some(s)) if subs.iter().any(|x| x == s) => Ok(format!("{svc}-{s}")),
-        (true, Some(s)) => Err(crate::tr!("サービス「{svc}」に「{s}」はありません", "service \"{svc}\" has no \"{s}\"")),
+        (true, Some(s)) => Err(crate::tr!(
+            "サービス「{svc}」に「{s}」はありません",
+            "service \"{svc}\" has no \"{s}\""
+        )),
     }
 }
 
@@ -1027,7 +1403,8 @@ fn bad_port(s: &str) -> String {
 
 fn valid_name(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !s.starts_with('-')
         && !s.ends_with('-')
 }
@@ -1043,17 +1420,31 @@ fn is_date(s: &str) -> bool {
     b.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
-        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 /// Where a docker compose key's job is done instead (REQ-001).
 fn hint_for(key: &str) -> Option<String> {
     Some(match key {
         "image" => crate::tr!("型は type に書きます", "use type for the kind of service"),
-        "environment" | "env_file" => crate::tr!("値は vars か secrets に書き、環境ごとの違いは ${{VAR}} と .env.<環境> で表します", "put values in vars or secrets; per-environment values come from ${{VAR}} and .env.<env>"),
-        "volumes" => crate::tr!("データは d1・r2・kv・queue のサービスとして書きます", "data lives in d1, r2, kv or queue services"),
-        "networks" | "links" => crate::tr!("つながりは bindings に書きます", "connections go in bindings"),
-        "profiles" | "extends" | "include" => crate::tr!("環境の切り替えは --env で行います", "switch environments with --env"),
+        "environment" | "env_file" => crate::tr!(
+            "値は vars か secrets に書き、環境ごとの違いは ${{VAR}} と .env.<環境> で表します",
+            "put values in vars or secrets; per-environment values come from ${{VAR}} and .env.<env>"
+        ),
+        "volumes" => crate::tr!(
+            "データは d1・r2・kv・queue のサービスとして書きます",
+            "data lives in d1, r2, kv or queue services"
+        ),
+        "networks" | "links" => crate::tr!(
+            "つながりは bindings に書きます",
+            "connections go in bindings"
+        ),
+        "profiles" | "extends" | "include" => crate::tr!(
+            "環境の切り替えは --env で行います",
+            "switch environments with --env"
+        ),
         _ => return None,
     })
 }
@@ -1161,10 +1552,16 @@ x-anything: 1
         let web = c.services.iter().find(|s| s.name == "web").unwrap();
         let Kind::Worker(w) = &web.kind else { panic!() };
         assert_eq!(w.routes, ["x.example"]);
-        assert_eq!(w.bindings[1], ("FILES".to_string(), Target::R2("storage-files".into())));
+        assert_eq!(
+            w.bindings[1],
+            ("FILES".to_string(), Target::R2("storage-files".into()))
+        );
         let storage = c.services.iter().find(|s| s.name == "storage").unwrap();
         let Kind::R2(b) = &storage.kind else { panic!() };
-        assert_eq!(b.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["storage-files", "storage-uploads"]);
+        assert_eq!(
+            b.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(),
+            ["storage-files", "storage-uploads"]
+        );
         assert_eq!(b[0].spec.cors[0].origins, ["https://x.example"]);
         assert_eq!(b[1].spec.notifications[0].queue, "jobs");
         assert_eq!(c.secrets["stripe-key"].value, "sk");
@@ -1198,7 +1595,13 @@ services:
     ports: ["1:1"]
 "#;
         let err = project(yaml, None).1.unwrap_err().to_string();
-        for want in ["services.web.image", "services.web.ports", "services.web.bindings.A", "services.web.bindings.B", "services.db.ports"] {
+        for want in [
+            "services.web.image",
+            "services.web.ports",
+            "services.web.bindings.A",
+            "services.web.bindings.B",
+            "services.db.ports",
+        ] {
             assert!(err.contains(want), "{want} missing in:\n{err}");
         }
     }
@@ -1222,13 +1625,27 @@ services:
 "#;
         let ok = base.replace("DEP_A", "").replace("DEP_B", "");
         assert!(project(&ok, None).1.is_ok());
-        let cyc = base.replace("DEP_A", "depends_on: [b]").replace("DEP_B", "depends_on: [a]");
-        assert!(project(&cyc, None).1.unwrap_err().to_string().contains("depends_on"));
+        let cyc = base
+            .replace("DEP_A", "depends_on: [b]")
+            .replace("DEP_B", "depends_on: [a]");
+        assert!(
+            project(&cyc, None)
+                .1
+                .unwrap_err()
+                .to_string()
+                .contains("depends_on")
+        );
     }
 
     #[test]
     fn parses_ports_like_docker_short_syntax() {
-        assert_eq!(parse_port("8787:8787").unwrap(), Port { ip: "127.0.0.1".into(), port: 8787 });
+        assert_eq!(
+            parse_port("8787:8787").unwrap(),
+            Port {
+                ip: "127.0.0.1".into(),
+                port: 8787
+            }
+        );
         assert_eq!(parse_port("0.0.0.0:80:80").unwrap().ip, "0.0.0.0");
         assert_eq!(parse_port("[::1]:9:9").unwrap().ip, "::1");
         assert!(parse_port("8787").is_err());

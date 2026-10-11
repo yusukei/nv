@@ -3,8 +3,8 @@
 
 use crate::build::{self, Built};
 use crate::compose::{Kind, Service};
-use crate::ctx::Ctx;
 use crate::configs;
+use crate::ctx::Ctx;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -82,33 +82,29 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
         return dry_run(ctx, &services);
     }
     let Some(_lock) = try_lock(&p)? else {
-        let urls = read_record(&p)
-            .map(|r| urls_text(&r))
-            .unwrap_or_default();
+        let urls = read_record(&p).map(|r| urls_text(&r)).unwrap_or_default();
         bail!(crate::tr!(
             "このプロジェクトでは、ほかの端末で --env local up が動いています{urls}。止めるには --env local down を打ってください",
             "--env local up is already running for this project{urls}; stop it with --env local down"
         ));
     };
-    loop {
-        match run_once(ctx, &p, &services, rebuild)? {
-            Stop::Done => return Ok(()),
-            Stop::Restart => {
-                say(crate::tr!(
-                    "compose ファイルか .env.local が変わったので、動かし直します",
-                    "the compose file or .env.local changed; restarting"
-                ));
-                // Re-read the compose file and start over in a new process
-                // so every derived value is fresh.
-                let exe = std::env::current_exe()?;
-                let mut args: Vec<String> = std::env::args().skip(1).collect();
-                if !args.iter().any(|a| a == "--env" || a == "-e") {
-                    args.splice(0..0, ["--env".to_string(), "local".to_string()]);
-                }
-                drop(_lock);
-                let status = Command::new(exe).args(&args).status()?;
-                std::process::exit(status.code().unwrap_or(1));
+    match run_once(ctx, &p, &services, rebuild)? {
+        Stop::Done => Ok(()),
+        Stop::Restart => {
+            say(crate::tr!(
+                "compose ファイルか .env.local が変わったので、動かし直します",
+                "the compose file or .env.local changed; restarting"
+            ));
+            // Re-read the compose file and start over in a new process so
+            // every derived value is fresh.
+            let exe = std::env::current_exe()?;
+            let mut args: Vec<String> = std::env::args().skip(1).collect();
+            if !args.iter().any(|a| a == "--env" || a == "-e") {
+                args.splice(0..0, ["--env".to_string(), "local".to_string()]);
             }
+            drop(_lock);
+            let status = Command::new(exe).args(&args).status()?;
+            std::process::exit(status.code().unwrap_or(1));
         }
     }
 }
@@ -147,17 +143,25 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let workers: Vec<(&Service, &crate::compose::Worker)> = services
         .iter()
         .filter_map(|s| match &s.kind {
-            Kind::Worker(w) => Some((*s, w)),
+            Kind::Worker(w) => Some((*s, &**w)),
             _ => None,
         })
         .collect();
     if workers.is_empty() {
-        bail!(crate::tr!("動かす Worker がありません", "there is no Worker to run"));
+        bail!(crate::tr!(
+            "動かす Worker がありません",
+            "there is no Worker to run"
+        ));
     }
     let mut builts: BTreeMap<String, Built> = BTreeMap::new();
     for (s, w) in &workers {
         if rebuild {
-            let _ = std::fs::remove_file(ctx.tool_dir().join("build").join(&s.name).join("stamp.json"));
+            let _ = std::fs::remove_file(
+                ctx.tool_dir()
+                    .join("build")
+                    .join(&s.name)
+                    .join("stamp.json"),
+            );
         }
         builts.insert(s.name.clone(), build::build_one(ctx, &s.name, w, true)?);
     }
@@ -169,7 +173,13 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         for port in &w.ports {
             let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
                 .parse()
-                .map_err(|_| anyhow!(crate::tr!("アドレス {} が読めません", "cannot parse address {}", port.ip)))?;
+                .map_err(|_| {
+                    anyhow!(crate::tr!(
+                        "アドレス {} が読めません",
+                        "cannot parse address {}",
+                        port.ip
+                    ))
+                })?;
             let l = TcpListener::bind(addr).map_err(|e| {
                 anyhow!(crate::tr!(
                     "{} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
@@ -186,10 +196,18 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut r2_sites = Vec::new();
     for s in services.iter() {
         let Kind::R2(buckets) = &s.kind else { continue };
-        let Some(port) = s.ports.first() else { continue };
+        let Some(port) = s.ports.first() else {
+            continue;
+        };
         let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
             .parse()
-            .map_err(|_| anyhow!(crate::tr!("アドレス {} が読めません", "cannot parse address {}", port.ip)))?;
+            .map_err(|_| {
+                anyhow!(crate::tr!(
+                    "アドレス {} が読めません",
+                    "cannot parse address {}",
+                    port.ip
+                ))
+            })?;
         let l = TcpListener::bind(addr).map_err(|e| {
             anyhow!(crate::tr!(
                 "{} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
@@ -199,7 +217,11 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         })?;
         let sites: Vec<crate::r2proxy::Site> = buckets
             .iter()
-            .map(|b| crate::r2proxy::Site { key: b.key.clone(), public: b.spec.public, cors: b.spec.cors.clone() })
+            .map(|b| crate::r2proxy::Site {
+                key: b.key.clone(),
+                public: b.spec.public,
+                cors: b.spec.cors.clone(),
+            })
             .collect();
         r2_sites.push((s.name.clone(), port.clone(), l, sites));
     }
@@ -212,7 +234,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut configs = Vec::new();
     let gw_dir = run.join(configs::GATEWAY);
     std::fs::create_dir_all(&gw_dir)?;
-    configs.push(write_cfg(&gw_dir, &configs::gateway(&gw_dir, &port_map, gateway_port)?)?);
+    configs.push(write_cfg(
+        &gw_dir,
+        &configs::gateway(&gw_dir, &port_map, gateway_port)?,
+    )?);
     let token = new_token()?;
     configs.push(data_config(ctx, &run, &token)?);
     for (s, w) in &workers {
@@ -234,12 +259,22 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     // 4. Migrations before anything runs (REQ-009).
     if let Some((cfg, dbs)) = configs::migrate(&ctx.compose, &run.join("wc-migrate"))? {
         for db in dbs {
-            say(crate::tr!("{db}: 移行を当てます", "{db}: applying migrations"));
+            say(crate::tr!(
+                "{db}: 移行を当てます",
+                "{db}: applying migrations"
+            ));
             let mut cmd = ctx.wrangler(["d1", "migrations", "apply", &db, "--local", "-c"]);
             cmd.arg(&cfg).arg("--persist-to").arg(p.state());
-            let out = cmd.output().context(crate::tr!("Wrangler を起動できません", "cannot start Wrangler"))?;
+            let out = cmd.output().context(crate::tr!(
+                "Wrangler を起動できません",
+                "cannot start Wrangler"
+            ))?;
             if !out.status.success() {
-                eprint!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+                eprint!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
                 bail!(crate::tr!(
                     "{db} の移行が失敗したので、動かしません(上の出力を見てください)",
                     "migrations of {db} failed, so nothing was started (see the output above)"
@@ -271,7 +306,12 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             .filter(|x| x.public)
             .map(|x| format!("http://{}.localhost:{}/", x.key, port.port))
             .collect();
-        r2_urls.push((svc, base, sites.iter().map(|x| x.key.clone()).collect::<Vec<_>>(), public));
+        r2_urls.push((
+            svc,
+            base,
+            sites.iter().map(|x| x.key.clone()).collect::<Vec<_>>(),
+            public,
+        ));
         let shared = std::sync::Arc::new(crate::r2proxy::Shared {
             sites,
             gateway: format!("127.0.0.1:{gateway_port}").parse()?,
@@ -281,7 +321,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     }
     let mut urls = Vec::new();
     for (s, w) in &workers {
-        let url = w.ports.first().map(|pt| format!("http://{}:{}", url_host(&pt.ip), pt.port));
+        let url = w
+            .ports
+            .first()
+            .map(|pt| format!("http://{}:{}", url_host(&pt.ip), pt.port));
         urls.push((s.name.clone(), url));
     }
     write_private(
@@ -301,7 +344,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let has_notify = ctx.compose.services.iter().any(|s| {
         matches!(&s.kind, Kind::R2(list) if list.iter().any(|r| !r.spec.notifications.is_empty()))
     });
-    let notifier = has_notify.then(|| crate::data::Client::new(format!("http://127.0.0.1:{gateway_port}"), token.clone()));
+    let notifier = has_notify.then(|| {
+        crate::data::Client::new(format!("http://127.0.0.1:{gateway_port}"), token.clone())
+    });
     let mut last_tick = Instant::now();
     let mut last_watch = Instant::now();
     let result = loop {
@@ -311,7 +356,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         {
             last_tick = Instant::now();
             if let Err(e) = n.notify_tick() {
-                say(crate::tr!("R2 の通知を送れません: {e:#}", "cannot send R2 notifications: {e:#}"));
+                say(crate::tr!(
+                    "R2 の通知を送れません: {e:#}",
+                    "cannot send R2 notifications: {e:#}"
+                ));
             }
         }
         if crate::interrupt::check().is_err() {
@@ -319,7 +367,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         }
         if let Some(status) = child.try_wait()? {
             let _ = std::fs::remove_file(p.record());
-            bail!(crate::tr!("Wrangler が止まりました({status})", "Wrangler stopped ({status})"));
+            bail!(crate::tr!(
+                "Wrangler が止まりました({status})",
+                "Wrangler stopped ({status})"
+            ));
         }
         if stamps(&compose_files) != compose_stamp {
             break Stop::Restart;
@@ -354,11 +405,20 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
 type R2Url = (String, String, Vec<String>, Vec<String>);
 
 fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)], r2: &[R2Url]) {
-    say(crate::tr!("手元で動いています(Ctrl+C で止まります)", "running locally (Ctrl+C stops it)"));
+    say(crate::tr!(
+        "手元で動いています(Ctrl+C で止まります)",
+        "running locally (Ctrl+C stops it)"
+    ));
     for (s, u) in urls {
         match u {
             Some(u) => eprintln!("  {s:<16} {u}"),
-            None => eprintln!("  {s:<16} {}", crate::tr!("(ports 無し。ほかのサービスから呼ぶ)", "(no ports; reached from other services)")),
+            None => eprintln!(
+                "  {s:<16} {}",
+                crate::tr!(
+                    "(ports 無し。ほかのサービスから呼ぶ)",
+                    "(no ports; reached from other services)"
+                )
+            ),
         }
     }
     for (svc, base, buckets, public) in r2 {
@@ -374,7 +434,11 @@ fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)
             )
         );
         for p in public {
-            eprintln!("  {:<16} {}", "", crate::tr!("公開の URL: {p}<キー>", "public URL: {p}<key>"));
+            eprintln!(
+                "  {:<16} {}",
+                "",
+                crate::tr!("公開の URL: {p}<キー>", "public URL: {p}<key>")
+            );
         }
     }
     // r2 services without ports: reachable through a Worker's port, but
@@ -400,28 +464,57 @@ fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
     for s in services {
         match &s.kind {
             Kind::Worker(w) => {
-                let port = w.ports.first().map(|p| format!("http://{}:{}", url_host(&p.ip), p.port)).unwrap_or_else(|| "-".into());
-                let secrets: Vec<&str> = w.secrets.iter().filter_map(|n| ctx.compose.secrets.get(n).map(|x| x.var.as_str())).collect();
+                let port = w
+                    .ports
+                    .first()
+                    .map(|p| format!("http://{}:{}", url_host(&p.ip), p.port))
+                    .unwrap_or_else(|| "-".into());
+                let secrets: Vec<&str> = w
+                    .secrets
+                    .iter()
+                    .filter_map(|n| ctx.compose.secrets.get(n).map(|x| x.var.as_str()))
+                    .collect();
                 say(crate::tr!(
                     "{}: 組み立てて手元で動かす({port})。シークレット: {}",
                     "{}: would build and run locally ({port}); secrets: {}",
                     s.name,
-                    if secrets.is_empty() { "-".to_string() } else { secrets.join(", ") }
+                    if secrets.is_empty() {
+                        "-".to_string()
+                    } else {
+                        secrets.join(", ")
+                    }
                 ));
             }
             Kind::D1(list) => {
                 for r in list {
-                    let m = r.spec.migrations.as_ref().map(|d| d.display().to_string()).unwrap_or_else(|| "-".into());
-                    say(crate::tr!("{}: 手元の D1(移行: {m})", "{}: local D1 (migrations: {m})", r.key));
+                    let m = r
+                        .spec
+                        .migrations
+                        .as_ref()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_else(|| "-".into());
+                    say(crate::tr!(
+                        "{}: 手元の D1(移行: {m})",
+                        "{}: local D1 (migrations: {m})",
+                        r.key
+                    ));
                 }
             }
             other => {
                 let keys = crate::compose::resource_keys(s);
-                say(format!("{}: {} {}", s.name, other.type_name(), keys.join(", ")));
+                say(format!(
+                    "{}: {} {}",
+                    s.name,
+                    other.type_name(),
+                    keys.join(", ")
+                ));
             }
         }
     }
-    say(crate::tr!("dry-run なので何も変えていません", "dry run: nothing was changed"));
+    say(crate::tr!(
+        "dry-run なので何も変えていません",
+        "dry run: nothing was changed"
+    ));
     Ok(())
 }
 
@@ -486,13 +579,22 @@ fn spawn_runtime(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     own_group(&mut cmd);
-    let mut child = cmd.spawn().context(crate::tr!("Wrangler を起動できません", "cannot start Wrangler"))?;
+    let mut child = cmd.spawn().context(crate::tr!(
+        "Wrangler を起動できません",
+        "cannot start Wrangler"
+    ))?;
     let ready = Arc::new(AtomicBool::new(false));
     let show = log_file.is_some();
     let (tx, rx) = mpsc::channel::<()>();
     for stream in [
-        child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-        child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
     ]
     .into_iter()
     .flatten()
@@ -525,11 +627,16 @@ fn spawn_runtime(
     loop {
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(()) => return Ok(Some(child)),
-            Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(200)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(Duration::from_millis(200))
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         if let Some(status) = child.try_wait()? {
-            bail!(crate::tr!("Wrangler が止まりました({status})。上の出力を見てください", "Wrangler stopped ({status}); see the output above"));
+            bail!(crate::tr!(
+                "Wrangler が止まりました({status})。上の出力を見てください",
+                "Wrangler stopped ({status}); see the output above"
+            ));
         }
         if crate::interrupt::check().is_err() {
             stop_child(&mut child);
@@ -537,7 +644,10 @@ fn spawn_runtime(
         }
         if started.elapsed() > Duration::from_secs(180) {
             stop_child(&mut child);
-            bail!(crate::tr!("Wrangler が 3 分たっても動き出しません", "Wrangler did not become ready within 3 minutes"));
+            bail!(crate::tr!(
+                "Wrangler が 3 分たっても動き出しません",
+                "Wrangler did not become ready within 3 minutes"
+            ));
         }
     }
 }
@@ -548,10 +658,18 @@ fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<
     let p = Paths::new(ctx);
     match try_lock(&p)? {
         None => {
-            let rec = read_record(&p).ok_or_else(|| anyhow!(crate::tr!("動いている up が分かりません", "cannot find the running up")))?;
+            let rec = read_record(&p).ok_or_else(|| {
+                anyhow!(crate::tr!(
+                    "動いている up が分かりません",
+                    "cannot find the running up"
+                ))
+            })?;
             let port = rec["gateway"].as_u64().unwrap_or(0);
             let token = rec["token"].as_str().unwrap_or_default().to_string();
-            f(&crate::data::Client::new(format!("http://127.0.0.1:{port}"), token), true)
+            f(
+                &crate::data::Client::new(format!("http://127.0.0.1:{port}"), token),
+                true,
+            )
         }
         Some(lock) => {
             let run = p.dir.join("run-data");
@@ -567,7 +685,10 @@ fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<
             let Some(mut child) = spawn_runtime(ctx, &p, &cfgs, port, None)? else {
                 bail!(crate::tr!("中断しました(Ctrl+C)", "interrupted (Ctrl+C)"));
             };
-            let r = f(&crate::data::Client::new(format!("http://127.0.0.1:{port}"), token), false);
+            let r = f(
+                &crate::data::Client::new(format!("http://127.0.0.1:{port}"), token),
+                false,
+            );
             stop_child(&mut child);
             let _ = std::fs::remove_dir_all(&run);
             drop(lock);
@@ -602,22 +723,36 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
             }
         }
         if ctx.dry_run {
-            say(crate::tr!("dry-run なので何も変えていません", "dry run: nothing was changed"));
+            say(crate::tr!(
+                "dry-run なので何も変えていません",
+                "dry run: nothing was changed"
+            ));
             return Ok(());
         }
-        crate::confirm::retype_env(&ctx.env, &crate::tr!("手元のデータを消す", "delete the local data"))?;
+        crate::confirm::retype_env(
+            &ctx.env,
+            &crate::tr!("手元のデータを消す", "delete the local data"),
+        )?;
     } else if ctx.dry_run {
-        say(crate::tr!("動いている up を止めます。dry-run なので何も変えていません", "would stop the running up; dry run: nothing was changed"));
+        say(crate::tr!(
+            "動いている up を止めます。dry-run なので何も変えていません",
+            "would stop the running up; dry run: nothing was changed"
+        ));
         return Ok(());
     }
     stop_running(&p)?;
     if purge {
-        let _lock = try_lock(&p)?.ok_or_else(|| anyhow!(crate::tr!("up が止まりません", "up did not stop")))?;
+        let _lock = try_lock(&p)?
+            .ok_or_else(|| anyhow!(crate::tr!("up が止まりません", "up did not stop")))?;
         if p.state().exists() {
-            std::fs::remove_dir_all(p.state())
-                .with_context(|| crate::tr!("{} を消せません", "cannot delete {}", p.state().display()))?;
+            std::fs::remove_dir_all(p.state()).with_context(|| {
+                crate::tr!("{} を消せません", "cannot delete {}", p.state().display())
+            })?;
         }
-        say(crate::tr!("手元のデータを消しました", "deleted the local data"));
+        say(crate::tr!(
+            "手元のデータを消しました",
+            "deleted the local data"
+        ));
     }
     Ok(())
 }
@@ -625,12 +760,20 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
 /// Stop a running `up` (from another terminal) and wait until it is gone.
 fn stop_running(p: &Paths) -> Result<()> {
     if try_lock(p)?.is_some() {
-        say(crate::tr!("--env local up は動いていません", "--env local up is not running"));
+        say(crate::tr!(
+            "--env local up は動いていません",
+            "--env local up is not running"
+        ));
         return Ok(());
     }
     let pid = read_record(p)
         .and_then(|r| r["pid"].as_u64())
-        .ok_or_else(|| anyhow!(crate::tr!("動いている up が分かりません", "cannot find the running up")))?;
+        .ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "動いている up が分かりません",
+                "cannot find the running up"
+            ))
+        })?;
     terminate(pid as u32);
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(20) {
@@ -640,7 +783,10 @@ fn stop_running(p: &Paths) -> Result<()> {
             return Ok(());
         }
     }
-    bail!(crate::tr!("20 秒待っても up が止まりません(pid {pid})", "up did not stop within 20 seconds (pid {pid})"))
+    bail!(crate::tr!(
+        "20 秒待っても up が止まりません(pid {pid})",
+        "up did not stop within 20 seconds (pid {pid})"
+    ))
 }
 
 pub fn ps(ctx: &Ctx) -> Result<()> {
@@ -655,21 +801,80 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
             .as_str()
             .map(str::to_string)
     };
-    println!("{:<16} {:<8} {:<10} {}", "SERVICE", "TYPE", "STATE", "URL / RESOURCES");
+    // Pending migrations can be counted only while up runs (through the
+    // data service; nothing is started just to look).
+    let mut pending: BTreeMap<String, usize> = BTreeMap::new();
+    if running && let Some(rec) = &rec {
+        let client = crate::data::Client::new(
+            format!("http://127.0.0.1:{}", rec["gateway"].as_u64().unwrap_or(0)),
+            rec["token"].as_str().unwrap_or_default().to_string(),
+        );
+        pending = crate::data::pending_migrations(ctx, &client).unwrap_or_default();
+    }
+    println!(
+        "{:<16} {:<8} {:<10} URL / RESOURCES",
+        "SERVICE", "TYPE", "STATE"
+    );
     for s in &ctx.compose.services {
         match &s.kind {
             Kind::Worker(_) => {
-                let state = if running { crate::tr!("動作中", "running") } else { crate::tr!("停止", "stopped") };
-                println!("{:<16} {:<8} {:<10} {}", s.name, "worker", state, url_of(&s.name).unwrap_or_else(|| "-".into()));
+                let state = if running {
+                    crate::tr!("動作中", "running")
+                } else {
+                    crate::tr!("停止", "stopped")
+                };
+                println!(
+                    "{:<16} {:<8} {:<10} {}",
+                    s.name,
+                    "worker",
+                    state,
+                    url_of(&s.name).unwrap_or_else(|| "-".into())
+                );
+            }
+            Kind::D1(list) => {
+                let parts: Vec<String> = list
+                    .iter()
+                    .map(|r| match pending.get(&r.key) {
+                        Some(n) if *n > 0 => crate::tr!(
+                            "{} (未適用の移行 {n})",
+                            "{} ({n} pending migrations)",
+                            r.key
+                        ),
+                        _ => r.key.clone(),
+                    })
+                    .collect();
+                println!(
+                    "{:<16} {:<8} {:<10} {}",
+                    s.name,
+                    "d1",
+                    "-",
+                    parts.join(", ")
+                );
             }
             other => {
-                let keys = crate::compose::resource_keys(s).join(", ");
-                println!("{:<16} {:<8} {:<10} {}", s.name, other.type_name(), "-", keys);
+                let mut keys = crate::compose::resource_keys(s).join(", ");
+                if let Some(port) = s.ports.first() {
+                    keys = format!("{keys}  http://{}:{}", url_host(&port.ip), port.port);
+                }
+                println!(
+                    "{:<16} {:<8} {:<10} {}",
+                    s.name,
+                    other.type_name(),
+                    "-",
+                    keys
+                );
             }
         }
     }
     if running {
-        println!("{:<16} {:<8} {:<10} {}", configs::GATEWAY, crate::tr!("道具", "tool"), crate::tr!("動作中", "running"), "-");
+        for tool in [configs::GATEWAY, configs::DATA] {
+            println!(
+                "{:<16} {:<8} {:<10} -",
+                tool,
+                crate::tr!("道具", "tool"),
+                crate::tr!("動作中", "running")
+            );
+        }
     }
     Ok(())
 }
@@ -677,13 +882,18 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
 pub fn logs(ctx: &Ctx, follow: bool, names: &[String]) -> Result<()> {
     for n in names {
         if ctx.compose.service(n).is_none() {
-            bail!(crate::tr!("サービス「{n}」はありません", "there is no service \"{n}\""));
+            bail!(crate::tr!(
+                "サービス「{n}」はありません",
+                "there is no service \"{n}\""
+            ));
         }
     }
     let path = Paths::new(ctx).log();
     let wanted = |line: &str| {
         names.is_empty()
-            || names.iter().any(|n| line.starts_with(&format!("{n} ")) && line.contains(" | "))
+            || names
+                .iter()
+                .any(|n| line.starts_with(&format!("{n} ")) && line.contains(" | "))
     };
     let mut pos = 0u64;
     loop {
@@ -699,7 +909,10 @@ pub fn logs(ctx: &Ctx, follow: bool, names: &[String]) -> Result<()> {
                 }
             }
         } else if !follow {
-            say(crate::tr!("まだログがありません(--env local up を動かすと書かれます)", "no logs yet (they are written while --env local up runs)"));
+            say(crate::tr!(
+                "まだログがありません(--env local up を動かすと書かれます)",
+                "no logs yet (they are written while --env local up runs)"
+            ));
         }
         if !follow {
             return Ok(());
@@ -743,12 +956,25 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
             if drop && !full.is_empty() {
                 say(crate::tr!("消す: {}", "would delete: {}", full.join(", ")));
             }
-            say(crate::tr!("dry-run なので何も変えていません", "dry run: nothing was changed"));
+            say(crate::tr!(
+                "dry-run なので何も変えていません",
+                "dry run: nothing was changed"
+            ));
             return Ok(());
         }
         if drop && !full.is_empty() {
-            say(crate::tr!("先に消すもの: {}", "to be deleted first: {}", full.join(", ")));
-            crate::confirm::retype_env(&ctx.env, &crate::tr!("いまの中身を消して控えに入れ替える", "replace the current contents with the backup"))?;
+            say(crate::tr!(
+                "先に消すもの: {}",
+                "to be deleted first: {}",
+                full.join(", ")
+            ));
+            crate::confirm::retype_env(
+                &ctx.env,
+                &crate::tr!(
+                    "いまの中身を消して控えに入れ替える",
+                    "replace the current contents with the backup"
+                ),
+            )?;
             crate::data::drop_targets(c, &plan)?;
         }
         crate::data::load(c, &plan, from)?;
@@ -834,7 +1060,15 @@ impl LogFilter {
             }
             return Some(line);
         }
-        let system = ["⎔", "▲", "[wrangler:", "⛅️", "Ready on", "Your worker", "Total Upload"];
+        let system = [
+            "⎔",
+            "▲",
+            "[wrangler:",
+            "⛅️",
+            "Ready on",
+            "Your worker",
+            "Total Upload",
+        ];
         if system.iter().any(|p| t.starts_with(p)) {
             return Some(line);
         }
@@ -889,7 +1123,11 @@ fn free_port() -> Result<u16> {
 }
 
 fn bracket(ip: &str) -> String {
-    if ip.contains(':') { format!("[{ip}]") } else { ip.to_string() }
+    if ip.contains(':') {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    }
 }
 
 fn url_host(ip: &str) -> String {
@@ -912,8 +1150,12 @@ fn forward(listener: TcpListener, target: SocketAddr) {
     for conn in listener.incoming() {
         let Ok(client) = conn else { continue };
         std::thread::spawn(move || {
-            let Ok(upstream) = TcpStream::connect(target) else { return };
-            let (Ok(c2), Ok(u2)) = (client.try_clone(), upstream.try_clone()) else { return };
+            let Ok(upstream) = TcpStream::connect(target) else {
+                return;
+            };
+            let (Ok(c2), Ok(u2)) = (client.try_clone(), upstream.try_clone()) else {
+                return;
+            };
             let a = std::thread::spawn(move || pipe(client, upstream));
             pipe(u2, c2);
             let _ = a.join();
@@ -940,11 +1182,17 @@ fn stop_child(child: &mut Child) {
     let pid = child.id();
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-s", "TERM", "--", &format!("-{pid}")]).status();
+        let _ = Command::new("kill")
+            .args(["-s", "TERM", "--", &format!("-{pid}")])
+            .status();
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
@@ -956,7 +1204,10 @@ fn stop_child(child: &mut Child) {
     #[cfg(unix)]
     {
         // Anything left in the group (workerd) gets a hard stop.
-        let _ = Command::new("kill").args(["-s", "KILL", "--", &format!("-{pid}")]).stderr(Stdio::null()).status();
+        let _ = Command::new("kill")
+            .args(["-s", "KILL", "--", &format!("-{pid}")])
+            .stderr(Stdio::null())
+            .status();
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -966,11 +1217,17 @@ fn stop_child(child: &mut Child) {
 fn terminate(pid: u32) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-s", "TERM", "--", &pid.to_string()]).status();
+        let _ = Command::new("kill")
+            .args(["-s", "TERM", "--", &pid.to_string()])
+            .status();
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -982,24 +1239,41 @@ mod tests {
     fn tags_receiver_lines_and_drops_raw_console_lines() {
         let mut f = LogFilter::default();
         assert_eq!(
-            f.filter(r#"[wc-logs-api] @@WC@@{"s":"api","t":"log","l":"log","m":"hello 1"}"#).unwrap(),
+            f.filter(r#"[wc-logs-api] @@WC@@{"s":"api","t":"log","l":"log","m":"hello 1"}"#)
+                .unwrap(),
             "api          | hello 1"
         );
         assert!(f.filter("hello 1").is_none());
         assert!(f.filter("[wrangler:info] GET / 200 OK (3ms)").is_none());
-        assert!(f.filter("\u{1b}[32m⎔ Reloading local server...\u{1b}[0m").unwrap().starts_with('⎔'));
-        assert!(f.filter("api has access to the following bindings:").is_none());
+        assert!(
+            f.filter("\u{1b}[32m⎔ Reloading local server...\u{1b}[0m")
+                .unwrap()
+                .starts_with('⎔')
+        );
+        assert!(
+            f.filter("api has access to the following bindings:")
+                .is_none()
+        );
         assert!(f.filter("env.DB (db)   D1 Database   local").is_none());
         assert!(f.filter("").is_none());
         assert!(f.filter("✘ [ERROR] boom").is_some());
         assert!(f.filter("    at worker.js:1").is_some());
         assert!(f.filter("").is_none());
         // The tool's own S3 setting notice is not shown; anything else is.
-        assert!(f.filter("▲ [WARNING] Processing run/api/wrangler.json configuration:").is_none());
+        assert!(
+            f.filter("▲ [WARNING] Processing run/api/wrangler.json configuration:")
+                .is_none()
+        );
         assert!(f.filter("").is_none());
-        assert!(f.filter("    - \"local_dev.experimental_s3_credentials\" fields are experimental").is_none());
+        assert!(
+            f.filter("    - \"local_dev.experimental_s3_credentials\" fields are experimental")
+                .is_none()
+        );
         assert!(f.filter("").is_none());
-        assert!(f.filter("▲ [WARNING] Processing run/web/wrangler.json configuration:").is_none());
+        assert!(
+            f.filter("▲ [WARNING] Processing run/web/wrangler.json configuration:")
+                .is_none()
+        );
         assert!(f.filter("    - something else").is_none());
         assert!(f.filter("").unwrap().contains("something else"));
     }

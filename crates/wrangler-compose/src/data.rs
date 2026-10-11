@@ -55,14 +55,20 @@ impl Client {
             .header("authorization", format!("Bearer {}", self.token))
             .header("content-type", "application/json")
             .send(serde_json::to_vec(body)?.as_slice())
-            .context(crate::tr!("データのサービスにつながりません", "cannot reach the data service"))?;
+            .context(crate::tr!(
+                "データのサービスにつながりません",
+                "cannot reach the data service"
+            ))?;
         let status = res.status().as_u16();
         let text = res.body_mut().read_to_string().unwrap_or_default();
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if status != 200 {
             bail!(
                 "{}",
-                v["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("HTTP {status}"))
+                v["error"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("HTTP {status}"))
             );
         }
         Ok(v)
@@ -74,12 +80,21 @@ impl Client {
             .get(self.url(path))
             .header("authorization", format!("Bearer {}", self.token))
             .call()
-            .context(crate::tr!("データのサービスにつながりません", "cannot reach the data service"))?;
+            .context(crate::tr!(
+                "データのサービスにつながりません",
+                "cannot reach the data service"
+            ))?;
         let status = res.status().as_u16();
         let text = res.body_mut().read_to_string().unwrap_or_default();
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if status != 200 {
-            bail!("{}", v["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("HTTP {status}")));
+            bail!(
+                "{}",
+                v["error"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("HTTP {status}"))
+            );
         }
         Ok(v)
     }
@@ -90,10 +105,28 @@ impl Client {
         Ok(())
     }
 
-    pub fn query(&self, db: &str, sql: &str, params: Vec<Value>) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
-        let v = self.post(&format!("d1/{db}/query"), &json!({ "sql": sql, "params": params }))?;
-        let cols = v["columns"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_string)).collect();
-        let rows = v["rows"].as_array().into_iter().flatten().filter_map(|r| r.as_array().cloned()).collect();
+    pub fn query(
+        &self,
+        db: &str,
+        sql: &str,
+        params: Vec<Value>,
+    ) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
+        let v = self.post(
+            &format!("d1/{db}/query"),
+            &json!({ "sql": sql, "params": params }),
+        )?;
+        let cols = v["columns"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.as_str().map(str::to_string))
+            .collect();
+        let rows = v["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.as_array().cloned())
+            .collect();
         Ok((cols, rows))
     }
 
@@ -102,15 +135,27 @@ impl Client {
         if statements.is_empty() {
             return Ok(());
         }
-        let st: Vec<Value> = statements.into_iter().map(|(s, p)| json!({ "sql": s, "params": p })).collect();
+        let st: Vec<Value> = statements
+            .into_iter()
+            .map(|(s, p)| json!({ "sql": s, "params": p }))
+            .collect();
         self.post(&format!("d1/{db}/batch"), &json!({ "statements": st }))?;
         Ok(())
     }
 
-    pub fn r2_list(&self, bucket: &str, cursor: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
-        let q = cursor.map(|c| format!("?cursor={}", enc(c))).unwrap_or_default();
+    pub fn r2_list(
+        &self,
+        bucket: &str,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<Value>, Option<String>)> {
+        let q = cursor
+            .map(|c| format!("?cursor={}", enc(c)))
+            .unwrap_or_default();
         let v = self.get_json(&format!("r2/{bucket}/list{q}"))?;
-        Ok((v["objects"].as_array().cloned().unwrap_or_default(), v["cursor"].as_str().map(str::to_string)))
+        Ok((
+            v["objects"].as_array().cloned().unwrap_or_default(),
+            v["cursor"].as_str().map(str::to_string),
+        ))
     }
 
     /// Download one object into `dest`; returns (sha256, size, metadata).
@@ -121,7 +166,10 @@ impl Client {
             .header("authorization", format!("Bearer {}", self.token))
             .call()?;
         if res.status().as_u16() != 200 {
-            bail!(crate::tr!("{bucket} の {key} を読めません", "cannot read {key} from {bucket}"));
+            bail!(crate::tr!(
+                "{bucket} の {key} を読めません",
+                "cannot read {key} from {bucket}"
+            ));
         }
         let meta: Value = res
             .headers()
@@ -135,7 +183,8 @@ impl Client {
     }
 
     pub fn r2_put(&self, bucket: &str, key: &str, src: &Path, meta: &Value) -> Result<()> {
-        let file = File::open(src).with_context(|| crate::tr!("{} を開けません", "cannot open {}", src.display()))?;
+        let file = File::open(src)
+            .with_context(|| crate::tr!("{} を開けません", "cannot open {}", src.display()))?;
         let len = file.metadata()?.len();
         let mut res = self
             .agent
@@ -146,7 +195,10 @@ impl Client {
             .send(ureq::SendBody::from_reader(&mut BufReader::new(file)))?;
         if res.status().as_u16() != 200 {
             let t = res.body_mut().read_to_string().unwrap_or_default();
-            bail!(crate::tr!("{bucket} へ {key} を書けません: {t}", "cannot write {key} to {bucket}: {t}"));
+            bail!(crate::tr!(
+                "{bucket} へ {key} を書けません: {t}",
+                "cannot write {key} to {bucket}: {t}"
+            ));
         }
         Ok(())
     }
@@ -157,9 +209,14 @@ impl Client {
     }
 
     pub fn kv_list(&self, ns: &str, cursor: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
-        let q = cursor.map(|c| format!("?cursor={}", enc(c))).unwrap_or_default();
+        let q = cursor
+            .map(|c| format!("?cursor={}", enc(c)))
+            .unwrap_or_default();
         let v = self.get_json(&format!("kv/{ns}/list{q}"))?;
-        Ok((v["keys"].as_array().cloned().unwrap_or_default(), v["cursor"].as_str().map(str::to_string)))
+        Ok((
+            v["keys"].as_array().cloned().unwrap_or_default(),
+            v["cursor"].as_str().map(str::to_string),
+        ))
     }
 
     pub fn kv_get(&self, ns: &str, key: &str) -> Result<Option<(Vec<u8>, Value)>> {
@@ -191,7 +248,10 @@ impl Client {
             .send(value)?;
         if res.status().as_u16() != 200 {
             let t = res.body_mut().read_to_string().unwrap_or_default();
-            bail!(crate::tr!("{ns} へ {key} を書けません: {t}", "cannot write {key} to {ns}: {t}"));
+            bail!(crate::tr!(
+                "{ns} へ {key} を書けません: {t}",
+                "cannot write {key} to {ns}: {t}"
+            ));
         }
         Ok(())
     }
@@ -203,7 +263,10 @@ impl Client {
             .header("authorization", format!("Bearer {}", self.token))
             .call()?;
         if res.status().as_u16() != 200 {
-            bail!(crate::tr!("{ns} の {key} を消せません", "cannot delete {key} from {ns}"));
+            bail!(crate::tr!(
+                "{ns} の {key} を消せません",
+                "cannot delete {key} from {ns}"
+            ));
         }
         Ok(())
     }
@@ -224,7 +287,8 @@ fn enc(s: &str) -> String {
 
 fn copy_hashing(reader: &mut dyn Read, dest: &Path) -> Result<(String, u64)> {
     let mut file = BufWriter::new(
-        File::create(dest).with_context(|| crate::tr!("{} を作れません", "cannot create {}", dest.display()))?,
+        File::create(dest)
+            .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dest.display()))?,
     );
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -243,7 +307,8 @@ fn copy_hashing(reader: &mut dyn Read, dest: &Path) -> Result<(String, u64)> {
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
-    let mut f = File::open(path).with_context(|| crate::tr!("{} を開けません", "cannot open {}", path.display()))?;
+    let mut f = File::open(path)
+        .with_context(|| crate::tr!("{} を開けません", "cannot open {}", path.display()))?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
@@ -283,8 +348,14 @@ fn d1_objects(client: &Client, db: &str) -> Result<Vec<(String, String, Option<S
         .into_iter()
         .map(|r| {
             (
-                r.first().and_then(Value::as_str).unwrap_or_default().to_string(),
-                r.get(1).and_then(Value::as_str).unwrap_or_default().to_string(),
+                r.first()
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                r.get(1)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 r.get(2).and_then(Value::as_str).map(str::to_string),
             )
         })
@@ -292,7 +363,10 @@ fn d1_objects(client: &Client, db: &str) -> Result<Vec<(String, String, Option<S
 }
 
 pub fn d1_table_count(client: &Client, db: &str) -> Result<usize> {
-    Ok(d1_objects(client, db)?.iter().filter(|(t, _, _)| t == "table").count())
+    Ok(d1_objects(client, db)?
+        .iter()
+        .filter(|(t, _, _)| t == "table")
+        .count())
 }
 
 fn quote(name: &str) -> String {
@@ -301,10 +375,12 @@ fn quote(name: &str) -> String {
 
 fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
     let objects = d1_objects(client, db)?;
-    if let Some((_, name, _)) = objects
-        .iter()
-        .find(|(t, _, sql)| t == "table" && sql.as_deref().is_some_and(|s| s.to_uppercase().starts_with("CREATE VIRTUAL")))
-    {
+    if let Some((_, name, _)) = objects.iter().find(|(t, _, sql)| {
+        t == "table"
+            && sql
+                .as_deref()
+                .is_some_and(|s| s.to_uppercase().starts_with("CREATE VIRTUAL"))
+    }) {
         bail!(crate::tr!(
             "D1 {db} の表 {name} は仮想表(FTS など)なので控えられません",
             "D1 {db}: table {name} is a virtual table (FTS etc.), which cannot be backed up"
@@ -331,7 +407,10 @@ fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
             offset += 500;
         }
     }
-    for (_, _, sql) in objects.iter().filter(|(t, _, sql)| t != "table" && sql.is_some()) {
+    for (_, _, sql) in objects
+        .iter()
+        .filter(|(t, _, sql)| t != "table" && sql.is_some())
+    {
         writeln!(out, "{}", json!({ "post": sql }))?;
     }
     out.flush()?;
@@ -343,7 +422,10 @@ fn drop_d1(client: &Client, db: &str) -> Result<()> {
     let mut st = vec![("PRAGMA defer_foreign_keys = true".to_string(), vec![])];
     for kind in ["view", "trigger", "table"] {
         for (t, name, _) in objects.iter().filter(|(t, _, _)| t == kind) {
-            st.push((format!("DROP {} IF EXISTS {}", t.to_uppercase(), quote(name)), vec![]));
+            st.push((
+                format!("DROP {} IF EXISTS {}", t.to_uppercase(), quote(name)),
+                vec![],
+            ));
         }
     }
     client.batch(db, st)
@@ -373,9 +455,18 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
             if !schema.is_empty() {
                 client.batch(db, std::mem::take(&mut schema))?;
             }
-            let cols: Vec<String> = v["c"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(quote)).collect();
+            let cols: Vec<String> = v["c"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.as_str().map(quote))
+                .collect();
             let marks = vec!["?"; cols.len()].join(", ");
-            let sql = format!("INSERT INTO {} ({}) VALUES ({marks})", quote(t), cols.join(", "));
+            let sql = format!(
+                "INSERT INTO {} ({}) VALUES ({marks})",
+                quote(t),
+                cols.join(", ")
+            );
             pending.push((sql, v["r"].as_array().cloned().unwrap_or_default()));
             rows += 1;
             if pending.len() >= 50 {
@@ -389,6 +480,46 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
     Ok(rows)
 }
 
+/// Pending migrations of every D1 with a migrations folder (for `ps`).
+pub fn pending_migrations(
+    ctx: &crate::ctx::Ctx,
+    client: &Client,
+) -> Result<std::collections::BTreeMap<String, usize>> {
+    let mut out = std::collections::BTreeMap::new();
+    for s in &ctx.compose.services {
+        let Kind::D1(list) = &s.kind else { continue };
+        for r in list {
+            let Some(dir) = &r.spec.migrations else {
+                continue;
+            };
+            let (_, has) = client.query(&r.key, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations'", vec![])?;
+            let applied: Vec<String> = if has
+                .first()
+                .and_then(|r| r.first())
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+            {
+                client
+                    .query(&r.key, "SELECT name FROM d1_migrations", vec![])?
+                    .1
+                    .iter()
+                    .filter_map(|x| x.first().and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let n = fs::read_dir(dir)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".sql") && !applied.contains(n))
+                .count();
+            out.insert(r.key.clone(), n);
+        }
+    }
+    Ok(out)
+}
+
 /// Apply pending migrations through the data service (used while the
 /// environment runs, so no second process touches the database). Statement
 /// splitting is Wrangler's own (`unstable_splitSqlQuery`).
@@ -396,13 +527,18 @@ pub fn apply_migrations(ctx: &crate::ctx::Ctx, client: &Client) -> Result<()> {
     for s in &ctx.compose.services {
         let Kind::D1(list) = &s.kind else { continue };
         for r in list {
-            let Some(dir) = &r.spec.migrations else { continue };
+            let Some(dir) = &r.spec.migrations else {
+                continue;
+            };
             client.batch(
                 &r.key,
                 vec![("CREATE TABLE IF NOT EXISTS d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)".into(), vec![])],
             )?;
             let (_, rows) = client.query(&r.key, "SELECT name FROM d1_migrations", vec![])?;
-            let applied: Vec<String> = rows.iter().filter_map(|x| x.first().and_then(Value::as_str).map(str::to_string)).collect();
+            let applied: Vec<String> = rows
+                .iter()
+                .filter_map(|x| x.first().and_then(Value::as_str).map(str::to_string))
+                .collect();
             let mut files: Vec<String> = fs::read_dir(dir)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -417,11 +553,22 @@ pub fn apply_migrations(ctx: &crate::ctx::Ctx, client: &Client) -> Result<()> {
                     .flatten()
                     .filter_map(|x| x.as_str().map(|s| (s.to_string(), vec![])))
                     .collect();
-                st.push(("INSERT INTO d1_migrations (name) VALUES (?)".into(), vec![json!(f)]));
+                st.push((
+                    "INSERT INTO d1_migrations (name) VALUES (?)".into(),
+                    vec![json!(f)],
+                ));
                 client.batch(&r.key, st).with_context(|| {
-                    crate::tr!("{} の移行 {f} が失敗しました", "migration {f} of {} failed", r.key)
+                    crate::tr!(
+                        "{} の移行 {f} が失敗しました",
+                        "migration {f} of {} failed",
+                        r.key
+                    )
                 })?;
-                say(crate::tr!("{}: 移行 {f} を当てました", "{}: applied migration {f}", r.key));
+                say(crate::tr!(
+                    "{}: 移行 {f} を当てました",
+                    "{}: applied migration {f}",
+                    r.key
+                ));
             }
         }
     }
@@ -498,16 +645,29 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
         None => ctx.root().join("backups"),
     };
     let dir = base.join(&ctx.env).join(timestamp());
-    crate::git::require_ignored(ctx.root(), &dir, crate::tr!("控えの書き出し先", "the backup folder").as_str())?;
+    crate::git::require_ignored(
+        ctx.root(),
+        &dir,
+        crate::tr!("控えの書き出し先", "the backup folder").as_str(),
+    )?;
     let list = resources(&ctx.compose);
     if ctx.dry_run {
         for (t, key, n) in counts(&ctx.compose, client)? {
-            say(crate::tr!("書き出す: {}", "would back up: {}", describe_count(t, &key, n)));
+            say(crate::tr!(
+                "書き出す: {}",
+                "would back up: {}",
+                describe_count(t, &key, n)
+            ));
         }
-        say(crate::tr!("書き出し先: {} (dry-run なので何も書いていません)", "destination: {} (dry run: nothing was written)", dir.display()));
+        say(crate::tr!(
+            "書き出し先: {} (dry-run なので何も書いていません)",
+            "destination: {} (dry run: nothing was written)",
+            dir.display()
+        ));
         return Ok(dir);
     }
-    fs::create_dir_all(&dir).with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
+    fs::create_dir_all(&dir)
+        .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
     let mut entries = Vec::new();
     for (t, key) in list {
         crate::interrupt::check()?;
@@ -529,9 +689,15 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
                     let k = o["key"].as_str().unwrap_or_default();
                     let rel = format!("{folder}/{i:08}");
                     let (sha, size, meta) = client.r2_get(&key, k, &dir.join(&rel))?;
-                    list.push(json!({ "key": k, "file": rel, "size": size, "sha256": sha, "meta": meta }));
+                    list.push(
+                        json!({ "key": k, "file": rel, "size": size, "sha256": sha, "meta": meta }),
+                    );
                 }
-                say(crate::tr!("R2 {key}: オブジェクト {}", "R2 {key}: {} objects", list.len()));
+                say(crate::tr!(
+                    "R2 {key}: オブジェクト {}",
+                    "R2 {key}: {} objects",
+                    list.len()
+                ));
                 entries.push(json!({ "type": "r2", "key": key, "objects": list }));
             }
             _ => {
@@ -545,7 +711,11 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
                     let name = k["name"].as_str().unwrap_or_default();
                     if let Some((value, meta)) = client.kv_get(&key, name)? {
                         use base64_lite::encode;
-                        writeln!(out, "{}", json!({ "name": name, "value": encode(&value), "metadata": meta["metadata"], "expiration": k["expiration"] }))?;
+                        writeln!(
+                            out,
+                            "{}",
+                            json!({ "name": name, "value": encode(&value), "metadata": meta["metadata"], "expiration": k["expiration"] })
+                        )?;
                         n += 1;
                     }
                 }
@@ -566,7 +736,11 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
     let tmp = dir.join(".manifest.json.partial");
     fs::write(&tmp, serde_json::to_vec_pretty(&manifest)?)?;
     fs::rename(&tmp, dir.join(MANIFEST))?;
-    say(crate::tr!("控えました: {}", "backed up to {}", dir.display()));
+    say(crate::tr!(
+        "控えました: {}",
+        "backed up to {}",
+        dir.display()
+    ));
     Ok(dir)
 }
 
@@ -616,9 +790,17 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|o| (o["file"].as_str().unwrap_or_default().to_string(), o["sha256"].as_str().unwrap_or_default().to_string()))
+                .map(|o| {
+                    (
+                        o["file"].as_str().unwrap_or_default().to_string(),
+                        o["sha256"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
                 .collect(),
-            _ => vec![(e["file"].as_str().unwrap_or_default().to_string(), e["sha256"].as_str().unwrap_or_default().to_string())],
+            _ => vec![(
+                e["file"].as_str().unwrap_or_default().to_string(),
+                e["sha256"].as_str().unwrap_or_default().to_string(),
+            )],
         };
         for (rel, sha) in files {
             let path = from.join(&rel);
@@ -631,7 +813,10 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
             }
         }
     }
-    Ok(RestorePlan { from_env: m["environment"].as_str().unwrap_or("?").to_string(), entries })
+    Ok(RestorePlan {
+        from_env: m["environment"].as_str().unwrap_or("?").to_string(),
+        entries,
+    })
 }
 
 /// Delete the current contents of the backup's resources.
@@ -641,7 +826,10 @@ pub fn drop_targets(client: &Client, plan: &RestorePlan) -> Result<()> {
         match e["type"].as_str().unwrap_or_default() {
             "d1" => drop_d1(client, key)?,
             "r2" => {
-                let keys: Vec<String> = r2_all(client, key)?.iter().filter_map(|o| o["key"].as_str().map(str::to_string)).collect();
+                let keys: Vec<String> = r2_all(client, key)?
+                    .iter()
+                    .filter_map(|o| o["key"].as_str().map(str::to_string))
+                    .collect();
                 for chunk in keys.chunks(1000) {
                     client.r2_delete(key, chunk)?;
                 }
@@ -684,18 +872,33 @@ pub fn load(client: &Client, plan: &RestorePlan, from: &Path) -> Result<()> {
         let key = e["key"].as_str().unwrap_or_default();
         match e["type"].as_str().unwrap_or_default() {
             "d1" => {
-                let rows = load_d1(client, key, &from.join(e["file"].as_str().unwrap_or_default()))?;
-                say(crate::tr!("D1 {key}: {rows} 行を戻しました", "D1 {key}: restored {rows} rows"));
+                let rows = load_d1(
+                    client,
+                    key,
+                    &from.join(e["file"].as_str().unwrap_or_default()),
+                )?;
+                say(crate::tr!(
+                    "D1 {key}: {rows} 行を戻しました",
+                    "D1 {key}: restored {rows} rows"
+                ));
             }
             "r2" => {
                 let mut n = 0;
                 for o in e["objects"].as_array().into_iter().flatten() {
                     crate::interrupt::check()?;
                     let k = o["key"].as_str().unwrap_or_default();
-                    client.r2_put(key, k, &from.join(o["file"].as_str().unwrap_or_default()), &o["meta"])?;
+                    client.r2_put(
+                        key,
+                        k,
+                        &from.join(o["file"].as_str().unwrap_or_default()),
+                        &o["meta"],
+                    )?;
                     n += 1;
                 }
-                say(crate::tr!("R2 {key}: オブジェクト {n} を戻しました", "R2 {key}: restored {n} objects"));
+                say(crate::tr!(
+                    "R2 {key}: オブジェクト {n} を戻しました",
+                    "R2 {key}: restored {n} objects"
+                ));
             }
             _ => {
                 let file = File::open(from.join(e["file"].as_str().unwrap_or_default()))?;
@@ -707,12 +910,20 @@ pub fn load(client: &Client, plan: &RestorePlan, from: &Path) -> Result<()> {
                         continue;
                     }
                     let value = base64_lite::decode(v["value"].as_str().unwrap_or_default())
-                        .ok_or_else(|| anyhow!(crate::tr!("KV {key} の控えが壊れています", "KV {key}'s backup is damaged")))?;
+                        .ok_or_else(|| {
+                            anyhow!(crate::tr!(
+                                "KV {key} の控えが壊れています",
+                                "KV {key}'s backup is damaged"
+                            ))
+                        })?;
                     let meta = json!({ "metadata": v["metadata"], "expiration": v["expiration"] });
                     client.kv_put(key, v["name"].as_str().unwrap_or_default(), &value, &meta)?;
                     n += 1;
                 }
-                say(crate::tr!("KV {key}: キー {n} を戻しました(期限切れで戻さなかったもの {expired})", "KV {key}: restored {n} keys ({expired} expired, skipped)"));
+                say(crate::tr!(
+                    "KV {key}: キー {n} を戻しました(期限切れで戻さなかったもの {expired})",
+                    "KV {key}: restored {n} keys ({expired} expired, skipped)"
+                ));
             }
         }
     }
@@ -741,7 +952,12 @@ fn format_utc(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 /// Minimal standard base64 (KV values in backups).
@@ -751,7 +967,11 @@ mod base64_lite {
     pub fn encode(data: &[u8]) -> String {
         let mut out = String::new();
         for chunk in data.chunks(3) {
-            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
             let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
             for i in 0..4 {
                 if i <= chunk.len() {

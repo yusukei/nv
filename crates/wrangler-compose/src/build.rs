@@ -13,7 +13,6 @@ use std::process::Stdio;
 /// A built Worker: run or deploy `dir/entry` with `no_bundle`.
 #[derive(Debug, Clone)]
 pub struct Built {
-    pub service: String,
     pub dir: PathBuf,
     pub entry: String,
     pub hash: String,
@@ -63,7 +62,10 @@ pub fn build(ctx: &Ctx, names: &[String]) -> Result<Vec<Built>> {
 pub fn select<'a>(ctx: &'a Ctx, names: &[String]) -> Result<Vec<(&'a str, &'a Worker)>> {
     for n in names {
         if !ctx.compose.services.iter().any(|s| &s.name == n) {
-            bail!(crate::tr!("サービス「{n}」はありません", "there is no service \"{n}\""));
+            bail!(crate::tr!(
+                "サービス「{n}」はありません",
+                "there is no service \"{n}\""
+            ));
         }
     }
     Ok(ctx
@@ -72,7 +74,7 @@ pub fn select<'a>(ctx: &'a Ctx, names: &[String]) -> Result<Vec<(&'a str, &'a Wo
         .iter()
         .filter(|s| names.is_empty() || names.contains(&s.name))
         .filter_map(|s: &Service| match &s.kind {
-            Kind::Worker(w) => Some((s.name.as_str(), w)),
+            Kind::Worker(w) => Some((s.name.as_str(), &**w)),
             _ => None,
         })
         .collect())
@@ -88,18 +90,31 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
     let entry = entry_name(config["main"].as_str().unwrap_or("index.js"));
     let stamp = dir.join("stamp.json");
     if let Ok(text) = std::fs::read_to_string(&stamp)
-        && serde_json::from_str::<Value>(&text).ok().and_then(|v| v["hash"].as_str().map(str::to_string))
+        && serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["hash"].as_str().map(str::to_string))
             == Some(hash.clone())
         && out_dir.join(&entry).is_file()
     {
         if report {
-            say(crate::tr!("{svc}: 変わっていないので組み立て直しません", "{svc}: unchanged, not rebuilt"));
+            say(crate::tr!(
+                "{svc}: 変わっていないので組み立て直しません",
+                "{svc}: unchanged, not rebuilt"
+            ));
         }
-        return Ok(Built { service: svc.to_string(), dir: out_dir, entry, hash });
+        return Ok(Built {
+            dir: out_dir,
+            entry,
+            hash,
+        });
     }
     if ctx.dry_run {
         say(crate::tr!("{svc}: 組み立てる", "{svc}: would build"));
-        return Ok(Built { service: svc.to_string(), dir: out_dir, entry, hash });
+        return Ok(Built {
+            dir: out_dir,
+            entry,
+            hash,
+        });
     }
     sync_deps(ctx, &w.build)?;
     std::fs::create_dir_all(&dir)
@@ -113,7 +128,10 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .context(crate::tr!("Wrangler を起動できません", "cannot start Wrangler"))?;
+        .context(crate::tr!(
+            "Wrangler を起動できません",
+            "cannot start Wrangler"
+        ))?;
     if !output.status.success() || !out_dir.join(&entry).is_file() {
         eprint!("{}", String::from_utf8_lossy(&output.stdout));
         eprint!("{}", String::from_utf8_lossy(&output.stderr));
@@ -122,23 +140,41 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
             "{svc} could not be built (see the output above)"
         ));
     }
-    std::fs::write(&stamp, serde_json::to_vec(&json!({ "hash": hash, "entry": entry }))?)?;
+    std::fs::write(
+        &stamp,
+        serde_json::to_vec(&json!({ "hash": hash, "entry": entry }))?,
+    )?;
     if report {
         say(crate::tr!("{svc}: 組み立てました", "{svc}: built"));
     }
-    Ok(Built { service: svc.to_string(), dir: out_dir, entry, hash })
+    Ok(Built {
+        dir: out_dir,
+        entry,
+        hash,
+    })
 }
 
 /// The Wrangler config used only for bundling: the Worker folder's build
 /// keys (checked), with paths made absolute.
 fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
     let mut cfg = Map::new();
-    if let Some(file) = CONFIG_FILES.iter().map(|f| w.build.join(f)).find(|p| p.is_file()) {
+    if let Some(file) = CONFIG_FILES
+        .iter()
+        .map(|f| w.build.join(f))
+        .find(|p| p.is_file())
+    {
         let raw = ctx.node_json(READ_RAW_JS, [&file])?;
         let Value::Object(raw) = raw["config"].clone() else {
-            bail!(crate::tr!("{} を読めません", "cannot read {}", file.display()));
+            bail!(crate::tr!(
+                "{} を読めません",
+                "cannot read {}",
+                file.display()
+            ));
         };
-        let bad: Vec<&String> = raw.keys().filter(|k| !BUILD_KEYS.contains(&k.as_str())).collect();
+        let bad: Vec<&String> = raw
+            .keys()
+            .filter(|k| !BUILD_KEYS.contains(&k.as_str()))
+            .collect();
         if !bad.is_empty() {
             let lines: Vec<String> = bad
                 .iter()
@@ -178,7 +214,11 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
         }
     }
     if let Some(Value::Object(b)) = cfg.get_mut("build") {
-        let cwd = b.get("cwd").and_then(Value::as_str).map(|c| w.build.join(c)).unwrap_or_else(|| w.build.clone());
+        let cwd = b
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(|c| w.build.join(c))
+            .unwrap_or_else(|| w.build.clone());
         b.insert("cwd".into(), json!(cwd));
         if let Some(wd) = b.get("watch_dir").and_then(Value::as_str) {
             let abs = w.build.join(wd);
@@ -266,7 +306,11 @@ pub fn newest_change(folder: &Path) -> Option<std::time::SystemTime> {
     walk(folder, folder, &mut files).ok()?;
     files
         .iter()
-        .filter_map(|r| std::fs::metadata(folder.join(r)).and_then(|m| m.modified()).ok())
+        .filter_map(|r| {
+            std::fs::metadata(folder.join(r))
+                .and_then(|m| m.modified())
+                .ok()
+        })
         .max()
 }
 
@@ -275,7 +319,10 @@ fn walk(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if matches!(name.as_ref(), "node_modules" | ".wrangler" | ".git" | "dist") {
+        if matches!(
+            name.as_ref(),
+            "node_modules" | ".wrangler" | ".git" | "dist"
+        ) {
             continue;
         }
         let path = entry.path();
@@ -316,7 +363,11 @@ mod tests {
 
     #[test]
     fn behavior_keys_point_into_the_compose_file() {
-        assert!(where_in_compose("d1_databases").unwrap().contains("bindings"));
+        assert!(
+            where_in_compose("d1_databases")
+                .unwrap()
+                .contains("bindings")
+        );
         assert!(where_in_compose("main").is_none());
         assert!(!BUILD_KEYS.contains(&"vars") && !BUILD_KEYS.contains(&"define"));
     }
