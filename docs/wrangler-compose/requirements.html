@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="../nv/requirements.html">nv 要求仕様</a></li>
+    <li><a href="../nv/acceptance.html">nv 受け入れ条件</a></li>
+    <li><a class="current" href="requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+  <ul>
+    <li><a href="#commands">コマンド体系</a></li>
+    <li><a href="#decisions">決定</a></li>
+    <li><a href="#terms">用語</a></li>
+    <li><a href="#req-001">REQ-001 環境の指定</a></li>
+    <li><a href="#req-002">REQ-002 設定と Wrangler</a></li>
+    <li><a href="#req-003">REQ-003 build</a></li>
+    <li><a href="#req-004">REQ-004 up</a></li>
+    <li><a href="#req-005">REQ-005 down</a></li>
+    <li><a href="#req-006">REQ-006 down --purge</a></li>
+    <li><a href="#req-007">REQ-007 backup</a></li>
+    <li><a href="#req-008">REQ-008 restore</a></li>
+    <li><a href="#req-009">REQ-009 秘密の扱い</a></li>
+    <li><a href="#req-010">REQ-010 配り方と更新</a></li>
+    <li><a href="#out-of-scope">範囲外</a></li>
+  </ul>
+</nav>
+<main>
+<h1>wrangler-compose 要求仕様</h1>
+<p class="lead">Cloudflare Workers のプロジェクトを、docker compose のように「環境を指定して 1 コマンド」で建てる・組む・下ろす・控える・戻すための道具。どのプロジェクトでも使い回す。</p>
+
+<h2 id="commands">コマンド体系</h2>
+<p>形は <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code>。<code>--env</code> は短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code> で指定する(<a href="#req-001">REQ-001</a>)。</p>
+<table>
+  <tr><th style="width:38%">操作</th><th>すること</th><th style="width:12%">条項</th></tr>
+  <tr><td><code>build</code></td><td>Worker と静的なファイルを組むだけで、Cloudflare には何も上げない</td><td><a href="#req-003">REQ-003</a></td></tr>
+  <tr><td><code>up</code></td><td>D1 の移行を当て、Worker をデプロイする(初回も更新も同じ)。<code>.env.&lt;環境名&gt;</code> のシークレットを入れる</td><td><a href="#req-004">REQ-004</a></td></tr>
+  <tr><td><code>down</code></td><td>Worker だけを消す。D1・R2 は残す</td><td><a href="#req-005">REQ-005</a></td></tr>
+  <tr><td><code>down --purge</code></td><td>Worker に加えて D1・R2 を中身ごと消す(API キーが要る)</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>backup [&lt;書き出し先&gt;]</code></td><td>D1 と R2 の中身を手元のフォルダへ書き出す(既定はプロジェクトの <code>backups/</code>。API キーが要る)</td><td><a href="#req-007">REQ-007</a></td></tr>
+  <tr><td><code>restore &lt;控えのフォルダ&gt;</code></td><td>控えを空の D1・R2 へ戻す(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>restore --drop &lt;控えのフォルダ&gt;</code></td><td>いまの D1・R2 の中身を消して、控えに入れ替える(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
+</table>
+<p>Cloudflare に触れる操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)は、環境の指定が無ければ止まる。Wrangler の操作そのものは <code>nv run wrangler …</code> で行える。</p>
+<p>wrangler-compose の更新とエージェント用のスキルは nv が受け持つ(<code>nv self update</code>・<code>nv install skill</code>。<a href="#req-010">REQ-010</a>)。wrangler-compose 自身はこの 2 つを持たない。</p>
+
+<h2 id="decisions">決定(利用者)</h2>
+<div class="box decision">
+<ul>
+  <li>コマンドの形は <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code>(例: <code>wrangler-compose --env staging up</code>)</li>
+  <li><code>down</code> は作り直せるもの(Worker)だけを消し、データ(D1・R2)は残す。<code>down --purge</code> でデータも含めて消す(docker のコンテナとボリュームの分け方と同じ)</li>
+  <li>データを消す・読むために R2 の中身を一覧するときは、S3 互換の API とその API キーを使う(Wrangler は R2 の API キーを発行できず、オブジェクトの一覧も取れないため)</li>
+  <li><code>--purge</code> で正しい API キーが渡されていないときは、警告して、データを消さない</li>
+  <li>R2・D1 の書き出しと取り込みで、バックアップとリストアを持つ</li>
+  <li>Durable Objects のデータは Worker に属するものとして扱い、<code>down</code> で Worker と一緒に消えてよい</li>
+  <li><code>backup</code> の書き出し先は、既定でプロジェクトの <code>backups/</code>。引数で別の場所を渡せる</li>
+  <li>入れ物(D1・バケット)は <code>up</code> が作り、<code>restore</code> は中身だけを扱う。いまの中身を捨てて入れ替えるときは <code>restore --drop</code></li>
+  <li>Node・npm の扱いは nv(同じリポジトリの別の道具)が受け持つ。wrangler-compose は Node のことを何も知らない</li>
+  <li>シークレットと wrangler-compose が使う値は、プロジェクトの <code>.env.&lt;環境名&gt;</code> に書く</li>
+  <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
+  <li>個人の道具として nv と 1 つのリポジトリにまとめる。更新とエージェント用のスキルは nv に寄せる(wrangler-compose に <code>self update</code>・<code>install skill</code> を持たせない)</li>
+</ul>
+</div>
+
+<h2 id="terms">用語</h2>
+<table>
+  <tr><th style="width:22%">語</th><th>意味</th></tr>
+  <tr><td>プロジェクト</td><td>Wrangler の設定ファイル(<code>wrangler.jsonc</code> / <code>wrangler.json</code> / <code>wrangler.toml</code>)を持つフォルダ。wrangler-compose はそのフォルダで動かす</td></tr>
+  <tr><td>環境</td><td>Wrangler の設定の環境(<code>env.&lt;環境名&gt;</code>)</td></tr>
+  <tr><td>作り直せるもの</td><td>Worker(コード・静的なファイル・ルート)。git にあるものから <code>up</code> で同じものができる</td></tr>
+  <tr><td>データ</td><td>環境の設定がつなぐ D1 データベースと R2 バケットの中身。git に無く、作り直せない</td></tr>
+  <tr><td>API キー</td><td>R2 の S3 互換の API のアクセスキー ID とシークレット(ダッシュボードで人が発行する)</td></tr>
+</table>
+
+<h2>要求</h2>
+
+<h3 id="req-001"><span class="id">REQ-001</span>環境の指定</h3>
+<ul>
+  <li>環境は <code>--env &lt;環境名&gt;</code>(短く <code>-e</code>)か、環境変数 <code>CLOUDFLARE_ENV</code> で指定する。両方あれば <code>--env</code> を優先する</li>
+  <li>環境名は Wrangler の設定の環境名そのもの。別名は持たない</li>
+  <li>Cloudflare に触れる操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)は、環境の指定が無ければ何もせずに止まる(設定の一番上の階層を誤ってデプロイしない)</li>
+  <li>設定に無い環境名なら、何もせずに止まり、設定にある環境名を並べて示す</li>
+</ul>
+
+<h3 id="req-002"><span class="id">REQ-002</span>設定の持ち主と Wrangler の呼び方</h3>
+<ul>
+  <li>環境の値(名前・変数・バインディング・ルート)は Wrangler の設定ファイルだけが持つ。wrangler-compose は自分の環境定義を持たない</li>
+  <li>Wrangler は、プロジェクトの依存(<code>package.json</code>・<code>package-lock.json</code>)に入れた版を、nv を通して動かす(<code>nv run wrangler …</code>)。wrangler-compose は Wrangler も Node も抱えず、版も持たない</li>
+  <li>nv は、wrangler-compose と同じフォルダにあるものを使う(nv の <code>self update</code> が 2 つを同じフォルダで揃えるのと合わせる。nv の REQ-010)。nv はプロジェクトのフォルダ(Wrangler の設定のあるフォルダ)で動かす</li>
+  <li>設定の読み方が Wrangler と食い違わない(環境・バインディング・移行のフォルダを、Wrangler が読むのと同じに読む)</li>
+  <li>wrangler-compose は、プロジェクトのファイル(Wrangler の設定ファイルを含む)を書き換えない。Wrangler が自動で作った資源の ID を設定ファイルへ書き戻す動き(端末から対話で動かしたときに起きる)も起こさせない</li>
+  <li>nv が無い、またはプロジェクトの依存に Wrangler が無いときは、何もせずに止まり、入れ方を示す。Wrangler が wrangler-compose の要る版より古いときも、止まって要る版を示す(要る版は、頼る Wrangler の機能から設計で決める)</li>
+</ul>
+
+<h3 id="req-003"><span class="id">REQ-003</span>build(組めるかを確かめる)</h3>
+<p><code>build</code> は、その環境の設定で Worker と静的なファイルを組み(設定のビルドのコマンドを含む)、Cloudflare には何も上げない。組めなければ理由を出して止まる。</p>
+
+<h3 id="req-004"><span class="id">REQ-004</span>up(建てる・更新する)</h3>
+<ul>
+  <li><code>up</code> は初回も更新も同じコマンドで、環境の状態によって次の順で行う
+    <ul>
+      <li><strong>D1 がすべてある環境</strong>: (1) 移行のフォルダを持つ D1 ごとに、未適用の移行を当てる → (2) Worker をデプロイする(組むのを含む)。移行が失敗したらデプロイしない</li>
+      <li><strong>まだ無い D1 がある環境</strong>(初回など): (1) Worker をデプロイし、無い D1・R2 を Wrangler に作らせる → (2) 移行を当てる。移行が失敗したら、デプロイは済んでいて移行が当たっていないことを示して止まる(新しい環境は使う人がまだいないので、この順でよい)</li>
+    </ul>
+  </li>
+  <li>Wrangler が作るのは、設定に名前だけを書いた D1(<code>database_id</code> の無いもの)と R2 バケット。同じ名前のものがあればそれにつなぐ(Wrangler 4.128 の実装で確認)。<code>database_id</code> を書いた D1 は作られず、その ID の D1 が無ければ、<code>up</code> はその D1 の名前と ID を示して止まる</li>
+  <li>プロジェクトに <code>.env.&lt;環境名&gt;</code>(git の外。例: <code>.env.staging</code>・<code>.env.production</code>)があれば、デプロイと一緒に、そこに書いた値を Worker のシークレットとして入れる(足す・上書きする)。無ければ、すでに入っているシークレットを使う(利用者の決定。Wrangler が <code>--env</code> で <code>.env.&lt;環境名&gt;</code> を選ぶ決まりと揃える)</li>
+  <li><code>.env.&lt;環境名&gt;</code> から消した名前のシークレットは、Worker から消えない(Wrangler のデプロイがファイルに無いシークレットを残すため)。<code>up</code> のあと、Worker にあって <code>.env.&lt;環境名&gt;</code> に無いシークレットの名前を示す</li>
+  <li><code>.env.&lt;環境名&gt;</code> のうち <code>WRANGLER_COMPOSE_</code> で始まる名前は、wrangler-compose だけが使う値(API キーなど)で、Worker のシークレットに入れない</li>
+  <li>移行を当てるときに確認を求めない(<code>up</code> を打ったことを確認とみなす)</li>
+  <li>どの段で止まったかと、その理由を出す。途中で止まったら、それより後の段は行わない</li>
+</ul>
+
+<h3 id="req-005"><span class="id">REQ-005</span>down(作り直せるものを消す)</h3>
+<ul>
+  <li><code>down</code> は、その環境の Worker を消す。D1・R2 は消さない</li>
+  <li>Worker と一緒に消えるもの(シークレット・ルート・カスタムドメイン・Cron・Durable Objects とそのデータ)を、消す前に示す。Durable Objects のデータは Worker に属するので、<code>down</code> で消えてよい(利用者の決定)</li>
+  <li>消す前に、環境名を打ち直して確かめる。打ち直した名前が違えば何も消さない</li>
+  <li>打ち直しを受けられない場(入力が端末でない。エージェントやパイプから動かしたとき)では、何も消さずに止まる(確かめを流し込みで抜けられない)</li>
+  <li><code>down</code> のあと <code>up</code> で、残した D1・R2 につなぎ直して元に戻る(シークレットは REQ-004 の <code>.env.&lt;環境名&gt;</code> があれば入る)</li>
+</ul>
+
+<h3 id="req-006"><span class="id">REQ-006</span>down --purge(データも消す)</h3>
+<ul>
+  <li><code>down --purge</code> は、Worker に加えて、その環境の設定がつなぐ D1 データベースと R2 バケット(中身ごと)を消す</li>
+  <li>R2 の中身は S3 互換の API で一覧して消し、空にしてからバケットを消す</li>
+  <li>消す前に、API キーが正しいことを確かめる(そのバケットの一覧が取れること)。API キーが無い・正しくないときは、警告して、何も消さない(Worker も消さない)</li>
+  <li>消す前に、消すもの(Worker 名・D1 の名前・バケットの名前と中のオブジェクトの数)を並べて示し、環境名を打ち直して確かめる(打ち直しを受けられない場では止まる。REQ-005 と同じ)</li>
+  <li>設定に <code>database_id</code> を書いた D1 を消すときは、消したあとの <code>up</code> がその D1 を作り直さないこと(設定の <code>database_id</code> を外すまで <code>up</code> が止まること。REQ-004)を、消す前に示す</li>
+  <li>途中で止まったら、何を消して何が残っているかを示す</li>
+</ul>
+
+<h3 id="req-007"><span class="id">REQ-007</span>backup(控える)</h3>
+<ul>
+  <li><code>backup</code> は、その環境の設定がつなぐすべての D1 と R2 バケットの中身を、手元のフォルダへ書き出す
+    <ul>
+      <li>D1: スキーマと中身(SQL)。どの移行まで当たっていたか(移行の履歴)を含む(REQ-008 で、控えのあとの移行だけを当てるため)</li>
+      <li>R2: すべてのオブジェクト(キーと中身と、内容の種類などのメタデータ)</li>
+    </ul>
+  </li>
+  <li>書き出し先は <code>&lt;書き出し先&gt;/&lt;環境名&gt;/&lt;日時&gt;/</code> で、何が入っているかの目録を置く</li>
+  <li>D1 の書き出しの間、その D1 は問い合わせに応えなくなる(Wrangler 4.128 の書き出しが出す注意)。<code>backup</code> は書き出す前にそのことを示す</li>
+  <li><code>backup</code> だけを打てば、<code>&lt;書き出し先&gt;</code> はプロジェクトの <code>backups/</code>。<code>backup &lt;書き出し先&gt;</code> で別の場所を渡せる(利用者の決定)</li>
+  <li>控えには環境のデータが丸ごと入るので、git に入れない。書き出し先がプロジェクトの git の中にあり、<code>.gitignore</code> で外れていなければ、何も書き出さずに止まる(<code>.env.&lt;環境名&gt;</code> と同じ決まり。REQ-009)</li>
+  <li>R2 の一覧には API キーが要る。API キーが無い・正しくないときは、警告して、何も書き出さない(R2 の無い控えを控えと呼ばない)</li>
+  <li>書き出しの途中で止まった控えは、完成した控えと見分けられ、restore に使われない</li>
+  <li>書き出せない D1 があれば(Wrangler の書き出しが受けない表があるなど)、その D1 と理由を示して止まり、完成した控えとして残さない</li>
+</ul>
+
+<h3 id="req-008"><span class="id">REQ-008</span>restore(戻す)</h3>
+<ul>
+  <li>入れ物(D1・バケット)は <code>up</code> が作り、<code>restore</code> は中身だけを扱う(利用者の決定)。戻す先の D1・バケットが無ければ、何もせずに止まり、先に <code>up</code> を求める</li>
+  <li><code>restore &lt;控えのフォルダ&gt;</code> は、控えの D1(表の作りと中身)と R2 の中身を、指定した環境の同じバインディングの D1 と R2 へ入れる。戻す先が空(D1 に表が無く、バケットにオブジェクトが無い)のときだけ戻す。空でなければ、何もせずに止まり、空でないものと、<code>--drop</code> で入れ替えられることを示す</li>
+  <li><code>restore --drop &lt;控えのフォルダ&gt;</code> は、戻す先の D1 の表をすべて消し、バケットのオブジェクトをすべて消してから、控えを戻す(MongoDB の <code>mongorestore --drop</code> と同じ考え方。利用者の決定)</li>
+  <li><code>--drop</code> は消す操作なので、<code>down --purge</code> と同じに扱う: 消すもの(D1 ごとの表の数、バケットごとのオブジェクトの数)を先に示し、環境名を打ち直して確かめる。打ち直しを受けられない場では止まる(REQ-005)</li>
+  <li>戻したあと、控えのあとに足された移行を当てて、D1 をいまのコードに合わせる(<code>up</code> の移行の段と同じ)。控えに移行の履歴が入っていることが前提で、入っていない控えなら戻す前に止まる</li>
+  <li>戻している間も Worker は動いたままで、欠けたデータが見える。始める前にそのことを示す</li>
+  <li>書きかけの控え(REQ-007)は戻さない</li>
+  <li>R2 を読み書きするには API キーが要る。無い・正しくないときは、警告して、何もしない(<code>--drop</code> でも何も消さない)</li>
+  <li>途中で止まったら、何を消し、何を入れて、何が残っているかを示す</li>
+</ul>
+
+<h3 id="req-009"><span class="id">REQ-009</span>秘密の扱い</h3>
+<ul>
+  <li>シークレットの値と API キーを、どの操作でも、画面・ログ・控えの目録に出さない</li>
+  <li>API キーは <code>.env.&lt;環境名&gt;</code> の <code>WRANGLER_COMPOSE_R2_ACCESS_KEY_ID</code>・<code>WRANGLER_COMPOSE_R2_SECRET_ACCESS_KEY</code>、または同じ名前の環境変数から受け取る(環境変数を優先する)</li>
+  <li>S3 互換の API に要るアカウント ID と管轄(EU など)は、Wrangler の設定とログインから得る(利用者に別に書かせない)</li>
+  <li><code>.env.&lt;環境名&gt;</code> を読む操作(<code>up</code>・<code>down --purge</code>・<code>backup</code>・<code>restore</code>)は、プロジェクトが git の中にあって、そのファイルが <code>.gitignore</code> で外れていないか、すでに git に入っていれば、何もせずに止まる。プロジェクトが git の外なら確かめない</li>
+</ul>
+
+<h3 id="req-010"><span class="id">REQ-010</span>配り方と更新</h3>
+<ul>
+  <li>OS ごとの単体の実行ファイルで配る(Windows x64、macOS arm64・x64、Linux x64)。nv と同じリポジトリ・同じ版のタグ・同じ Release で配る(nv の REQ-009)</li>
+  <li>nv と同じフォルダに置いて使う(REQ-002)。最初の導入の手順は nv の REQ-009 に従う</li>
+  <li>更新は <code>nv self update</code> が nv と一緒に行う(nv の REQ-010)。エージェント用のスキルは <code>nv install skill</code> が nv のものと一緒に入れる(nv の REQ-008)。wrangler-compose は更新とスキルの口を持たない</li>
+</ul>
+
+<h2 id="out-of-scope">範囲外</h2>
+<ul>
+  <li>Node・npm の取得と版の管理(nv が受け持つ)</li>
+  <li>手元の開発(<code>wrangler dev</code>)、状態の一覧(<code>ps</code>)、ログの表示(<code>logs</code>)。必要になったら足す(Wrangler の操作そのものは <code>nv run wrangler …</code> で行える)</li>
+  <li>R2 の CORS・ライフサイクルの設定(Wrangler の設定ファイルに書けない、バケットごとの設定のため。<code>nv run wrangler r2 bucket cors …</code> などで行える)</li>
+  <li>D1・R2 以外の資源(KV・Queues など)の控えと消去。Durable Objects のデータの控え(消えるのは <code>down</code> で Worker と一緒に。REQ-005)</li>
+</ul>
+
+<footer>docs/wrangler-compose/requirements.html</footer>
+</main>
+</div>
+</body>
+</html>

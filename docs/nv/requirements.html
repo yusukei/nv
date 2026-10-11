@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nv 要求仕様</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a class="current" href="requirements.html">nv 要求仕様</a></li>
+    <li><a href="acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="../wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="../wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+  <ul>
+    <li><a href="#commands">コマンド体系</a></li>
+    <li><a href="#decisions">決定</a></li>
+    <li><a href="#terms">用語</a></li>
+    <li><a href="#req-001">REQ-001 Node の版の固定</a></li>
+    <li><a href="#req-002">REQ-002 Node の取得</a></li>
+    <li><a href="#req-003">REQ-003 sync</a></li>
+    <li><a href="#req-004">REQ-004 run</a></li>
+    <li><a href="#req-005">REQ-005 x</a></li>
+    <li><a href="#req-006">REQ-006 Node の版の管理</a></li>
+    <li><a href="#req-007">REQ-007 利用者の環境</a></li>
+    <li><a href="#req-008">REQ-008 エージェント用のスキル</a></li>
+    <li><a href="#req-009">REQ-009 配り方</a></li>
+    <li><a href="#req-010">REQ-010 更新</a></li>
+    <li><a href="#out-of-scope">範囲外</a></li>
+    <li><a href="#open">決めること</a></li>
+  </ul>
+</nav>
+<main>
+<h1>nv 要求仕様</h1>
+<p class="lead">Node・npm を uv のように扱う道具。</p>
+<p>コマンドの名前は <code>nv</code>(利用者の決定)。uv が Python 本体の取得・版の固定・依存の導入・実行を 1 つのコマンドにまとめているのと同じく、Node について同じことをする。
+利用者とエージェントは <code>nv</code> だけを打ち、<code>node</code>・<code>npm</code>・<code>npx</code> を直接打たない。Windows でも macOS でも同じ動きをする。</p>
+
+<h2 id="commands">コマンド体系</h2>
+<table>
+  <tr><th style="width:38%">コマンド</th><th>すること</th><th style="width:12%">条項</th></tr>
+  <tr><td><code>nv sync</code></td><td>Node を揃え、<code>package-lock.json</code> のとおりに依存を入れる</td><td><a href="#req-003">REQ-003</a></td></tr>
+  <tr><td><code>nv run &lt;コマンド&gt; [引数…]</code></td><td>揃えた Node・npm・<code>node_modules/.bin</code> でコマンドを動かす(足りなければ先に揃える)</td><td><a href="#req-004">REQ-004</a></td></tr>
+  <tr><td><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code><br><code>[--node &lt;版&gt;]</code></td><td>プロジェクトに入れずに道具を 1 回動かす</td><td><a href="#req-005">REQ-005</a></td></tr>
+  <tr><td><code>nv node list</code></td><td>置き場にある Node の版を並べる</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node install &lt;版&gt;</code></td><td>その版の Node を取る</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node uninstall &lt;版&gt;</code></td><td>その版の Node を置き場から消す</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv install skill</code></td><td>Claude Code と Codex に、nv と wrangler-compose のスキルを入れる(利用者全体)</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>nv uninstall skill</code></td><td>nv が入れたスキルを消す</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>nv self update [--check]</code></td><td>nv と wrangler-compose を最新の版に入れ替える(<code>--check</code> は調べるだけ)</td><td><a href="#req-010">REQ-010</a></td></tr>
+</table>
+<p>Node の版はプロジェクトの <code>.node-version</code> が決める(<a href="#req-001">REQ-001</a>)。コマンドに版を渡すのは、プロジェクトの外で使う <code>nv x --node</code> と <code>nv node</code> だけ。</p>
+
+<h2 id="decisions">決定(利用者)</h2>
+<div class="box decision">
+<ul>
+  <li>uv のスタイルで使う(別の版の管理の道具(fnm など)を入れさせない)</li>
+  <li>wrangler-compose とは別の道具として作る。同じリポジトリに置く</li>
+  <li>Cloudflare に触れず、Wrangler を自分で動かさない(Wrangler を使わないプロジェクトでも使える)。wrangler-compose は、一緒に配る実行ファイルとスキルとしてだけ扱う</li>
+  <li>個人の道具として wrangler-compose と 1 つのリポジトリにまとめ、更新(<code>self update</code>)とエージェント用のスキル(<code>install skill</code>)は nv に寄せる。nv が wrangler-compose の分も扱う</li>
+  <li>エージェント用のスキルは Claude Code と Codex に、利用者全体へ入れる。Codex 向けは共有の置き場 <code>~/.agents/skills/</code> に常に入れる</li>
+  <li>nv が利用者ごとに持つものは <code>~/.nv</code> の下に置き、Node と道具の置き場は <code>~/.nv/cache</code> に統一する(OS ごとに置き場所を変えない)</li>
+  <li>nv が動かす npm のキャッシュも <code>~/.nv/cache/npm</code> に置き、利用者がほかで使う npm のキャッシュ(<code>~/.npm</code> など)と分け合わない(uv がパッケージのキャッシュを自分で持つのと同じ考え方)</li>
+  <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
+  <li>公開して配るので、更新の機能を持つ</li>
+</ul>
+</div>
+
+<h2 id="terms">用語</h2>
+<table>
+  <tr><th style="width:22%">語</th><th>意味</th></tr>
+  <tr><td>プロジェクト</td><td><code>package.json</code> を持つフォルダ。いまいるフォルダから上へたどって最初に見つかるもの</td></tr>
+  <tr><td>Node の版</td><td>プロジェクトの <code>.node-version</code> に書いた、<code>24.11.1</code> のような 3 つの数の版</td></tr>
+  <tr><td>nv のフォルダ</td><td>利用者のホームの <code>~/.nv</code>(Windows は <code>%USERPROFILE%\.nv</code>)。nv が利用者ごとに持つものは、すべてこの下に置く。利用者全体の設定などが要るようになったら、ここに置く</td></tr>
+  <tr><td>置き場</td><td>nv が Node と道具を置くフォルダ。どの OS でも <code>~/.nv/cache</code></td></tr>
+</table>
+
+<h2>要求</h2>
+
+<h3 id="req-001"><span class="id">REQ-001</span>Node の版の固定</h3>
+<ul>
+  <li>使う Node の版は、プロジェクトの <code>.node-version</code> の 1 か所で決める(fnm など、ほかの道具も読む書式)</li>
+  <li>版は 3 つの数で書く(<code>24</code> や <code>lts</code> のような幅のある書き方は受けない。誰の PC でも同じ版にするため)</li>
+  <li><code>.node-version</code> が無い・書式が違うときは、何もせずに止まり、書き方を示す</li>
+</ul>
+
+<h3 id="req-002"><span class="id">REQ-002</span>Node の取得</h3>
+<ul>
+  <li>決めた版の Node が置き場に無ければ、Node の公式の配布物から取る。取ったものは、配布元の検証値の一覧(<code>SHASUMS256.txt</code>)と照らし、合わなければ使わずに止まる</li>
+  <li>OS と CPU に合う配布物を選ぶ(Windows x64、macOS arm64・x64、Linux x64)</li>
+  <li>取得や展開の途中で止まっても、壊れた版が置き場に残らない(次に取り直せば動く)</li>
+  <li>同時に複数の nv が同じ版を取りに行っても、取り合わない</li>
+  <li>社内のプロキシの設定(<code>HTTPS_PROXY</code> など)に従う。取ってくる先を環境変数で差し替えられる(公式に出られない網のため)</li>
+</ul>
+
+<h3 id="req-003"><span class="id">REQ-003</span>sync(依存を揃える)</h3>
+<ul>
+  <li><code>nv sync</code> は、Node を揃え(REQ-002)、その版に付いている npm で、プロジェクトの <code>package-lock.json</code> のとおりに依存を入れる(<code>npm ci</code>)</li>
+  <li><code>package-lock.json</code> が無ければ、何もせずに止まる(ロックファイルを書き換える導入はしない)</li>
+  <li>nv が動かす npm(<code>nv sync</code>・<code>nv run npm …</code>・<code>nv x</code>)は、キャッシュに <code>~/.nv/cache/npm</code> を使う(利用者の決定)</li>
+</ul>
+
+<h3 id="req-004"><span class="id">REQ-004</span>run(揃えた環境で動かす)</h3>
+<ul>
+  <li><code>nv run &lt;コマンド&gt; [引数…]</code> は、揃えた Node・npm と、プロジェクトの依存に入れた道具(<code>node_modules/.bin</code>)を、利用者の環境にあるほかの Node・npm・道具より優先してコマンドを動かす(<code>nv run node script.js</code>・<code>nv run npm run build</code>・<code>nv run wrangler deploy</code> など)。動かしたコマンドがさらに起こす <code>node</code>・<code>npm</code> も、揃えたものになる</li>
+  <li>動かす前に、Node が無い・依存が <code>package-lock.json</code> と合っていなければ、先に揃える(REQ-003)。合っていれば入れ直さない(<code>nv run</code> のたびに依存を入れ直して遅くしない)</li>
+  <li>引数はシェルに解釈させず、そのまま渡す(<code>*</code>・<code>&amp;</code>・<code>|</code> などの記号も文字のまま)。Windows で <code>.cmd</code> などの形のコマンドも、同じ書き方で動く</li>
+  <li>標準の入出力(標準入力を含む)と終了コードは、動かしたコマンドのものをそのまま返す</li>
+</ul>
+
+<h3 id="req-005"><span class="id">REQ-005</span>x(プロジェクトに入れずに道具を動かす)</h3>
+<ul>
+  <li><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code> は、そのパッケージをプロジェクトに入れず、置き場に入れて 1 回動かす(uv の <code>uvx</code> に当たる)</li>
+  <li>版は 3 つの数で書く。同じパッケージと版は、置き場のものを使い回す</li>
+  <li>Node の版は、プロジェクトの <code>.node-version</code>、無ければ <code>--node &lt;版&gt;</code> で決める。どちらも無ければ止まる</li>
+</ul>
+
+<h3 id="req-006"><span class="id">REQ-006</span>Node の版の管理</h3>
+<ul>
+  <li><code>nv node list</code> は、置き場にある Node の版を並べる</li>
+  <li><code>nv node install &lt;版&gt;</code> は、その版を取る(REQ-002)</li>
+  <li><code>nv node uninstall &lt;版&gt;</code> は、置き場からその版を消す</li>
+</ul>
+
+<h3 id="req-007"><span class="id">REQ-007</span>利用者の環境に手を出さない</h3>
+<ul>
+  <li>利用者の PATH、シェルの設定、ほかの道具(fnm・Homebrew・グローバルの npm)で入れたものに、何もしない。例外は、利用者が <code>nv install skill</code> / <code>nv uninstall skill</code> を打ったときの、エージェントのスキルの置き場だけ(REQ-008)と、<code>nv self update</code> を打ったときの nv と wrangler-compose の実行ファイルだけ(REQ-010)</li>
+  <li>揃えた Node は、nv が起動する処理の中だけで使う</li>
+</ul>
+
+<h3 id="req-008"><span class="id">REQ-008</span>エージェント用のスキル</h3>
+<ul>
+  <li><code>nv install skill</code> は、コーディング用のエージェント(Claude Code と Codex)に、nv と wrangler-compose の使い方のスキルを入れる。<code>nv uninstall skill</code> は、入れたスキルを消す(nv が入れたもの以外は消さない)</li>
+  <li>入れる範囲は利用者全体(その PC のすべてのプロジェクトで効く)(利用者の決定)</li>
+  <li>Codex 向けには、利用者全体の共有の置き場 <code>~/.agents/skills/</code> に常に入れる(Codex が利用者のスキルを読む場所。OpenAI の資料「Build skills」)。この置き場はほかのエージェントとも共有で、Codex が入っているかは見分けない(利用者の決定)</li>
+  <li>Claude Code 向けには <code>~/.claude/skills/</code> に入れる。<code>~/.claude</code> が無い PC(Claude Code が無い)では入れず、入れなかったことを示す</li>
+  <li>スキルは、エージェントに次を守らせる: Node・npm・npx を直接打たず、<code>nv sync</code>・<code>nv run &lt;コマンド&gt;</code>・<code>nv x &lt;パッケージ&gt;@&lt;版&gt;</code> を使う。JS のスクリプトは <code>nv run node &lt;スクリプト&gt;</code> で動かす。Cloudflare の環境の建てる・下ろす・控える・戻すは、<code>wrangler deploy</code> などを直接打たず <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code> で行う</li>
+  <li>スキルの中身は、その版の nv と wrangler-compose の使い方と一致する(nv を更新したら、入れてあるスキルも合わせる。REQ-010)</li>
+  <li>入れる・消すときに、どのエージェントのどこに入れた・消したかを示す</li>
+</ul>
+
+<h3 id="req-009"><span class="id">REQ-009</span>配り方</h3>
+<ul>
+  <li>OS ごとの単体の実行ファイルで配る(Windows x64、macOS arm64・x64、Linux x64)。動かすのに Node も npm も要らない</li>
+  <li>GitHub の公開のリポジトリに置き、版のタグを push すると、GitHub Actions が OS ごとに組み、その版の Release に実行ファイルと、その検証値の一覧を置く(利用者の決定)</li>
+  <li>nv と wrangler-compose は同じ版のタグで一緒に組み、同じ Release に並べる(版は 2 つで揃える)</li>
+  <li>最初の導入は、Release から OS に合う nv(と、使うなら wrangler-compose)を取り、1 つのフォルダに置くだけで済む(インストーラや PATH の書き換えを要さない。PATH に入れるかは利用者が決める)</li>
+</ul>
+
+<h3 id="req-010"><span class="id">REQ-010</span>更新</h3>
+<ul>
+  <li><code>nv self update</code> は、GitHub の Release の最新の版を調べ、いまの版より新しければ、OS に合う実行ファイルを取り、Release の検証値の一覧と照らしてから、nv 自身と入れ替える。合わなければ入れ替えずに止まる</li>
+  <li>nv と同じフォルダに wrangler-compose があれば、同じ版の wrangler-compose にも同じ手順で入れ替える(2 つの版がずれない)</li>
+  <li><code>nv self update --check</code> は、新しい版があるかだけを示し、何も変えない</li>
+  <li>取得は REQ-002 と同じく社内のプロキシの設定に従い、取ってくる先を環境変数で差し替えられる</li>
+  <li>入れ替える前と後の版を示す。すでに最新なら何もしない</li>
+  <li>取っている途中や入れ替えの途中で止まっても、いまの nv は動くまま残る(Windows で、動いている実行ファイルを入れ替えられない場合も含む)</li>
+  <li>入れ替えたあと、エージェントのスキルが入っていれば、新しい版の中身に入れ直す(REQ-008)</li>
+  <li>nv は、利用者が打たない限り、更新を調べに行かない(打ったコマンドのたびに網へ出ない)</li>
+</ul>
+
+<h2 id="out-of-scope">範囲外</h2>
+<ul>
+  <li>npm 以外の依存の道具(yarn・pnpm・bun)</li>
+  <li>依存の解決(<code>npm install</code> で <code>package-lock.json</code> を書き換えること)。依存を変えるときは <code>nv run npm install …</code> で npm に任せる</li>
+  <li>グローバルへの導入とシェルへの組み込み(fnm の <code>use</code> や、シムのようなもの)</li>
+</ul>
+
+<h2 id="open">決めること(利用者)</h2>
+<div class="box open">
+<ol>
+  <li>GitHub のリポジトリの名前(持ち主は個人)</li>
+</ol>
+</div>
+
+<footer>docs/nv/requirements.html</footer>
+</main>
+</div>
+</body>
+</html>

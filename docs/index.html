@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>仕様書</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a class="current" href="index.html">仕様書</a></div>
+  <ul>
+    <li><a href="nv/requirements.html">nv 要求仕様</a></li>
+    <li><a href="nv/acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+</nav>
+<main>
+<h1>仕様書</h1>
+<p class="lead">このリポジトリは 2 つの道具を別々に作る。nv は Node・npm を、wrangler-compose は Cloudflare の環境を受け持つ。</p>
+
+<table>
+  <tr><th style="width:22%">道具</th><th>受け持つこと</th><th style="width:30%">文書</th></tr>
+  <tr>
+    <td><code>nv</code></td>
+    <td>Node・npm を uv のように扱う。Node の版の固定と取得、依存の導入、揃えた環境での実行、エージェント用のスキル</td>
+    <td><a href="nv/requirements.html">要求仕様</a> / <a href="nv/acceptance.html">受け入れ条件</a></td>
+  </tr>
+  <tr>
+    <td><code>wrangler-compose</code></td>
+    <td>Wrangler を docker compose のように扱う。環境を指定して build・up・down・backup・restore</td>
+    <td><a href="wrangler-compose/requirements.html">要求仕様</a> / <a href="wrangler-compose/acceptance.html">受け入れ条件</a></td>
+  </tr>
+</table>
+
+<h2>境目</h2>
+<ul>
+  <li>wrangler-compose は Node のことを何も知らず、Wrangler を <code>nv run wrangler …</code> で動かす</li>
+  <li>nv は Cloudflare に触れず、Wrangler を自分で動かさない。wrangler-compose は、一緒に配る実行ファイルとスキルとしてだけ扱う</li>
+  <li>2 つは同じフォルダに置き、wrangler-compose は同じフォルダの nv を使う</li>
+  <li>どちらも OS ごとの単体の実行ファイルで、1 つのリポジトリの同じ Release から同じ版で配る</li>
+  <li>更新(<code>nv self update</code>)とエージェント用のスキル(<code>nv install skill</code>)は nv が 2 つ分まとめて受け持つ</li>
+</ul>
+
+<footer>docs/index.html</footer>
+</main>
+</div>
+</body>
+</html>

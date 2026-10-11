@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wrangler-compose 受け入れ条件</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="../nv/requirements.html">nv 要求仕様</a></li>
+    <li><a href="../nv/acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a class="current" href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+  <ul>
+    <li><a href="#ac-001">AC-001 環境の指定</a></li>
+    <li><a href="#ac-002">AC-002 設定と Wrangler</a></li>
+    <li><a href="#ac-003">AC-003 build</a></li>
+    <li><a href="#ac-004">AC-004 up</a></li>
+    <li><a href="#ac-005">AC-005 down</a></li>
+    <li><a href="#ac-006">AC-006 down --purge</a></li>
+    <li><a href="#ac-007">AC-007 backup</a></li>
+    <li><a href="#ac-008">AC-008 restore</a></li>
+    <li><a href="#ac-009">AC-009 秘密の扱い</a></li>
+    <li><a href="#ac-010">AC-010 配り方と更新</a></li>
+  </ul>
+</nav>
+<main>
+<h1>wrangler-compose 受け入れ条件</h1>
+<p class="lead">確かめは、試験用の Cloudflare アカウントの使い捨ての環境(Worker・D1・R2)で行う。本番の環境では行わない。Windows x64 と macOS arm64 の両方で確かめる。</p>
+
+<h3 id="ac-001"><span class="id">AC-001</span>環境の指定 <span class="refs">REQ-001</span></h3>
+<ul>
+  <li><code>--env staging up</code>・<code>-e staging up</code>・<code>CLOUDFLARE_ENV=staging</code> を付けた <code>up</code> が、同じ環境に同じ結果を出す。<code>--env</code> と <code>CLOUDFLARE_ENV</code> の両方を付けたら <code>--env</code> の環境に出る</li>
+  <li>環境を指定せずに <code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code> を打つと、Cloudflare に何も起きずに止まり、環境の指定が要ると出る</li>
+  <li>設定に無い環境名(設定の環境名の略や別名を含む)を指定すると、何も起きずに止まり、設定にある環境名が並ぶ</li>
+</ul>
+
+<h3 id="ac-002"><span class="id">AC-002</span>設定の持ち主と Wrangler の呼び方 <span class="refs">REQ-002</span></h3>
+<ul>
+  <li>wrangler-compose のリポジトリと、使う側のプロジェクトに、Wrangler の設定ファイル以外の環境の定義が無い</li>
+  <li>wrangler-compose が動かす Wrangler の版が、プロジェクトの <code>package-lock.json</code> の版と一致する(PATH にほかの版の Wrangler や nv があっても。使う nv は wrangler-compose と同じフォルダのもの)</li>
+  <li>どの操作のあとも、プロジェクトのファイルが変わっていない(<code>git status</code> に差分が出ない)。D1・R2 を新しく作った <code>up</code> を端末から打ったときも同じ</li>
+  <li>同じフォルダに nv が無い、またはプロジェクトの依存に Wrangler が無いと、何も起きずに止まり、入れ方が出る</li>
+  <li>プロジェクトの Wrangler が要る版より古いと、何も起きずに止まり、要る版が出る</li>
+</ul>
+
+<h3 id="ac-003"><span class="id">AC-003</span>build <span class="refs">REQ-003</span></h3>
+<ul>
+  <li><code>--env staging build</code> のあと、Cloudflare の Worker・D1・R2 が変わっていない</li>
+  <li>設定のビルドのコマンドが失敗すると、<code>build</code> も失敗し、理由が出る</li>
+</ul>
+
+<h3 id="ac-004"><span class="id">AC-004</span>up <span class="refs">REQ-004</span></h3>
+<ul>
+  <li>まだ何も無い環境(D1 を名前だけで書いた設定)に <code>up</code> を打つと、Worker・D1・R2 ができ、D1 にすべての移行が当たり、Worker の URL が応える</li>
+  <li>D1 がすべてある環境で、移行を 1 つ足して <code>up</code> を打つと、足した移行だけが当たり、新しいコードが出る。確認を求められない</li>
+  <li>D1 がすべてある環境で、失敗する移行を足して <code>up</code> を打つと、デプロイは行われず(前のコードのまま)、どの移行で止まったかが出る</li>
+  <li>まだ無い D1 がある環境で、失敗する移行を入れて <code>up</code> を打つと、デプロイは済み、移行が当たっていないことと、どの移行で止まったかが出る</li>
+  <li>設定に <code>database_id</code> を書いた D1 が無いと、<code>up</code> は何もデプロイせずに止まり、その D1 の名前と ID が出る</li>
+  <li><code>.env.staging</code> があると、<code>up</code> のあと、そこに書いたシークレットが Worker に入っている。<code>WRANGLER_COMPOSE_</code> で始まる値は入っていない。ファイルが無ければ、前のシークレットのまま</li>
+  <li><code>.env.staging</code> から 1 つ消して <code>up</code> を打つと、そのシークレットは Worker に残り、その名前が示される</li>
+</ul>
+
+<h3 id="ac-005"><span class="id">AC-005</span>down <span class="refs">REQ-005</span></h3>
+<ul>
+  <li><code>down</code> を打つと、消す前に、Worker と一緒に消えるもの(シークレット・ルート・カスタムドメイン・Cron・Durable Objects)が出る</li>
+  <li>環境名を正しく打ち直すと、Worker が無くなり、D1 の表の中身と R2 のオブジェクトは変わらない</li>
+  <li>打ち直した名前が違うと、何も消えない</li>
+  <li>入力を流し込んで(<code>echo staging | wrangler-compose --env staging down</code> など)打つと、何も消えずに止まる</li>
+  <li><code>down</code> のあと <code>up</code> を打つと、Worker が戻り、<code>down</code> の前と同じ D1・R2 の中身が見える</li>
+</ul>
+
+<h3 id="ac-006"><span class="id">AC-006</span>down --purge <span class="refs">REQ-006</span></h3>
+<ul>
+  <li>正しい API キーを渡して <code>down --purge</code> で環境名を打ち直すと、Worker・D1・R2 バケットが無くなる(オブジェクトのあるバケットも)</li>
+  <li>API キーを渡さない・誤ったキーを渡すと、警告が出て、Worker・D1・R2 はどれも変わらない</li>
+  <li>消す前に、Worker 名・D1 の名前・バケットの名前とオブジェクトの数が出る</li>
+  <li>入力を流し込んで打つと、何も消えずに止まる</li>
+  <li>設定に <code>database_id</code> を書いた D1 があると、消す前に、消したあとの <code>up</code> がその D1 を作り直さないことが出る</li>
+  <li>名前だけで書いた設定の環境を <code>down --purge</code> したあと <code>up</code> を打つと、空の D1・R2 が新しくでき、移行が当たる</li>
+  <li>途中で止めると(網を切るなど)、何を消して何が残っているかが出る</li>
+</ul>
+
+<h3 id="ac-007"><span class="id">AC-007</span>backup <span class="refs">REQ-007</span></h3>
+<ul>
+  <li><code>backup</code> のあと、プロジェクトの <code>backups/&lt;環境名&gt;/&lt;日時&gt;/</code> に、D1 の SQL(移行の履歴を含む)・R2 のすべてのオブジェクト・目録がある。オブジェクトの数と大きさが環境と一致する</li>
+  <li><code>backup &lt;別のフォルダ&gt;</code> を打つと、そのフォルダの <code>&lt;環境名&gt;/&lt;日時&gt;/</code> に同じものができ、プロジェクトの <code>backups/</code> には何もできない</li>
+  <li>git の中のプロジェクトで <code>backups/</code> が <code>.gitignore</code> で外れていないと、何も書き出されずに止まる。git の外の書き出し先なら止まらない</li>
+  <li>API キーを渡さない・誤ったキーを渡すと、警告が出て、書き出し先に何もできない</li>
+  <li>書き出しの途中で止めると、残ったフォルダは書きかけと分かり、<code>restore</code> に渡すと止まる</li>
+  <li>書き出せない表を持つ D1 があると、その D1 と理由が出て止まり、完成した控えはできない</li>
+</ul>
+
+<h3 id="ac-008"><span class="id">AC-008</span>restore <span class="refs">REQ-008</span></h3>
+<ul>
+  <li>別の環境に <code>up</code> したあと、AC-007 の控えを <code>restore --drop</code> して環境名を打ち直すと、D1 の表の中身と R2 のオブジェクト(キー・中身・内容の種類)が控えと一致する。<code>up</code> でできていたオブジェクトや行は残らない</li>
+  <li>控えを取ったあとに移行を 1 つ足したコードで、上と同じことをすると、戻したあとに足した移行だけが当たり、Worker が応える</li>
+  <li><code>--drop</code> を付けずに、中身のある(<code>up</code> で移行が当たった)戻す先へ <code>restore</code> すると、何も変わらずに止まり、空でないものと <code>--drop</code> のことが出る</li>
+  <li><code>restore --drop</code> を打つと、消す前に、D1 ごとの表の数とバケットごとのオブジェクトの数と、戻している間に欠けたデータが見えることが出る。打ち直した名前が違う、または入力を流し込んで打つと、何も変わらずに止まる</li>
+  <li>戻す先の D1・バケットが無いと、何も変わらずに止まり、先に <code>up</code> を打つよう出る</li>
+  <li>書きかけの控え、または移行の履歴の入っていない控えを指定すると、何も変わらずに止まる</li>
+  <li>API キーを渡さない・誤ったキーを渡すと、警告が出て、何も変わらない(<code>--drop</code> でも)</li>
+  <li>途中で止めると、何を消し、何を入れて、何が残っているかが出る</li>
+</ul>
+
+<h3 id="ac-009"><span class="id">AC-009</span>秘密の扱い <span class="refs">REQ-009</span></h3>
+<ul>
+  <li><code>up</code>・<code>down</code>・<code>down --purge</code>・<code>backup</code>・<code>restore</code> のどれでも、画面・ログ・目録に、API キーとシークレットの値が出ない(失敗したときの出力も含む)</li>
+  <li><code>.env.staging</code> と環境変数に別の API キーを入れると、環境変数のキーが使われる</li>
+  <li>アカウント ID や管轄を <code>.env.staging</code> に書かなくても、<code>backup</code> が動く</li>
+  <li>git の中のプロジェクトで、<code>.env.staging</code> が <code>.gitignore</code> で外れていない、またはすでに git に入っていると、<code>up</code>・<code>down --purge</code>・<code>backup</code>・<code>restore</code> は何も起きずに止まる。git の外のプロジェクトでは止まらない</li>
+</ul>
+
+<h3 id="ac-010"><span class="id">AC-010</span>配り方と更新 <span class="refs">REQ-010</span></h3>
+<ul>
+  <li>Node も npm も入っていない Windows と macOS で、同じフォルダに置いた wrangler-compose と nv の実行ファイルだけで、<code>up</code> が動く(Node と Wrangler は nv が揃える)</li>
+  <li>版のタグを push すると、その版の GitHub の Release に、nv と並んで OS ごとの wrangler-compose の実行ファイルと検証値が並ぶ</li>
+  <li><code>wrangler-compose self update</code>・<code>wrangler-compose install skill</code> は無い。更新とスキルは nv の AC-010・AC-008 で確かめる</li>
+</ul>
+
+<footer>docs/wrangler-compose/acceptance.html</footer>
+</main>
+</div>
+</body>
+</html>

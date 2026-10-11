@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nv 受け入れ条件</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="requirements.html">nv 要求仕様</a></li>
+    <li><a class="current" href="acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="../wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="../wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
+  </ul>
+  <ul>
+    <li><a href="#ac-001">AC-001 Node の版の固定</a></li>
+    <li><a href="#ac-002">AC-002 Node の取得</a></li>
+    <li><a href="#ac-003">AC-003 sync</a></li>
+    <li><a href="#ac-004">AC-004 run</a></li>
+    <li><a href="#ac-005">AC-005 x</a></li>
+    <li><a href="#ac-006">AC-006 Node の版の管理</a></li>
+    <li><a href="#ac-007">AC-007 利用者の環境</a></li>
+    <li><a href="#ac-008">AC-008 エージェント用のスキル</a></li>
+    <li><a href="#ac-009">AC-009 配り方</a></li>
+    <li><a href="#ac-010">AC-010 更新</a></li>
+  </ul>
+</nav>
+<main>
+<h1>nv 受け入れ条件</h1>
+<p class="lead">確かめは Windows x64 と macOS arm64 の両方で行う。Windows では PowerShell と cmd の両方から打つ。</p>
+
+<h3 id="ac-001"><span class="id">AC-001</span>Node の版の固定 <span class="refs">REQ-001</span></h3>
+<ul>
+  <li><code>.node-version</code> に <code>24.11.1</code> と書いたプロジェクトで <code>nv run node --version</code> を打つと、<code>v24.11.1</code> が出る。PATH にほかの版の Node があっても同じ</li>
+  <li><code>.node-version</code> が無い、または <code>24</code> と書いてあると、何も取らずに止まり、書き方が出る</li>
+</ul>
+
+<h3 id="ac-002"><span class="id">AC-002</span>Node の取得 <span class="refs">REQ-002</span></h3>
+<ul>
+  <li>置き場にその版が無い状態で <code>nv sync</code> を打つと、置き場にその版ができる。もう一度打つと、取り直さない</li>
+  <li>Windows でも macOS でも、取った Node は <code>~/.nv/cache</code> の下にあり、<code>~/.nv</code> の外(<code>%LOCALAPPDATA%</code>・<code>~/Library/Caches</code> など)に nv のものができていない</li>
+  <li>検証値と合わない配布物を返す取り先に差し替えると、置き場に何もできずに止まり、検証値が合わないと出る</li>
+  <li>取っている途中で止めると、置き場に壊れた版が残らない(次の <code>nv sync</code> で取り直して動く)</li>
+  <li>2 つの <code>nv sync</code> を同時に打っても、両方が成功し、置き場の版は 1 つ</li>
+  <li>公式に直接出られず、プロキシ(<code>HTTPS_PROXY</code>)を通してだけ出られる網で、<code>nv sync</code> が Node を取れる</li>
+</ul>
+
+<h3 id="ac-003"><span class="id">AC-003</span>sync <span class="refs">REQ-003</span></h3>
+<ul>
+  <li><code>package-lock.json</code> のあるプロジェクトで <code>nv sync</code> を打つと、<code>node_modules</code> がロックファイルのとおりになり、ロックファイルは変わらない</li>
+  <li><code>package-lock.json</code> が無いと、何も入れずに止まる</li>
+  <li><code>~/.npm</code>(Windows は <code>%LOCALAPPDATA%\npm-cache</code>)を消してから <code>nv sync</code> を打つと、npm のキャッシュは <code>~/.nv/cache/npm</code> にでき、<code>~/.npm</code> などには何もできない</li>
+</ul>
+
+<h3 id="ac-004"><span class="id">AC-004</span>run <span class="refs">REQ-004</span></h3>
+<ul>
+  <li><code>nv run npm run build</code> が、<code>.node-version</code> の Node と、その版に付いた npm で動く。<code>package.json</code> のスクリプトの中で起きる <code>node</code> も同じ版</li>
+  <li><code>node_modules</code> を消してから <code>nv run &lt;プロジェクトの依存にある道具&gt;</code> を打つと、先に依存が入り、その道具が動く</li>
+  <li>依存が揃った状態で <code>nv run node --version</code> を 2 回打つと、2 回目は依存を入れ直さない。<code>package-lock.json</code> を変えると、次の <code>nv run</code> で入れ直す</li>
+  <li>Windows で <code>.cmd</code> の形の道具(<code>node_modules/.bin</code> にあるもの)を、<code>nv run &lt;名前&gt;</code> で動かせる</li>
+  <li><code>nv run node -e "console.log(process.argv)" "a&amp;b" "*"</code> で、<code>a&amp;b</code> と <code>*</code> が文字のまま届く(PowerShell・cmd・zsh のどれから打っても)</li>
+  <li><code>echo hi | nv run node -e "process.stdin.pipe(process.stdout)"</code> で <code>hi</code> が出る</li>
+  <li>動かしたコマンドが 3 で終わると、<code>nv run</code> も 3 で終わる</li>
+</ul>
+
+<h3 id="ac-005"><span class="id">AC-005</span>x <span class="refs">REQ-005</span></h3>
+<ul>
+  <li>プロジェクトの依存に無い道具を <code>nv x &lt;パッケージ&gt;@&lt;版&gt; --version</code> で動かすと、その版が出て、プロジェクトの <code>package.json</code>・<code>package-lock.json</code>・<code>node_modules</code> は変わらない</li>
+  <li>2 回目は置き場のものを使い、取り直さない</li>
+  <li>版を <code>latest</code> や <code>4</code> と書くと、何もせずに止まる</li>
+  <li>プロジェクトの外で <code>nv x … --node 22.11.0</code> を打つと、その版の Node で動く。<code>.node-version</code> も <code>--node</code> も無いと、何もせずに止まる。<code>.node-version</code> のあるプロジェクトでは、その版で動く</li>
+</ul>
+
+<h3 id="ac-006"><span class="id">AC-006</span>Node の版の管理 <span class="refs">REQ-006</span></h3>
+<ul>
+  <li><code>nv node install 22.11.0</code> のあと <code>nv node list</code> に <code>22.11.0</code> が出る。<code>nv node uninstall 22.11.0</code> のあと出ない</li>
+</ul>
+
+<h3 id="ac-007"><span class="id">AC-007</span>利用者の環境 <span class="refs">REQ-007</span></h3>
+<ul>
+  <li>nv をどう使ったあとも、利用者の PATH・シェルの設定ファイル・グローバルの npm の中身が変わっていない</li>
+  <li><code>nv sync</code> のあと、新しく開いた端末で <code>node --version</code> を打つと、nv を使う前と同じ結果になる(nv の Node は nv の外に出てこない)</li>
+</ul>
+
+<h3 id="ac-008"><span class="id">AC-008</span>エージェント用のスキル <span class="refs">REQ-008</span></h3>
+<ul>
+  <li><code>nv install skill</code> のあと、<code>~/.claude/skills/</code> と <code>~/.agents/skills/</code> に nv と wrangler-compose のスキルがあり、どこに入れたかが出る</li>
+  <li>入れたスキルに、REQ-008 の守らせること(Node・npm・npx を直接打たない、JS は <code>nv run node</code>、Cloudflare の環境は <code>wrangler-compose</code>)が書いてある</li>
+  <li>Claude Code と Codex のそれぞれに、別のプロジェクトで「この JS のスクリプトを動かして」と頼むと、<code>node</code> ではなく <code>nv run node …</code> で動かす(それぞれ新しい会話で 3 回頼み、3 回とも)</li>
+  <li>Claude Code と Codex のそれぞれに、Wrangler の設定を持つプロジェクトで「staging にデプロイして」と頼むと、<code>wrangler deploy</code> ではなく <code>wrangler-compose --env staging up</code> で行う(同じく 3 回とも)</li>
+  <li><code>~/.claude</code> の無い PC では、<code>~/.agents/skills/</code> だけに入り、Claude Code に入れなかったことが出る。Codex の無い PC でも <code>~/.agents/skills/</code> には入る</li>
+  <li><code>nv uninstall skill</code> のあと、nv が入れたスキルが無くなり、どこから消したかが出て、ほかのスキルは変わらない</li>
+  <li>2 回続けて <code>nv install skill</code> を打っても、スキルは 1 つ(上書き)</li>
+</ul>
+
+<h3 id="ac-009"><span class="id">AC-009</span>配り方 <span class="refs">REQ-009</span></h3>
+<ul>
+  <li>Node も npm も入っていない Windows と macOS で、Release から取った実行ファイルを 1 つのフォルダに置くだけで、<code>nv sync</code> と <code>nv run node --version</code> が動く(インストーラも PATH の書き換えも要らない)</li>
+  <li>版のタグを push すると、その版の GitHub の Release に、Windows x64・macOS arm64・macOS x64・Linux x64 の nv と wrangler-compose の実行ファイルと検証値の一覧が並ぶ。Linux x64 の nv で <code>nv run node --version</code> が動く</li>
+</ul>
+
+<h3 id="ac-010"><span class="id">AC-010</span>更新 <span class="refs">REQ-010</span></h3>
+<ul>
+  <li>古い版の nv で <code>nv self update</code> を打つと、最新の版に入れ替わり、<code>nv --version</code> に最新の版が出る。前と後の版が示される</li>
+  <li>nv と同じフォルダに wrangler-compose があると、<code>nv self update</code> のあと <code>wrangler-compose --version</code> も nv と同じ版になる。無ければ wrangler-compose は入らない</li>
+  <li>最新の版で <code>nv self update</code> を打つと、何も変わらず、最新であると出る</li>
+  <li><code>nv self update --check</code> は、新しい版があるかを示し、実行ファイルは変わらない</li>
+  <li>検証値と合わない実行ファイルを返す取り先に差し替えると、入れ替えずに止まり、いまの nv が動く</li>
+  <li>取っている途中で止めても、いまの nv が動く</li>
+  <li>Windows で、動いている nv から <code>nv self update</code> を打っても入れ替わる</li>
+  <li>プロキシを通してだけ出られる網で、<code>nv self update</code> が動く</li>
+  <li>スキルを入れてある PC で更新すると、スキルの中身も新しい版のものになる</li>
+  <li><code>nv self update</code> 以外のコマンドを打っても、GitHub へ通信しない</li>
+</ul>
+
+<footer>docs/nv/acceptance.html</footer>
+</main>
+</div>
+</body>
+</html>
