@@ -19,13 +19,18 @@ pub struct PackageSpec {
 
 impl PackageSpec {
     pub fn parse(s: &str) -> Result<PackageSpec> {
-        let at = s
-            .rfind('@')
-            .filter(|&i| i > 0)
-            .ok_or_else(|| anyhow!("`{s}` needs an exact version, e.g. `{s}@1.2.3`"))?;
+        let at = s.rfind('@').filter(|&i| i > 0).ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "`{s}` には版をそのまま付けてください(例: `{s}@1.2.3`)",
+                "`{s}` needs an exact version, e.g. `{s}@1.2.3`"
+            ))
+        })?;
         let (name, version) = (&s[..at], &s[at + 1..]);
         let version: Version = version.parse().map_err(|e| {
-            anyhow!("{e} (nv x needs an exact version so every machine runs the same tool)")
+            anyhow!(crate::tr!(
+                "{e}(どの PC でも同じ道具を動かすため、nv x は版をそのまま書いた形だけを受けます)",
+                "{e} (nv x needs an exact version so every machine runs the same tool)"
+            ))
         })?;
         Ok(PackageSpec {
             name: name.to_string(),
@@ -48,7 +53,10 @@ pub fn run(
     let node_version = match Project::find().ok() {
         Some(p) if p.dir.join(".node-version").is_file() => p.node_version()?,
         _ => node_flag.ok_or_else(|| {
-            anyhow!("no .node-version here; pass the Node version with `--node <version>`")
+            anyhow!(crate::tr!(
+                "ここには .node-version がありません。`--node <版>` で Node の版を渡してください",
+                "no .node-version here; pass the Node version with `--node <version>`"
+            ))
         })?,
     };
     let node = node::ensure(home, node_version)?;
@@ -58,18 +66,23 @@ pub fn run(
     let bins = run::bins_from_package_json(&pkg_dir, &spec.name)?;
     let short = spec.name.rsplit('/').next().unwrap_or(&spec.name);
     let entry = match bins.as_slice() {
-        [] => bail!("{} does not provide a command", spec.name),
+        [] => bail!(crate::tr!(
+            "{} はコマンドを持っていません",
+            "{} does not provide a command",
+            spec.name
+        )),
         [(_, only)] => only.clone(),
         many => match many.iter().find(|(n, _)| n == short) {
             Some((_, p)) => p.clone(),
-            None => bail!(
+            None => bail!(crate::tr!(
+                "{} は複数のコマンド({})を持ち、{short} という名前のものがありません",
                 "{} provides several commands ({}); none is named {short}",
                 spec.name,
                 many.iter()
                     .map(|(n, _)| n.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
-            ),
+            )),
         },
     };
     let mut cmd = run::entry_target(&entry).command(&node);
@@ -94,7 +107,15 @@ fn ensure_tool(home: &NvHome, node: &Node, spec: &PackageSpec) -> Result<PathBuf
     if dir.is_dir() {
         return Ok(dir);
     }
-    eprintln!("nv: installing {}@{}", spec.name, spec.version);
+    eprintln!(
+        "nv: {}",
+        crate::tr!(
+            "{}@{} を入れます",
+            "installing {}@{}",
+            spec.name,
+            spec.version
+        )
+    );
     let tmp = home.new_tmp("tool")?;
     let result = (|| -> Result<()> {
         fs::write(tmp.join("package.json"), "{\"private\":true}\n")?;
@@ -106,8 +127,13 @@ fn ensure_tool(home: &NvHome, node: &Node, spec: &PackageSpec) -> Result<PathBuf
             &["install", "--no-audit", "--no-fund", &wanted],
         )?;
         fs::create_dir_all(dir.parent().unwrap())?;
-        fs::rename(&tmp, &dir)
-            .with_context(|| format!("cannot move the tool into {}", dir.display()))?;
+        fs::rename(&tmp, &dir).with_context(|| {
+            crate::tr!(
+                "道具を {} へ移せません",
+                "cannot move the tool into {}",
+                dir.display()
+            )
+        })?;
         Ok(())
     })();
     if result.is_err() {

@@ -17,7 +17,13 @@ impl FromStr for Version {
         let t = s.trim();
         let t = t.strip_prefix('v').unwrap_or(t);
         let parts: Vec<&str> = t.split('.').collect();
-        let bad = || format!("`{}` is not an exact version like 24.11.1", s.trim());
+        let bad = || {
+            crate::tr!(
+                "`{}` は版をそのまま書いた形(例: 24.11.1)ではありません",
+                "`{}` is not an exact version like 24.11.1",
+                s.trim()
+            )
+        };
         if parts.len() != 3 {
             return Err(bad());
         }

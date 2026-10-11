@@ -9,8 +9,12 @@ pub struct Project {
     pub dir: PathBuf,
 }
 
-const NODE_VERSION_HELP: &str =
-    "write the exact Node version in .node-version next to package.json, e.g. `24.11.1`";
+fn node_version_help() -> String {
+    crate::tr!(
+        "package.json の隣の .node-version に、Node の版をそのまま書いてください(例: `24.11.1`)",
+        "write the exact Node version in .node-version next to package.json, e.g. `24.11.1`"
+    )
+}
 
 impl Project {
     /// The nearest folder at or above `start` that holds a package.json.
@@ -24,12 +28,16 @@ impl Project {
     }
 
     pub fn find() -> Result<Project> {
-        let cwd = std::env::current_dir().context("cannot read the current folder")?;
+        let cwd = std::env::current_dir().context(crate::tr!(
+            "いまのフォルダを読めません",
+            "cannot read the current folder"
+        ))?;
         Self::find_from(&cwd).ok_or_else(|| {
-            anyhow!(
+            anyhow!(crate::tr!(
+                "{} にも、その上のフォルダにも package.json がありません",
                 "no package.json in {} or any folder above it",
                 cwd.display()
-            )
+            ))
         })
     }
 
@@ -38,20 +46,32 @@ impl Project {
         let text = match fs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                bail!(
-                    "{} has no .node-version; {NODE_VERSION_HELP}",
-                    self.dir.display()
-                )
+                bail!(crate::tr!(
+                    "{} に .node-version がありません。{}",
+                    "{} has no .node-version; {}",
+                    self.dir.display(),
+                    node_version_help()
+                ))
             }
-            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    crate::tr!("{} を読めません", "cannot read {}", path.display())
+                });
+            }
         };
         let line = text
             .lines()
             .map(str::trim)
             .find(|l| !l.is_empty())
             .unwrap_or("");
-        line.parse::<Version>()
-            .map_err(|e| anyhow!("{}: {e}; {NODE_VERSION_HELP}", path.display()))
+        line.parse::<Version>().map_err(|e| {
+            anyhow!(crate::tr!(
+                "{}: {e}。{}",
+                "{}: {e}; {}",
+                path.display(),
+                node_version_help()
+            ))
+        })
     }
 
     pub fn lockfile(&self) -> PathBuf {
@@ -65,14 +85,16 @@ impl Project {
     pub fn require_lockfile(&self) -> Result<PathBuf> {
         let path = self.lockfile();
         if !path.is_file() {
-            let mut msg = format!(
+            let mut msg = crate::tr!(
+                "{} に package-lock.json がありません。`nv run npm install` で作り、git に入れてください",
                 "{} has no package-lock.json; create it with `nv run npm install` and commit it",
                 self.dir.display()
             );
             if let Some(parent) = self.dir.parent().and_then(Self::find_from)
                 && parent.lockfile().is_file()
             {
-                msg.push_str(&format!(
+                msg.push_str(&crate::tr!(
+                    "(npm のワークスペースは扱えません。{} で nv を打ってください)",
                     " (npm workspaces are not supported; run nv in {} instead)",
                     parent.dir.display()
                 ));

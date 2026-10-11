@@ -15,8 +15,10 @@ pub fn prepare(cmd: &mut Command, home: &NvHome, node: &Node, bin_dirs: &[PathBu
     if let Some(old) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&old));
     }
-    let path: OsString =
-        std::env::join_paths(dirs).context("a folder on PATH contains an invalid character")?;
+    let path: OsString = std::env::join_paths(dirs).context(crate::tr!(
+        "PATH のフォルダに使えない文字があります",
+        "a folder on PATH contains an invalid character"
+    ))?;
     cmd.env("PATH", path);
     cmd.env("npm_config_cache", home.npm_cache());
     // npm should not nag about updating itself; nv decides npm's version via Node.
@@ -31,15 +33,20 @@ pub fn npm(home: &NvHome, node: &Node, cwd: &Path, args: &[&str]) -> Result<()> 
     cmd.arg(node.npm_cli()).args(args).current_dir(cwd);
     prepare(&mut cmd, home, node, &[])?;
     cmd.stdin(Stdio::null()).stdout(std::io::stderr());
-    let status = cmd
-        .status()
-        .with_context(|| format!("cannot start {}", node.exe().display()))?;
+    let status = cmd.status().with_context(|| {
+        crate::tr!(
+            "{} を起動できません",
+            "cannot start {}",
+            node.exe().display()
+        )
+    })?;
     if !status.success() {
-        bail!(
-            "`npm {}` failed in {} ({status})",
-            args.join(" "),
-            cwd.display()
-        );
+        bail!(crate::tr!(
+            "{dir} で `npm {cmd}` が失敗しました({status})",
+            "`npm {cmd}` failed in {dir} ({status})",
+            cmd = args.join(" "),
+            dir = cwd.display()
+        ));
     }
     Ok(())
 }
@@ -50,15 +57,25 @@ pub fn hand_over(mut cmd: Command) -> Result<std::convert::Infallible> {
     {
         use std::os::unix::process::CommandExt;
         let err = cmd.exec();
-        Err(err).with_context(|| format!("cannot start {}", cmd.get_program().to_string_lossy()))
+        Err(err).with_context(|| {
+            crate::tr!(
+                "{} を起動できません",
+                "cannot start {}",
+                cmd.get_program().to_string_lossy()
+            )
+        })
     }
     #[cfg(windows)]
     {
         // Ctrl+C reaches the child too; nv keeps waiting so the child's exit code wins.
         let _ = ctrlc::set_handler(|| {});
-        let status = cmd
-            .status()
-            .with_context(|| format!("cannot start {}", cmd.get_program().to_string_lossy()))?;
+        let status = cmd.status().with_context(|| {
+            crate::tr!(
+                "{} を起動できません",
+                "cannot start {}",
+                cmd.get_program().to_string_lossy()
+            )
+        })?;
         std::process::exit(status.code().unwrap_or(1));
     }
 }

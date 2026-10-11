@@ -175,7 +175,12 @@
 
 <h3 id="des-012"><span class="id">DES-012</span>出力と終了コード <span class="refs">REQ-004・REQ-007</span></h3>
 <ul>
-  <li>nv 自身の出力は標準エラーに出し、英語にする(公開のリポジトリで、Windows の古いコードページの端末で日本語が化けるのを避ける)。標準出力は動かしたコマンドのものだけにする</li>
+  <li>nv 自身の出力は標準エラーに出す。標準出力は動かしたコマンドのものだけにする</li>
+  <li>言語(REQ-011)は起動のはじめに 1 度だけ決める: <code>NV_LANG</code> → <code>LC_ALL</code>・<code>LC_MESSAGES</code>・<code>LANG</code>(Unix)→ macOS は <code>defaults read -g AppleLanguages</code> の先頭 → Windows は <code>GetUserDefaultUILanguage</code> の主言語。<code>ja</code> で始まれば日本語、決まらなければ英語</li>
+  <li>メッセージは、出す箇所に日本語と英語を並べて書く(<code>tr!("日本語", "English")</code>)。訳の表を別のファイルに持たない(訳し漏れと、鍵と文のずれを起こさない)</li>
+  <li><code>--help</code> の説明は、組んだコマンドの定義に日本語の説明を当て直してから引数を読む。clap 自身の出すエラーの文(未知の引数など)は英語のまま</li>
+  <li>Windows の端末へは、Rust の標準の出力が UTF-8 を端末の文字に変えて書くので日本語は化けない(Rust の資料: 端末への出力は UTF-8 だけを受ける)。ファイルやパイプへは UTF-8 のまま書く</li>
+  <li>却下: 英語だけ(日本語の環境の利用者に読みにくい。利用者の決定)。却下: 日本語だけ(公開のリポジトリで、日本語を読めない人が使えない)</li>
   <li>nv 自身が止まったときの終了コードは 2。動かしたコマンドの終了コードはそのまま返す</li>
 </ul>
 

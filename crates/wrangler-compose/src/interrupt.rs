@@ -14,7 +14,7 @@ pub fn install() {
 /// Call between steps that do not run Wrangler (e.g. per R2 object).
 pub fn check() -> Result<()> {
     if INTERRUPTED.load(Ordering::SeqCst) {
-        bail!("interrupted (Ctrl+C)");
+        bail!(crate::tr!("中断しました(Ctrl+C)", "interrupted (Ctrl+C)"));
     }
     Ok(())
 }

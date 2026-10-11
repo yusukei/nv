@@ -16,7 +16,10 @@ fn platform() -> Result<&'static str> {
         ("macos", "x86_64") => "darwin-x64",
         ("linux", "x86_64") => "linux-x64",
         ("windows", "x86_64") => "win-x64",
-        (os, arch) => bail!("Node is not provided by nv for {os}/{arch}"),
+        (os, arch) => bail!(crate::tr!(
+            "nv は {os}/{arch} 向けの Node を扱えません",
+            "Node is not provided by nv for {os}/{arch}"
+        )),
     })
 }
 
@@ -94,7 +97,13 @@ fn install(home: &NvHome, v: Version, dest: &Path) -> Result<()> {
     let stem = format!("node-v{v}-{}", platform()?);
     let file = format!("{stem}.{}", archive_ext());
 
-    eprintln!("nv: downloading Node {v} from {mirror}");
+    eprintln!(
+        "nv: {}",
+        crate::tr!(
+            "Node {v} を {mirror} から取ります",
+            "downloading Node {v} from {mirror}"
+        )
+    );
     let sums = http::get_text(&format!("{mirror}/v{v}/SHASUMS256.txt"))?;
     let tmp = home.new_tmp(&format!("node-{v}"))?;
     let result = (|| -> Result<()> {
@@ -104,20 +113,32 @@ fn install(home: &NvHome, v: Version, dest: &Path) -> Result<()> {
 
         let unpacked = tmp.join("unpacked");
         fs::create_dir(&unpacked)?;
-        extract(&archive, &unpacked).with_context(|| format!("cannot unpack {file}"))?;
+        extract(&archive, &unpacked)
+            .with_context(|| crate::tr!("{file} を展開できません", "cannot unpack {file}"))?;
         let top = unpacked.join(&stem);
         if !top.is_dir() {
-            bail!("{file} does not contain {stem}/");
+            bail!(crate::tr!(
+                "{file} に {stem}/ がありません",
+                "{file} does not contain {stem}/"
+            ));
         }
         fs::create_dir_all(home.node_dir())?;
         // The rename is the last step: a version folder only exists once complete.
-        fs::rename(&top, dest)
-            .with_context(|| format!("cannot move Node into {}", dest.display()))?;
+        fs::rename(&top, dest).with_context(|| {
+            crate::tr!(
+                "Node を {} へ移せません",
+                "cannot move Node into {}",
+                dest.display()
+            )
+        })?;
         Ok(())
     })();
     let _ = remove_any(&tmp);
     result?;
-    eprintln!("nv: installed Node {v}");
+    eprintln!(
+        "nv: {}",
+        crate::tr!("Node {v} を入れました", "installed Node {v}")
+    );
     Ok(())
 }
 
@@ -143,7 +164,10 @@ pub fn installed(home: &NvHome) -> Result<Vec<Version>> {
             .filter_map(|e| e.file_name().to_str()?.parse().ok())
             .collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
+        Err(e) => {
+            return Err(e)
+                .with_context(|| crate::tr!("{} を読めません", "cannot read {}", dir.display()));
+        }
     };
     versions.sort();
     Ok(versions)
@@ -155,6 +179,7 @@ pub fn uninstall(home: &NvHome, v: Version) -> Result<bool> {
     if !dir.is_dir() {
         return Ok(false);
     }
-    remove_any(&dir).with_context(|| format!("cannot remove {}", dir.display()))?;
+    remove_any(&dir)
+        .with_context(|| crate::tr!("{} を消せません", "cannot remove {}", dir.display()))?;
     Ok(true)
 }

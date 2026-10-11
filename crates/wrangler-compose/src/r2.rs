@@ -58,7 +58,8 @@ pub fn credentials(project: &Project) -> Option<Credentials> {
 }
 
 pub fn missing_keys_message() -> String {
-    format!(
+    crate::tr!(
+        "R2 の API キーが要ります。.env.<環境名> か環境変数に {KEY_ID} と {SECRET} を書いてください(Cloudflare のダッシュボードの R2 > Manage API tokens で作れます)",
         "R2 API keys are needed: set {KEY_ID} and {SECRET} in .env.<env> or the environment (create them in the Cloudflare dashboard under R2 > Manage API tokens)"
     )
 }
@@ -85,8 +86,14 @@ pub fn account_id(project: &Project) -> Result<String> {
         .unwrap_or_default();
     match ids.as_slice() {
         [one] => Ok(one.clone()),
-        [] => bail!("cannot find your Cloudflare account; run `nv run wrangler login`"),
-        _ => bail!("you have several Cloudflare accounts; set account_id in the Wrangler config"),
+        [] => bail!(crate::tr!(
+            "Cloudflare のアカウントが見つかりません。`nv run wrangler login` でログインしてください",
+            "cannot find your Cloudflare account; run `nv run wrangler login`"
+        )),
+        _ => bail!(crate::tr!(
+            "Cloudflare のアカウントが複数あります。Wrangler の設定に account_id を書いてください",
+            "you have several Cloudflare accounts; set account_id in the Wrangler config"
+        )),
     }
 }
 
@@ -115,7 +122,12 @@ pub struct NoSuchBucket(pub String);
 
 impl std::fmt::Display for NoSuchBucket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "R2 bucket {} does not exist", self.0)
+        let msg = crate::tr!(
+            "R2 バケット {} がありません",
+            "R2 bucket {} does not exist",
+            self.0
+        );
+        f.write_str(&msg)
     }
 }
 
@@ -132,9 +144,17 @@ impl Store {
     pub fn new(account: &str, r2: &R2, creds: &Credentials) -> Result<Store> {
         let url = endpoint(account, r2.jurisdiction.as_deref())
             .parse()
-            .context("invalid R2 endpoint")?;
-        let bucket = Bucket::new(url, UrlStyle::Path, r2.bucket.clone(), "auto")
-            .map_err(|e| anyhow!("invalid R2 bucket {}: {e}", r2.bucket))?;
+            .context(crate::tr!(
+                "R2 の口の形が正しくありません",
+                "invalid R2 endpoint"
+            ))?;
+        let bucket = Bucket::new(url, UrlStyle::Path, r2.bucket.clone(), "auto").map_err(|e| {
+            anyhow!(crate::tr!(
+                "R2 バケット {} の指定が正しくありません: {e}",
+                "invalid R2 bucket {}: {e}",
+                r2.bucket
+            ))
+        })?;
         Ok(Store {
             binding: r2.binding.clone(),
             bucket_name: r2.bucket.clone(),
@@ -156,10 +176,13 @@ impl Store {
             action.with_max_keys(m);
         }
         let url = action.sign(SIGN_FOR);
-        let mut res = agent()
-            .get(url.as_str())
-            .call()
-            .with_context(|| format!("cannot reach R2 bucket {}", self.bucket_name))?;
+        let mut res = agent().get(url.as_str()).call().with_context(|| {
+            crate::tr!(
+                "R2 バケット {} につながりません",
+                "cannot reach R2 bucket {}",
+                self.bucket_name
+            )
+        })?;
         let status = res.status().as_u16();
         let body = res
             .body_mut()
@@ -168,19 +191,25 @@ impl Store {
             .read_to_string()?;
         match status {
             200 => {}
-            401 | 403 => bail!(
+            401 | 403 => bail!(crate::tr!(
+                "R2 の API キーがバケット {} に受け付けられませんでした({status})",
                 "the R2 API keys were refused for bucket {} ({status})",
                 self.bucket_name
-            ),
+            )),
             404 => return Err(NoSuchBucket(self.bucket_name.clone()).into()),
-            _ => bail!(
+            _ => bail!(crate::tr!(
+                "R2 バケット {} の一覧に失敗しました({status}): {}",
                 "listing R2 bucket {} failed ({status}): {}",
                 self.bucket_name,
                 snippet(&body)
-            ),
+            )),
         }
-        let parsed = ListObjectsV2::parse_response(&body)
-            .map_err(|e| anyhow!("unexpected R2 listing: {e}"))?;
+        let parsed = ListObjectsV2::parse_response(&body).map_err(|e| {
+            anyhow!(crate::tr!(
+                "R2 の一覧の応答が想定と違います: {e}",
+                "unexpected R2 listing: {e}"
+            ))
+        })?;
         let objects = parsed
             .contents
             .into_iter()
@@ -229,13 +258,14 @@ impl Store {
         let res = agent()
             .get(url.as_str())
             .call()
-            .with_context(|| format!("cannot download {key}"))?;
+            .with_context(|| crate::tr!("{key} を取れません", "cannot download {key}"))?;
         let status = res.status().as_u16();
         if status != 200 {
-            bail!(
+            bail!(crate::tr!(
+                "{} から {key} を取るのに失敗しました({status})",
                 "downloading {key} from {} failed ({status})",
                 self.bucket_name
-            );
+            ));
         }
         let mut headers = Vec::new();
         let mut meta = Vec::new();
@@ -276,8 +306,8 @@ impl Store {
             sent.push((name, v.clone()));
         }
         let url = action.sign(SIGN_FOR);
-        let file =
-            std::fs::File::open(src).with_context(|| format!("cannot open {}", src.display()))?;
+        let file = std::fs::File::open(src)
+            .with_context(|| crate::tr!("{} を開けません", "cannot open {}", src.display()))?;
         let len = file.metadata()?.len();
         let mut req = agent()
             .put(url.as_str())
@@ -289,15 +319,16 @@ impl Store {
             .send(ureq::SendBody::from_reader(&mut std::io::BufReader::new(
                 file,
             )))
-            .with_context(|| format!("cannot upload {key}"))?;
+            .with_context(|| crate::tr!("{key} を上げられません", "cannot upload {key}"))?;
         let status = res.status().as_u16();
         if status != 200 {
             let body = res.body_mut().read_to_string().unwrap_or_default();
-            bail!(
+            bail!(crate::tr!(
+                "{} へ {key} を上げるのに失敗しました({status}): {}",
                 "uploading {key} to {} failed ({status}): {}",
                 self.bucket_name,
                 snippet(&body)
-            );
+            ));
         }
         Ok(())
     }
@@ -320,26 +351,34 @@ impl Store {
                 .post(url.as_str())
                 .header("content-md5", &md5)
                 .send(body.as_bytes())
-                .with_context(|| format!("cannot delete objects in {}", self.bucket_name))?;
+                .with_context(|| {
+                    crate::tr!(
+                        "{} のオブジェクトを消せません",
+                        "cannot delete objects in {}",
+                        self.bucket_name
+                    )
+                })?;
             let status = res.status().as_u16();
             let text = res.body_mut().read_to_string().unwrap_or_default();
             if status != 200 {
-                bail!(
+                bail!(crate::tr!(
+                    "{} のオブジェクトの削除に失敗しました({status}): {}",
                     "deleting objects in {} failed ({status}): {}",
                     self.bucket_name,
                     snippet(&text)
-                );
+                ));
             }
             match DeleteObjectsResponse::parse(&text) {
                 Ok(r) => {
                     *deleted += r.deleted.len();
                     if !r.errors.is_empty() {
-                        bail!(
-                            "{} objects in {} could not be deleted: {}",
-                            r.errors.len(),
+                        bail!(crate::tr!(
+                            "{} のオブジェクトのうち {} 件を消せませんでした: {}",
+                            "{1} objects in {0} could not be deleted: {2}",
                             self.bucket_name,
+                            r.errors.len(),
                             snippet(&text)
-                        );
+                        ));
                     }
                 }
                 // A response without per-key results: the request succeeded.

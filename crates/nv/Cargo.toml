@@ -18,3 +18,4 @@ zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
 
 [target."cfg(windows)".dependencies]
 ctrlc = "3.5.2"
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }

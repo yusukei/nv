@@ -69,9 +69,10 @@ pub fn require_ignored(project: &Path, path: &Path, what: &str) -> Result<()> {
     let shown_str = shown.to_string_lossy();
     let target = path.to_string_lossy();
     if git(project, &["ls-files", "--error-unmatch", "--", &target]) == Some(true) {
-        bail!(
+        bail!(crate::tr!(
+            "{what} {shown_str} が git に入っています。git から外し(`git rm --cached`)、.gitignore に書いてください",
             "{what} {shown_str} is tracked by git; remove it from git (`git rm --cached`) and ignore it in .gitignore"
-        );
+        ));
     }
     // check-ignore exits 0 when the path is ignored.
     if git(
@@ -79,7 +80,10 @@ pub fn require_ignored(project: &Path, path: &Path, what: &str) -> Result<()> {
         &["check-ignore", "-q", "--no-index", "--", &target],
     ) != Some(true)
     {
-        bail!("{what} {shown_str} is not ignored by git; add it to .gitignore first");
+        bail!(crate::tr!(
+            "{what} {shown_str} が git から外れていません。先に .gitignore に書いてください",
+            "{what} {shown_str} is not ignored by git; add it to .gitignore first"
+        ));
     }
     Ok(())
 }

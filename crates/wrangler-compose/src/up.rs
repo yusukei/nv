@@ -8,14 +8,20 @@ use crate::project::Project;
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// One line of wrangler-compose's own output.
+pub fn say(msg: String) {
+    eprintln!("wrangler-compose: {msg}");
+}
+
 pub fn build(project: &Project) -> Result<()> {
     let out = TempDir::new("build")?;
     let outdir = out.path().to_string_lossy().into_owned();
     project.wrangler(["deploy", "--dry-run", "--outdir", &outdir])?;
-    eprintln!(
-        "wrangler-compose: {} builds (nothing was uploaded)",
+    say(tr!(
+        "{} を組めました(何も上げていません)",
+        "{} builds (nothing was uploaded)",
         project.config.worker
-    );
+    ));
     Ok(())
 }
 
@@ -29,9 +35,13 @@ pub fn read_env_file(project: &Project) -> Result<Option<BTreeMap<String, String
     if !path.is_file() {
         return Ok(None);
     }
-    git::require_ignored(&project.dir, &path, "secrets file")?;
+    git::require_ignored(
+        &project.dir,
+        &path,
+        &tr!("シークレットのファイル", "secrets file"),
+    )?;
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+        .with_context(|| tr!("{} を読めません", "cannot read {}", path.display()))?;
     Ok(Some(dotenv::parse(&text)))
 }
 
@@ -56,36 +66,52 @@ pub fn up(project: &Project) -> Result<()> {
     }
 
     if all_exist {
-        stage(1, 2, "D1 migrations");
-        d1::apply_migrations(project)
-            .context("stopped before deploying; the Worker was not changed")?;
-        stage(2, 2, "deploy");
+        stage(1, 2, tr!("D1 の移行", "D1 migrations"));
+        d1::apply_migrations(project).context(tr!(
+            "デプロイの前で止まりました。Worker は変わっていません",
+            "stopped before deploying; the Worker was not changed"
+        ))?;
+        stage(2, 2, tr!("デプロイ", "deploy"));
         deploy(project, secrets.as_ref())?;
     } else {
-        stage(1, 2, "deploy (creates missing D1 databases and R2 buckets)");
+        stage(
+            1,
+            2,
+            tr!(
+                "デプロイ(無い D1 と R2 バケットを作る)",
+                "deploy (creates missing D1 databases and R2 buckets)"
+            ),
+        );
         deploy(project, secrets.as_ref())?;
-        stage(2, 2, "D1 migrations");
-        d1::apply_migrations(project)
-            .context("the Worker is deployed, but its D1 migrations are not applied; fix the migration and run `up` again")?;
+        stage(2, 2, tr!("D1 の移行", "D1 migrations"));
+        d1::apply_migrations(project).context(tr!(
+            "Worker はデプロイ済みですが、D1 の移行が当たっていません。移行を直して、もう一度 `up` を打ってください",
+            "the Worker is deployed, but its D1 migrations are not applied; fix the migration and run `up` again"
+        ))?;
     }
 
     // The deploy is done; a failed listing must not hide that.
     if let Some(secrets) = &secrets
         && let Err(e) = report_leftover_secrets(project, secrets)
     {
-        eprintln!("wrangler-compose: warning: could not list the Worker's secrets: {e:#}");
+        say(tr!(
+            "注意: Worker のシークレットを一覧できませんでした: {e:#}",
+            "warning: could not list the Worker's secrets: {e:#}"
+        ));
     }
     if project.config_file_bytes()? != before {
-        bail!(
+        bail!(tr!(
+            "デプロイの間に {} が変わりました。wrangler-compose は書き換えないので、変更を確かめて git で戻してください",
             "{} was changed during deploy; wrangler-compose never edits it, so review the change and restore it with git",
             project.config.config_path.display()
-        );
+        ));
     }
-    eprintln!(
-        "wrangler-compose: {} is up ({})",
+    say(tr!(
+        "{} を出しました({})",
+        "{} is up ({})",
         project.config.worker,
         project.env_name()
-    );
+    ));
     Ok(())
 }
 
@@ -96,74 +122,131 @@ fn plan(
     remote: &[(String, String)],
     all_exist: bool,
 ) -> Result<()> {
-    eprintln!(
-        "wrangler-compose: dry run of `up` for {}:",
+    say(tr!(
+        "`up` の dry-run({}):",
+        "dry run of `up` for {}:",
         project.env_name()
-    );
+    ));
     let order = if all_exist {
-        "apply D1 migrations, then deploy"
+        tr!(
+            "D1 の移行を当ててから、デプロイする",
+            "apply D1 migrations, then deploy"
+        )
     } else {
-        "deploy first (Wrangler creates the missing D1 databases and R2 buckets), then apply D1 migrations"
+        tr!(
+            "先にデプロイして(無い D1 と R2 バケットを Wrangler が作る)、そのあと D1 の移行を当てる",
+            "deploy first (Wrangler creates the missing D1 databases and R2 buckets), then apply D1 migrations"
+        )
     };
-    eprintln!("  order: {order}");
+    eprintln!("  {} {order}", tr!("順番:", "order:"));
     for d in &project.config.d1 {
         let pending = if d1::exists(d, remote) {
             d1::pending_migrations(project, d)?
         } else {
             eprintln!(
-                "  D1 {} ({}) does not exist yet and would be created",
-                d.name, d.binding
+                "  {}",
+                tr!(
+                    "D1 {} ({}) はまだ無く、作られます",
+                    "D1 {} ({}) does not exist yet and would be created",
+                    d.name,
+                    d.binding
+                )
             );
             d1::pending_migrations_all(d)
         };
         if pending.is_empty() {
-            eprintln!("  D1 {} ({}): no migrations to apply", d.name, d.binding);
+            eprintln!(
+                "  {}",
+                tr!(
+                    "D1 {} ({}): 当てる移行はありません",
+                    "D1 {} ({}): no migrations to apply",
+                    d.name,
+                    d.binding
+                )
+            );
         } else {
             eprintln!(
-                "  D1 {} ({}): would apply {}",
-                d.name,
-                d.binding,
-                pending.join(", ")
+                "  {}",
+                tr!(
+                    "D1 {} ({}): {} を当てます",
+                    "D1 {} ({}): would apply {}",
+                    d.name,
+                    d.binding,
+                    pending.join(", ")
+                )
             );
         }
     }
     for b in &project.config.r2 {
         eprintln!(
-            "  R2 bucket {} ({}): created by Wrangler if missing",
-            b.bucket, b.binding
+            "  {}",
+            tr!(
+                "R2 バケット {} ({}): 無ければ Wrangler が作ります",
+                "R2 bucket {} ({}): created by Wrangler if missing",
+                b.bucket,
+                b.binding
+            )
         );
     }
+    let env = project.env_name();
     match secrets {
-        Some(s) if !s.is_empty() => eprintln!(
-            "  secrets from .env.{}: {}",
-            project.env_name(),
-            s.keys().map(String::as_str).collect::<Vec<_>>().join(", ")
+        Some(s) if !s.is_empty() => {
+            let names = s.keys().map(String::as_str).collect::<Vec<_>>().join(", ");
+            eprintln!(
+                "  {}",
+                tr!(
+                    ".env.{env} のシークレット: {names}",
+                    "secrets from .env.{env}: {names}"
+                )
+            );
+        }
+        Some(_) => eprintln!(
+            "  {}",
+            tr!(
+                ".env.{env} に Worker のシークレットはありません",
+                ".env.{env} has no Worker secrets"
+            )
         ),
-        Some(_) => eprintln!("  .env.{} has no Worker secrets", project.env_name()),
         None => eprintln!(
-            "  no .env.{}: the Worker keeps its current secrets",
-            project.env_name()
+            "  {}",
+            tr!(
+                ".env.{env} はありません。Worker はいまのシークレットのままです",
+                "no .env.{env}: the Worker keeps its current secrets"
+            )
         ),
     }
-    eprintln!("  checking that {} builds:", project.config.worker);
+    eprintln!(
+        "  {}",
+        tr!(
+            "{} が組めるかを確かめます:",
+            "checking that {} builds:",
+            project.config.worker
+        )
+    );
     build(project)?;
     // A Worker that was never deployed has no secrets to compare with.
     if let Some(s) = secrets
         && project.worker_exists()?
         && let Err(e) = report_leftover_secrets(project, s)
     {
-        eprintln!("wrangler-compose: note: could not list the Worker's secrets: {e:#}");
+        say(tr!(
+            "メモ: Worker のシークレットを一覧できませんでした: {e:#}",
+            "note: could not list the Worker's secrets: {e:#}"
+        ));
     }
     dry_run_done();
     Ok(())
 }
 
 pub fn dry_run_done() {
-    eprintln!("wrangler-compose: dry run: nothing was changed");
+    say(tr!(
+        "dry-run です。何も変えていません",
+        "dry run: nothing was changed"
+    ));
 }
 
-fn stage(n: usize, total: usize, what: &str) {
-    eprintln!("wrangler-compose: [{n}/{total}] {what}");
+fn stage(n: usize, total: usize, what: String) {
+    say(format!("[{n}/{total}] {what}"));
 }
 
 fn deploy(project: &Project, secrets: Option<&BTreeMap<String, String>>) -> Result<()> {
@@ -195,16 +278,16 @@ fn report_leftover_secrets(project: &Project, secrets: &BTreeMap<String, String>
         .filter(|n| !secrets.contains_key(*n))
         .collect();
     if !extra.is_empty() {
-        eprintln!(
-            "wrangler-compose: these secrets are on the Worker but not in .env.{}: {} (remove them with `nv run wrangler secret delete <name> --env {}`)",
-            project.env_name(),
-            extra
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            project.env_name()
-        );
+        let env = project.env_name();
+        let names = extra
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        say(tr!(
+            "次のシークレットは Worker にありますが、.env.{env} にはありません: {names}(消すには `nv run wrangler secret delete <名前> --env {env}`)",
+            "these secrets are on the Worker but not in .env.{env}: {names} (remove them with `nv run wrangler secret delete <name> --env {env}`)"
+        ));
     }
     Ok(())
 }

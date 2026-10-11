@@ -30,6 +30,7 @@
     <li><a href="#ac-009">AC-009 秘密の扱い</a></li>
     <li><a href="#ac-010">AC-010 配り方と更新</a></li>
     <li><a href="#ac-011">AC-011 dry-run</a></li>
+    <li><a href="#ac-012">AC-012 表示の言語</a></li>
   </ul>
 </nav>
 <main>
@@ -134,6 +135,13 @@
   <li><code>--dry-run restore --drop</code> のあと、D1 と R2 の中身が変わっていない。消す予定のものと戻す予定のものが出る</li>
   <li>本番の操作が止まる条件(<code>.env</code> が git に入っている、API キーが無い、書きかけの控え、など)では、dry-run も同じに止まる</li>
   <li>どの dry-run も、終わりに何も変えていないことが出る</li>
+</ul>
+
+<h3 id="ac-012"><span class="id">AC-012</span>表示の言語 <span class="refs">REQ-012</span></h3>
+<ul>
+  <li>OS の言語が日本語の PC で、<code>--env</code> を付けずに <code>up</code> を打つと日本語のエラーが出る。<code>--dry-run up</code> の示す内容と <code>--help</code> の説明も日本語</li>
+  <li><code>NV_LANG=en</code> を付けると英語で出る</li>
+  <li>日本語の表示でも、<code>down</code> の確かめで環境名(例: <code>testing</code>)を打てば進む</li>
 </ul>
 
 <footer>docs/wrangler-compose/acceptance.html</footer>

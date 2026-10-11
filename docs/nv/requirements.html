@@ -32,8 +32,8 @@
     <li><a href="#req-008">REQ-008 エージェント用のスキル</a></li>
     <li><a href="#req-009">REQ-009 配り方</a></li>
     <li><a href="#req-010">REQ-010 更新</a></li>
+    <li><a href="#req-011">REQ-011 表示の言語</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
-    <li><a href="#open">決めること</a></li>
   </ul>
 </nav>
 <main>
@@ -67,7 +67,7 @@
   <li>エージェント用のスキルは Claude Code と Codex に、利用者全体へ入れる。Codex 向けは共有の置き場 <code>~/.agents/skills/</code> に常に入れる</li>
   <li>nv が利用者ごとに持つものは <code>~/.nv</code> の下に置き、Node と道具の置き場は <code>~/.nv/cache</code> に統一する(OS ごとに置き場所を変えない)</li>
   <li>nv が動かす npm のキャッシュも <code>~/.nv/cache/npm</code> に置き、利用者がほかで使う npm のキャッシュ(<code>~/.npm</code> など)と分け合わない(uv がパッケージのキャッシュを自分で持つのと同じ考え方)</li>
-  <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
+  <li>GitHub の公開のリポジトリ <code>yusukei/nv</code>(個人)に置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
   <li>公開して配るので、更新の機能を持つ</li>
 </ul>
 </div>
@@ -165,19 +165,19 @@
   <li>nv は、利用者が打たない限り、更新を調べに行かない(打ったコマンドのたびに網へ出ない)</li>
 </ul>
 
+<h3 id="req-011"><span class="id">REQ-011</span>表示の言語</h3>
+<ul>
+  <li>nv が自分で出すメッセージ(進み具合・結果・エラー)と <code>--help</code> の説明は、OS の言語が日本語なら日本語、それ以外は英語で出す(利用者の決定)</li>
+  <li>環境変数 <code>NV_LANG</code>(<code>ja</code> / <code>en</code>)があれば、OS の言語より優先する(エージェントが出力を読むときなどに言語を固定できる)</li>
+  <li>nv が動かしたコマンド(Node・npm・道具)の出力は、そのまま出す(訳さない)。エージェント用のスキルの中身は英語のまま</li>
+</ul>
+
 <h2 id="out-of-scope">範囲外</h2>
 <ul>
   <li>npm 以外の依存の道具(yarn・pnpm・bun)</li>
   <li>依存の解決(<code>npm install</code> で <code>package-lock.json</code> を書き換えること)。依存を変えるときは <code>nv run npm install …</code> で npm に任せる</li>
   <li>グローバルへの導入とシェルへの組み込み(fnm の <code>use</code> や、シムのようなもの)</li>
 </ul>
-
-<h2 id="open">決めること(利用者)</h2>
-<div class="box open">
-<ol>
-  <li>GitHub のリポジトリの名前(持ち主は個人)</li>
-</ol>
-</div>
 
 <footer>docs/nv/requirements.html</footer>
 </main>

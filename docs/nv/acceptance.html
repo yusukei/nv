@@ -29,6 +29,7 @@
     <li><a href="#ac-008">AC-008 エージェント用のスキル</a></li>
     <li><a href="#ac-009">AC-009 配り方</a></li>
     <li><a href="#ac-010">AC-010 更新</a></li>
+    <li><a href="#ac-011">AC-011 表示の言語</a></li>
   </ul>
 </nav>
 <main>
@@ -117,6 +118,15 @@
   <li>プロキシを通してだけ出られる網で、<code>nv self update</code> が動く</li>
   <li>スキルを入れてある PC で更新すると、スキルの中身も新しい版のものになる</li>
   <li><code>nv self update</code> 以外のコマンドを打っても、GitHub へ通信しない</li>
+</ul>
+
+<h3 id="ac-011"><span class="id">AC-011</span>表示の言語 <span class="refs">REQ-011</span></h3>
+<ul>
+  <li>OS の言語が日本語の macOS と Windows で、<code>.node-version</code> の無いプロジェクトで <code>nv run node -v</code> を打つと、日本語のエラーが出る。<code>nv --help</code> の説明も日本語</li>
+  <li>OS の言語が英語の PC では、同じ操作で英語が出る</li>
+  <li><code>NV_LANG=en</code> を付けると日本語の PC でも英語、<code>NV_LANG=ja</code> を付けると英語の PC でも日本語が出る</li>
+  <li>Windows の PowerShell と cmd で、日本語のメッセージが化けずに読める</li>
+  <li><code>nv run npm install</code> の npm の出力は、言語によらず npm のまま出る</li>
 </ul>
 
 <footer>docs/nv/acceptance.html</footer>

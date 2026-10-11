@@ -12,27 +12,30 @@ pub fn hex(bytes: &[u8]) -> String {
 
 /// Copy `reader` into a new file at `dest`, returning the SHA-256 of the bytes.
 pub fn copy_hashing(reader: &mut dyn Read, dest: &Path) -> Result<String> {
-    let mut file =
-        File::create(dest).with_context(|| format!("cannot create {}", dest.display()))?;
+    let mut file = File::create(dest)
+        .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dest.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = reader
-            .read(&mut buf)
-            .context("the download was interrupted")?;
+        let n = reader.read(&mut buf).context(crate::tr!(
+            "取得が途中で切れました",
+            "the download was interrupted"
+        ))?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        file.write_all(&buf[..n])
-            .with_context(|| format!("cannot write {}", dest.display()))?;
+        file.write_all(&buf[..n]).with_context(|| {
+            crate::tr!("{} に書き込めません", "cannot write {}", dest.display())
+        })?;
     }
     file.sync_all().ok();
     Ok(hex(&hasher.finalize()))
 }
 
 pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut file = File::open(path)
+        .with_context(|| crate::tr!("{} を開けません", "cannot open {}", path.display()))?;
     copy_hashing_to_sink(&mut file)
 }
 
@@ -62,7 +65,8 @@ impl TempDir {
             "wrangler-compose-{label}-{}-{nanos}",
             std::process::id()
         ));
-        fs::create_dir(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir(&dir)
+            .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

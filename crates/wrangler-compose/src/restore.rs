@@ -6,7 +6,7 @@ use crate::d1;
 use crate::files::sha256_file;
 use crate::project::Project;
 use crate::r2::{self, Store};
-use crate::up::{dry_run_done, read_env_file};
+use crate::up::{dry_run_done, read_env_file, say};
 use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
 use std::path::Path;
@@ -19,34 +19,48 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     let env = project
         .env
         .clone()
-        .ok_or_else(|| anyhow!("an environment is required"))?;
+        .ok_or_else(|| anyhow!(tr!("環境の指定が要ります", "an environment is required")))?;
     let manifest = read_manifest(from)?;
     if drop && !project.dry_run {
         confirm::require_terminal("restore --drop")?;
     }
     read_env_file(project)?;
+    let unchanged = || tr!("何も変えていません", "nothing was changed");
 
     // Match backup parts to this environment's bindings.
     let mut d1_plan = Vec::new();
     for entry in manifest["d1"].as_array().into_iter().flatten() {
         let binding = entry["binding"].as_str().unwrap_or_default();
-        let target = project.config.d1.iter().find(|d| d.binding == binding).ok_or_else(|| {
-            anyhow!("the backup has D1 {binding}, but environment {env} has no such binding; nothing was changed")
-        })?;
+        let target = project
+            .config
+            .d1
+            .iter()
+            .find(|d| d.binding == binding)
+            .ok_or_else(|| {
+                anyhow!(tr!(
+                    "控えには D1 {binding} がありますが、環境 {env} にはそのバインディングがありません。{}",
+                    "the backup has D1 {binding}, but environment {env} has no such binding; {}",
+                    unchanged()
+                ))
+            })?;
         let file = from.join(entry["file"].as_str().unwrap_or_default());
         if entry["sha256"].as_str() != Some(sha256_file(&file)?.as_str()) {
-            bail!(
-                "{} does not match the backup manifest; nothing was changed",
-                file.display()
-            );
+            bail!(tr!(
+                "{} が控えの目録と合いません。{}",
+                "{} does not match the backup manifest; {}",
+                file.display(),
+                unchanged()
+            ));
         }
-        let sql =
-            fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
+        let sql = fs::read_to_string(&file)
+            .with_context(|| tr!("{} を読めません", "cannot read {}", file.display()))?;
         if !sql.contains("\"d1_migrations\"") && !sql.contains("d1_migrations(") {
-            bail!(
-                "{} has no migration history (d1_migrations), so later migrations could not be applied after restoring; nothing was changed",
-                file.display()
-            );
+            bail!(tr!(
+                "{} には移行の履歴(d1_migrations)が無いので、戻したあとに残りの移行を当てられません。{}",
+                "{} has no migration history (d1_migrations), so later migrations could not be applied after restoring; {}",
+                file.display(),
+                unchanged()
+            ));
         }
         d1_plan.push((target, file));
     }
@@ -55,7 +69,7 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     let account = if manifest["r2"].as_array().is_some_and(|a| !a.is_empty()) {
         creds = Some(
             r2::credentials(project)
-                .ok_or_else(|| anyhow!("{}; nothing was changed", r2::missing_keys_message()))?,
+                .ok_or_else(|| anyhow!("{}; {}", r2::missing_keys_message(), unchanged()))?,
         );
         Some(r2::account_id(project)?)
     } else {
@@ -63,25 +77,38 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     };
     for entry in manifest["r2"].as_array().into_iter().flatten() {
         let binding = entry["binding"].as_str().unwrap_or_default();
-        let target = project.config.r2.iter().find(|b| b.binding == binding).ok_or_else(|| {
-            anyhow!("the backup has R2 {binding}, but environment {env} has no such binding; nothing was changed")
-        })?;
+        let target = project
+            .config
+            .r2
+            .iter()
+            .find(|b| b.binding == binding)
+            .ok_or_else(|| {
+                anyhow!(tr!(
+                    "控えには R2 {binding} がありますが、環境 {env} にはそのバインディングがありません。{}",
+                    "the backup has R2 {binding}, but environment {env} has no such binding; {}",
+                    unchanged()
+                ))
+            })?;
         // Check every backed-up object now, before anything is deleted.
         for o in entry["objects"].as_array().into_iter().flatten() {
             crate::interrupt::check()?;
             if o["size"].as_u64().unwrap_or(0) > MAX_SINGLE_PUT {
-                bail!(
-                    "object {} is larger than 5 GiB, which restore cannot upload yet; nothing was changed",
-                    o["key"]
-                );
+                bail!(tr!(
+                    "オブジェクト {} は 5 GiB を超えていて、restore ではまだ上げられません。{}",
+                    "object {} is larger than 5 GiB, which restore cannot upload yet; {}",
+                    o["key"],
+                    unchanged()
+                ));
             }
             let file = from.join(o["file"].as_str().unwrap_or_default());
             if !file.is_file() || o["sha256"].as_str() != Some(sha256_file(&file)?.as_str()) {
-                bail!(
-                    "{} (object {}) is missing or does not match the backup manifest; nothing was changed",
+                bail!(tr!(
+                    "{}(オブジェクト {})が無いか、控えの目録と合いません。{}",
+                    "{} (object {}) is missing or does not match the backup manifest; {}",
                     file.display(),
-                    o["key"]
-                );
+                    o["key"],
+                    unchanged()
+                ));
             }
         }
         let store = Store::new(account.as_ref().unwrap(), target, creds.as_ref().unwrap())?;
@@ -93,22 +120,34 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     let mut busy = Vec::new();
     for (d, _) in &d1_plan {
         if !d1::exists(d, &remote) {
-            bail!(
-                "D1 {} does not exist; run `wrangler-compose --env {env} up` first (nothing was changed)",
-                d.name
-            );
+            bail!(tr!(
+                "D1 {} がありません。先に `wrangler-compose --env {env} up` を打ってください({})",
+                "D1 {} does not exist; run `wrangler-compose --env {env} up` first ({})",
+                d.name,
+                unchanged()
+            ));
         }
         let tables = d1::user_tables(project, d)?;
         if !tables.is_empty() {
-            busy.push(format!("D1 {}: {} tables", d.name, tables.len()));
+            busy.push(tr!(
+                "D1 {}: 表 {} 個",
+                "D1 {}: {} tables",
+                d.name,
+                tables.len()
+            ));
         }
     }
     for (s, _) in &r2_plan {
-        let has_objects = s
-            .check_access()
-            .map_err(|e| anyhow!("{e:#}; run `wrangler-compose --env {env} up` first if the bucket is missing (nothing was changed)"))?;
+        let has_objects = s.check_access().map_err(|e| {
+            anyhow!(tr!(
+                "{e:#}。バケットが無ければ、先に `wrangler-compose --env {env} up` を打ってください({})",
+                "{e:#}; run `wrangler-compose --env {env} up` first if the bucket is missing ({})",
+                unchanged()
+            ))
+        })?;
         if has_objects {
-            busy.push(format!(
+            busy.push(tr!(
+                "R2 {}: オブジェクト {} 件",
                 "R2 {}: {} objects",
                 s.bucket_name,
                 s.list_all()?.len()
@@ -116,48 +155,66 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         }
     }
     if !busy.is_empty() && !drop {
-        bail!(
-            "the target is not empty ({}); use `restore --drop` to delete it and replace it with the backup (nothing was changed)",
-            busy.join(", ")
-        );
+        bail!(tr!(
+            "戻す先が空ではありません({})。消して控えに入れ替えるなら `restore --drop` を使ってください({})",
+            "the target is not empty ({}); use `restore --drop` to delete it and replace it with the backup ({})",
+            busy.join(", "),
+            unchanged()
+        ));
     }
     if drop {
-        eprintln!(
-            "wrangler-compose: `restore --drop` deletes the current data of {env} and replaces it with the backup:"
-        );
+        say(tr!(
+            "`restore --drop` は {env} のいまのデータを消して、控えに入れ替えます:",
+            "`restore --drop` deletes the current data of {env} and replaces it with the backup:"
+        ));
         for b in &busy {
             eprintln!("  {b}");
         }
         if busy.is_empty() {
-            eprintln!("  (the target is already empty)");
+            eprintln!(
+                "  {}",
+                tr!("(戻す先はすでに空です)", "(the target is already empty)")
+            );
         }
     }
-    eprintln!(
-        "wrangler-compose: the Worker keeps serving while restore runs, so users may see missing data until it finishes"
-    );
+    say(tr!(
+        "restore の間も Worker は動いているので、終わるまでは欠けたデータが見えることがあります",
+        "the Worker keeps serving while restore runs, so users may see missing data until it finishes"
+    ));
     if project.dry_run {
-        eprintln!(
-            "wrangler-compose: dry run of `restore` from {}:",
+        say(tr!(
+            "{} からの `restore` の dry-run:",
+            "dry run of `restore` from {}:",
             from.display()
-        );
+        ));
         for (d, _) in &d1_plan {
             eprintln!(
-                "  D1 {} ({}): would load the backup, then apply later migrations",
-                d.name, d.binding
+                "  {}",
+                tr!(
+                    "D1 {} ({}): 控えを入れ、そのあと残りの移行を当てます",
+                    "D1 {} ({}): would load the backup, then apply later migrations",
+                    d.name,
+                    d.binding
+                )
             );
         }
         for (s, entry) in &r2_plan {
             let n = entry["objects"].as_array().map_or(0, Vec::len);
             eprintln!(
-                "  R2 {} ({}): would upload {n} objects (all checked against the manifest)",
-                s.bucket_name, s.binding
+                "  {}",
+                tr!(
+                    "R2 {} ({}): オブジェクト {n} 件を上げます(すべて目録と照らし済み)",
+                    "R2 {} ({}): would upload {n} objects (all checked against the manifest)",
+                    s.bucket_name,
+                    s.binding
+                )
             );
         }
         dry_run_done();
         return Ok(());
     }
     if drop {
-        confirm::retype_env(&env, "replace its data")?;
+        confirm::retype_env(&env, &tr!("データを入れ替える", "replace its data"))?;
     }
 
     let mut done: Vec<String> = Vec::new();
@@ -165,19 +222,23 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         for (d, file) in &d1_plan {
             if drop {
                 d1::drop_everything(project, d)?;
-                done.push(format!("emptied D1 {}", d.name));
+                done.push(tr!("D1 {} を空にした", "emptied D1 {}", d.name));
             }
             let f = file.to_string_lossy().into_owned();
             project.wrangler([
                 "d1", "execute", &d.binding, "--remote", "--yes", "--file", &f,
             ])?;
-            done.push(format!("restored D1 {}", d.name));
+            done.push(tr!("D1 {} を戻した", "restored D1 {}", d.name));
         }
         for (s, entry) in &r2_plan {
             if drop {
                 let mut n = 0;
                 let emptied = s.delete_all(&mut n);
-                done.push(format!("deleted {n} objects in R2 {}", s.bucket_name));
+                done.push(tr!(
+                    "R2 {} のオブジェクト {n} 件を消した",
+                    "deleted {n} objects in R2 {}",
+                    s.bucket_name
+                ));
                 emptied?;
             }
             let objects = entry["objects"].as_array().cloned().unwrap_or_default();
@@ -193,15 +254,17 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
                     )
                 });
                 if let Err(e) = put {
-                    done.push(format!(
-                        "uploaded {i} of {} objects to R2 {}",
-                        objects.len(),
-                        s.bucket_name
+                    done.push(tr!(
+                        "R2 {bucket} へオブジェクト {total} 件中 {i} 件を上げた",
+                        "uploaded {i} of {total} objects to R2 {bucket}",
+                        bucket = s.bucket_name,
+                        total = objects.len()
                     ));
                     return Err(e);
                 }
             }
-            done.push(format!(
+            done.push(tr!(
+                "R2 {} を戻した(オブジェクト {} 件)",
                 "restored R2 {} ({} objects)",
                 s.bucket_name,
                 objects.len()
@@ -212,16 +275,21 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     })();
     match result {
         Ok(()) => {
-            eprintln!("wrangler-compose: restored {env} from {}", from.display());
+            say(tr!(
+                "{env} を {} から戻しました",
+                "restored {env} from {}",
+                from.display()
+            ));
             Ok(())
         }
         Err(e) => {
             let did = if done.is_empty() {
-                "nothing".to_string()
+                tr!("何もしていません", "nothing")
             } else {
                 done.join(", ")
             };
-            Err(e.context(format!(
+            Err(e.context(tr!(
+                "途中で止まりました。{did}。残りは戻していません",
                 "stopped part way: {did}; the rest was not restored"
             )))
         }

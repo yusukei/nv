@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "nv"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -674,6 +674,7 @@ dependencies = [
  "sha2",
  "tar",
  "ureq",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -1185,7 +1186,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "wrangler-compose"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1195,6 +1196,7 @@ dependencies = [
  "sha2",
  "ureq",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

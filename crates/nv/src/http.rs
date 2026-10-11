@@ -22,10 +22,10 @@ pub fn get_text(url: &str) -> Result<String> {
     let mut res = agent()
         .get(url)
         .call()
-        .with_context(|| format!("cannot download {url}"))?;
+        .with_context(|| crate::tr!("{url} を取れません", "cannot download {url}"))?;
     res.body_mut()
         .read_to_string()
-        .with_context(|| format!("cannot read {url}"))
+        .with_context(|| crate::tr!("{url} を読めません", "cannot read {url}"))
 }
 
 /// Stream `url` into `dest` and return the SHA-256 of what was written.
@@ -33,29 +33,34 @@ pub fn download(url: &str, dest: &Path) -> Result<String> {
     let res = agent()
         .get(url)
         .call()
-        .with_context(|| format!("cannot download {url}"))?;
+        .with_context(|| crate::tr!("{url} を取れません", "cannot download {url}"))?;
     let mut reader = res.into_body().into_reader();
-    let mut file =
-        File::create(dest).with_context(|| format!("cannot create {}", dest.display()))?;
+    let mut file = File::create(dest)
+        .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dest.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = reader
-            .read(&mut buf)
-            .with_context(|| format!("download of {url} was interrupted"))?;
+        let n = reader.read(&mut buf).with_context(|| {
+            crate::tr!(
+                "{url} の取得が途中で切れました",
+                "download of {url} was interrupted"
+            )
+        })?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        file.write_all(&buf[..n])
-            .with_context(|| format!("cannot write {}", dest.display()))?;
+        file.write_all(&buf[..n]).with_context(|| {
+            crate::tr!("{} に書き込めません", "cannot write {}", dest.display())
+        })?;
     }
     file.sync_all().ok();
     Ok(hex(&hasher.finalize()))
 }
 
 pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut file = File::open(path)
+        .with_context(|| crate::tr!("{} を開けません", "cannot open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
@@ -89,9 +94,15 @@ pub fn checksum_for<'a>(listing: &'a str, file_name: &str) -> Option<&'a str> {
 
 pub fn verify(expected: Option<&str>, actual: &str, what: &str) -> Result<()> {
     match expected {
-        None => bail!("{what} is not listed in the checksum file"),
+        None => bail!(crate::tr!(
+            "{what} が検証値の一覧にありません",
+            "{what} is not listed in the checksum file"
+        )),
         Some(e) if e.eq_ignore_ascii_case(actual) => Ok(()),
-        Some(e) => bail!("checksum mismatch for {what}: expected {e}, got {actual}"),
+        Some(e) => bail!(crate::tr!(
+            "{what} の検証値が合いません(期待 {e}、実際 {actual})",
+            "checksum mismatch for {what}: expected {e}, got {actual}"
+        )),
     }
 }
 

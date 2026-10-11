@@ -7,9 +7,12 @@ use serde_json::Value;
 /// Remote databases in the account, as (name, id).
 pub fn remote(project: &Project) -> Result<Vec<(String, String)>> {
     let v = project.wrangler_json(["d1", "list", "--json"])?;
-    let list = v
-        .as_array()
-        .ok_or_else(|| anyhow!("unexpected output from `d1 list --json`"))?;
+    let list = v.as_array().ok_or_else(|| {
+        anyhow!(crate::tr!(
+            "`d1 list --json` の出力が想定と違います",
+            "unexpected output from `d1 list --json`"
+        ))
+    })?;
     Ok(list
         .iter()
         .filter_map(|d| {
@@ -35,11 +38,12 @@ pub fn require_pinned_exist(project: &Project, remote: &[(String, String)]) -> R
         if let Some(id) = &d1.id
             && !exists(d1, remote)
         {
-            bail!(
+            bail!(crate::tr!(
+                "D1 {} ({}) は Wrangler の設定に database_id {id} が書いてありますが、その D1 がありません。Wrangler が作るのは名前だけで書いた D1 なので、database_id を外すか、D1 を作ってください",
                 "D1 {} ({}) has database_id {id} in the Wrangler config, but no such database exists; Wrangler only creates D1 databases written by name, so remove database_id or create it",
                 d1.binding,
                 d1.name
-            );
+            ));
         }
     }
     Ok(())
@@ -49,8 +53,13 @@ pub fn apply_migrations(project: &Project) -> Result<()> {
     for d1 in &project.config.d1 {
         if has_migrations(d1) {
             eprintln!(
-                "wrangler-compose: applying migrations to D1 {} ({})",
-                d1.binding, d1.name
+                "wrangler-compose: {}",
+                crate::tr!(
+                    "D1 {} ({}) に移行を当てます",
+                    "applying migrations to D1 {} ({})",
+                    d1.binding,
+                    d1.name
+                )
             );
             project.wrangler(["d1", "migrations", "apply", &d1.binding, "--remote"])?;
         }

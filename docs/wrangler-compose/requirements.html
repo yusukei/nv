@@ -33,6 +33,7 @@
     <li><a href="#req-009">REQ-009 秘密の扱い</a></li>
     <li><a href="#req-010">REQ-010 配り方と更新</a></li>
     <li><a href="#req-011">REQ-011 dry-run</a></li>
+    <li><a href="#req-012">REQ-012 表示の言語</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
@@ -195,6 +196,13 @@
   <li>本番の操作が止まる条件(環境の指定・<code>.env</code> が git に入る・API キーが無い・正しくない・控えが書きかけ・照らした値が合わない・戻す先が無い・空でない)は、dry-run でも同じに確かめ、同じに止まる</li>
   <li>dry-run は、確かめるために Cloudflare へ読み取りだけの問い合わせ(一覧・ログインの確認など)を行う。打ち直しの確かめは求めない(何も消さないため)</li>
   <li>終わりに、dry-run であり何も変えていないことを示す</li>
+</ul>
+
+<h3 id="req-012"><span class="id">REQ-012</span>表示の言語</h3>
+<ul>
+  <li>wrangler-compose が自分で出すメッセージ(段・消すものの一覧・確かめの問い・結果・エラー)と <code>--help</code> の説明は、nv と同じ決め方で日本語か英語で出す(nv の REQ-011。<code>NV_LANG</code> も同じに効く)(利用者の決定)</li>
+  <li>打ち直しの確かめで打つのは、言語によらず環境名そのもの</li>
+  <li>Wrangler の出力は、そのまま出す(訳さない)</li>
 </ul>
 
 <h2 id="out-of-scope">範囲外</h2>

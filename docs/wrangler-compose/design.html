@@ -188,7 +188,8 @@
 
 <h3 id="des-014"><span class="id">DES-014</span>出力と終了コード <span class="refs">REQ-009</span></h3>
 <ul>
-  <li>wrangler-compose 自身の出力は英語で標準エラーへ(nv と同じ)。自身が止まったときの終了コードは 2</li>
+  <li>wrangler-compose 自身の出力は標準エラーへ(nv と同じ)。自身が止まったときの終了コードは 2</li>
+  <li>言語(REQ-012)の決め方と書き方は nv の DES-012 と同じ(<code>NV_LANG</code> → OS の言語。<code>tr!("日本語", "English")</code>)。nv のクレートには頼らず、同じ小さな仕組みを自分で持つ(DES-001)</li>
   <li>シークレットの値と API キーは、どこにも出さない。シークレットは名前だけを示す。目録にも書かない</li>
   <li>Ctrl+C を受けても wrangler-compose はすぐには終わらない。端末の Ctrl+C は Wrangler にも届いてそちらが止まり、wrangler-compose は後片付け(シークレットの一時ファイルの消去)と、何をして何が残っているかの報告を済ませてから終わる。Wrangler を動かしていない段(R2 のオブジェクトごとの処理)では、1 件ごとに中断を見る</li>
   <li><code>up</code> で、デプロイのあとのシークレットの一覧に失敗しても、警告にとどめる(デプロイが済んだことを隠さない)</li>

@@ -42,7 +42,7 @@ fn agents(home: &Path) -> Vec<Agent> {
         Agent {
             label: "Claude Code",
             dir: claude.is_dir().then(|| claude.join("skills")),
-            why_absent: "~/.claude not found",
+            why_absent: "~/.claude",
         },
     ]
 }
@@ -54,7 +54,15 @@ pub fn install(only_if_installed: bool) -> Result<()> {
     for agent in agents(&home) {
         let Some(dir) = agent.dir else {
             if !only_if_installed {
-                eprintln!("nv: skipped {}: {}", agent.label, agent.why_absent);
+                eprintln!(
+                    "nv: {}",
+                    crate::tr!(
+                        "{} には入れませんでした({} がありません)",
+                        "skipped {}: {} not found",
+                        agent.label,
+                        agent.why_absent
+                    )
+                );
             }
             continue;
         };
@@ -66,18 +74,31 @@ pub fn install(only_if_installed: bool) -> Result<()> {
             }
             if dest.exists() && !ours {
                 eprintln!(
-                    "nv: left {} alone: it exists and was not installed by nv",
-                    dest.display()
+                    "nv: {}",
+                    crate::tr!(
+                        "{} は nv が入れたものではないので、触らずに残しました",
+                        "left {} alone: it exists and was not installed by nv",
+                        dest.display()
+                    )
                 );
                 continue;
             }
-            write_skill(&dir, skill)
-                .with_context(|| format!("cannot install the skill into {}", dest.display()))?;
+            write_skill(&dir, skill).with_context(|| {
+                crate::tr!(
+                    "{} にスキルを入れられません",
+                    "cannot install the skill into {}",
+                    dest.display()
+                )
+            })?;
             eprintln!(
-                "nv: installed skill {} for {} at {}",
-                skill.name,
-                agent.label,
-                dest.display()
+                "nv: {}",
+                crate::tr!(
+                    "スキル {} を {} 向けに {} へ入れました",
+                    "installed skill {} for {} at {}",
+                    skill.name,
+                    agent.label,
+                    dest.display()
+                )
             );
         }
     }
@@ -108,19 +129,31 @@ pub fn uninstall() -> Result<()> {
         for skill in SKILLS {
             let dest = dir.join(skill.name);
             if dest.join(MARKER).is_file() {
-                remove_any(&dest).with_context(|| format!("cannot remove {}", dest.display()))?;
+                remove_any(&dest).with_context(|| {
+                    crate::tr!("{} を消せません", "cannot remove {}", dest.display())
+                })?;
                 eprintln!(
-                    "nv: removed skill {} for {} from {}",
-                    skill.name,
-                    agent.label,
-                    dest.display()
+                    "nv: {}",
+                    crate::tr!(
+                        "スキル {} を {} 向けの {} から消しました",
+                        "removed skill {} for {} from {}",
+                        skill.name,
+                        agent.label,
+                        dest.display()
+                    )
                 );
                 removed += 1;
             }
         }
     }
     if removed == 0 {
-        eprintln!("nv: no skills installed by nv were found");
+        eprintln!(
+            "nv: {}",
+            crate::tr!(
+                "nv が入れたスキルはありませんでした",
+                "no skills installed by nv were found"
+            )
+        );
     }
     Ok(())
 }

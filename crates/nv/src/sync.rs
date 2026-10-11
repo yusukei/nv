@@ -24,10 +24,17 @@ pub fn is_current(project: &Project, node: &Node) -> Result<bool> {
 /// Install exactly what package-lock.json says (`npm ci`) and record it.
 pub fn install(home: &NvHome, project: &Project, node: &Node) -> Result<()> {
     let stamp = stamp_text(project, node)?;
-    eprintln!("nv: installing dependencies from package-lock.json");
+    eprintln!(
+        "nv: {}",
+        crate::tr!(
+            "package-lock.json のとおりに依存を入れます",
+            "installing dependencies from package-lock.json"
+        )
+    );
     exec::npm(home, node, &project.dir, &["ci", "--no-audit", "--no-fund"])?;
     let path = project.node_modules().join(STAMP);
-    fs::write(&path, stamp).with_context(|| format!("cannot write {}", path.display()))?;
+    fs::write(&path, stamp)
+        .with_context(|| crate::tr!("{} に書き込めません", "cannot write {}", path.display()))?;
     Ok(())
 }
 

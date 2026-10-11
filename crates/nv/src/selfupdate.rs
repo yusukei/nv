@@ -20,7 +20,10 @@ fn release_base() -> Result<String> {
     option_env!("NV_RELEASE_BASE")
         .map(|b| b.trim_end_matches('/').to_string())
         .ok_or_else(|| {
-            anyhow!("this nv was built without a release location; set NV_RELEASE_MIRROR")
+            anyhow!(crate::tr!(
+                "この nv は Release の取り先なしで組まれています。NV_RELEASE_MIRROR を設定してください",
+                "this nv was built without a release location; set NV_RELEASE_MIRROR"
+            ))
         })
 }
 
@@ -34,22 +37,45 @@ pub fn update(check_only: bool) -> Result<()> {
     let base = release_base()?;
     let latest: Version = http::get_text(&format!("{base}/VERSION"))?
         .parse()
-        .map_err(|e| anyhow!("the release VERSION file is invalid: {e}"))?;
+        .map_err(|e| {
+            anyhow!(crate::tr!(
+                "Release の VERSION が正しくありません: {e}",
+                "the release VERSION file is invalid: {e}"
+            ))
+        })?;
     let now = current();
     if latest <= now {
-        eprintln!("nv: {now} is the latest version");
+        eprintln!(
+            "nv: {}",
+            crate::tr!("{now} が最新です", "{now} is the latest version")
+        );
         return Ok(());
     }
     if check_only {
-        eprintln!("nv: {latest} is available (installed: {now}); run `nv self update`");
+        eprintln!(
+            "nv: {}",
+            crate::tr!(
+                "{latest} があります(いまは {now})。`nv self update` で入れ替えます",
+                "{latest} is available (installed: {now}); run `nv self update`"
+            )
+        );
         return Ok(());
     }
 
-    let me = std::env::current_exe().context("cannot find the nv executable")?;
+    let me = std::env::current_exe().context(crate::tr!(
+        "nv の実行ファイルが見つかりません",
+        "cannot find the nv executable"
+    ))?;
     let me = fs::canonicalize(&me).unwrap_or(me);
     let dir = me
         .parent()
-        .ok_or_else(|| anyhow!("cannot find the folder of {}", me.display()))?
+        .ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "{} のフォルダが分かりません",
+                "cannot find the folder of {}",
+                me.display()
+            ))
+        })?
         .to_path_buf();
     let targets: Vec<(&str, PathBuf)> = TOOLS
         .iter()
@@ -75,7 +101,7 @@ pub fn update(check_only: bool) -> Result<()> {
         for (new, _) in &staged {
             let _ = remove_any(new);
         }
-        return Err(e.context("nothing was replaced"));
+        return Err(e.context(crate::tr!("何も入れ替えていません", "nothing was replaced")));
     }
 
     // Replace all or none, so nv and wrangler-compose stay on one version.
@@ -91,13 +117,20 @@ pub fn update(check_only: bool) -> Result<()> {
                 for (n, _) in &staged[i..] {
                     let _ = remove_any(n);
                 }
-                return Err(e.context("nothing was replaced"));
+                return Err(e.context(crate::tr!("何も入れ替えていません", "nothing was replaced")));
             }
         }
     }
     for (old, dest) in &swapped {
         let _ = fs::remove_file(old); // fails on Windows while running; cleaned up next start
-        eprintln!("nv: updated {} {now} -> {latest}", dest.display());
+        eprintln!(
+            "nv: {}",
+            crate::tr!(
+                "{} を入れ替えました {now} -> {latest}",
+                "updated {} {now} -> {latest}",
+                dest.display()
+            )
+        );
     }
 
     // The new nv carries the new skill text; let it refresh installed skills.
@@ -105,7 +138,13 @@ pub fn update(check_only: bool) -> Result<()> {
         .args(["install", "skill", "--if-installed"])
         .status();
     if !matches!(status, Ok(s) if s.success()) {
-        eprintln!("nv: warning: could not refresh installed skills; run `nv install skill`");
+        eprintln!(
+            "nv: {}",
+            crate::tr!(
+                "注意: 入れてあるスキルを新しくできませんでした。`nv install skill` を打ってください",
+                "warning: could not refresh installed skills; run `nv install skill`"
+            )
+        );
     }
     Ok(())
 }
@@ -118,11 +157,21 @@ fn swap(new: &Path, dest: &Path) -> Result<PathBuf> {
         dest.file_name().unwrap().to_string_lossy(),
         std::process::id()
     ));
-    fs::rename(dest, &old).with_context(|| format!("cannot replace {}", dest.display()))?;
+    fs::rename(dest, &old).with_context(|| {
+        crate::tr!(
+            "{} を入れ替えられません",
+            "cannot replace {}",
+            dest.display()
+        )
+    })?;
     if let Err(e) = fs::rename(new, dest) {
         let _ = fs::rename(&old, dest);
         let _ = remove_any(new);
-        bail!("cannot replace {}: {e}", dest.display());
+        bail!(crate::tr!(
+            "{} を入れ替えられません: {e}",
+            "cannot replace {}: {e}",
+            dest.display()
+        ));
     }
     Ok(old)
 }

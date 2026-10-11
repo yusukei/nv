@@ -10,7 +10,12 @@ pub fn home_dir() -> Result<PathBuf> {
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("cannot find your home folder (${var} is not set)"))
+        .ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "ホームのフォルダが分かりません(${var} がありません)",
+                "cannot find your home folder (${var} is not set)"
+            ))
+        })
 }
 
 pub struct NvHome {
@@ -50,13 +55,15 @@ impl NvHome {
     /// that finished work can be moved into place with a rename.
     pub fn new_tmp(&self, label: &str) -> Result<PathBuf> {
         let tmp = self.tmp_dir();
-        fs::create_dir_all(&tmp).with_context(|| format!("cannot create {}", tmp.display()))?;
+        fs::create_dir_all(&tmp)
+            .with_context(|| crate::tr!("{} を作れません", "cannot create {}", tmp.display()))?;
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let dir = tmp.join(format!("{label}-{}-{nanos}", std::process::id()));
-        fs::create_dir(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir(&dir)
+            .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
         Ok(dir)
     }
 
@@ -64,16 +71,18 @@ impl NvHome {
     /// another nv holds it.
     pub fn lock(&self, name: &str) -> Result<File> {
         let dir = self.locks_dir();
-        fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir_all(&dir)
+            .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
         let path = dir.join(format!("{name}.lock"));
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(&path)
-            .with_context(|| format!("cannot open {}", path.display()))?;
-        file.lock()
-            .with_context(|| format!("cannot lock {}", path.display()))?;
+            .with_context(|| crate::tr!("{} を開けません", "cannot open {}", path.display()))?;
+        file.lock().with_context(|| {
+            crate::tr!("{} に錠をかけられません", "cannot lock {}", path.display())
+        })?;
         Ok(file)
     }
 

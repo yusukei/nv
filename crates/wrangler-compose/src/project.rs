@@ -89,17 +89,27 @@ pub fn find_dir(start: &Path) -> Option<PathBuf> {
 }
 
 fn nv_path() -> Result<PathBuf> {
-    let me = std::env::current_exe().context("cannot find the wrangler-compose executable")?;
+    let me = std::env::current_exe().context(crate::tr!(
+        "wrangler-compose の実行ファイルが見つかりません",
+        "cannot find the wrangler-compose executable"
+    ))?;
     let me = std::fs::canonicalize(&me).unwrap_or(me);
     let nv = me
         .parent()
-        .ok_or_else(|| anyhow!("cannot find the folder of {}", me.display()))?
+        .ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "{} のフォルダが分かりません",
+                "cannot find the folder of {}",
+                me.display()
+            ))
+        })?
         .join(format!("nv{}", std::env::consts::EXE_SUFFIX));
     if !nv.is_file() {
-        bail!(
+        bail!(crate::tr!(
+            "wrangler-compose と同じフォルダに nv がありません({})。同じ Release の nv をそのフォルダに置いてください",
             "nv was not found next to wrangler-compose ({}); download nv from the same release into that folder",
             nv.display()
-        );
+        ));
     }
     Ok(nv)
 }
@@ -107,9 +117,16 @@ fn nv_path() -> Result<PathBuf> {
 impl Project {
     /// Open the project in the current folder for `env` (None: top level).
     pub fn open(env: Option<String>) -> Result<Project> {
-        let cwd = std::env::current_dir().context("cannot read the current folder")?;
+        let cwd = std::env::current_dir().context(crate::tr!(
+            "いまのフォルダを読めません",
+            "cannot read the current folder"
+        ))?;
         let dir = find_dir(&cwd).ok_or_else(|| {
-            anyhow!("no Wrangler config (wrangler.jsonc, wrangler.json or wrangler.toml) in {} or above", cwd.display())
+            anyhow!(crate::tr!(
+                "{} にも、その上のフォルダにも Wrangler の設定(wrangler.jsonc・wrangler.json・wrangler.toml)がありません",
+                "no Wrangler config (wrangler.jsonc, wrangler.json or wrangler.toml) in {} or above",
+                cwd.display()
+            ))
         })?;
         let nv = nv_path()?;
         let mut cmd = Command::new(&nv);
@@ -122,42 +139,52 @@ impl Project {
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output()
-            .with_context(|| format!("cannot start {}", nv.display()))?;
+            .with_context(|| crate::tr!("{} を起動できません", "cannot start {}", nv.display()))?;
         let stdout = String::from_utf8_lossy(&out.stdout);
         let json = stdout
             .rsplit_once("@@WRANGLER_COMPOSE@@")
             .map(|(_, j)| j.trim())
             .ok_or_else(|| {
-                anyhow!("cannot read the Wrangler config; is wrangler in the project's package.json? (`nv run npm install --save-dev wrangler@<version>`)")
+                anyhow!(crate::tr!(
+                    "Wrangler の設定を読めません。プロジェクトの package.json に wrangler がありますか(`nv run npm install --save-dev wrangler@<版>`)",
+                    "cannot read the Wrangler config; is wrangler in the project's package.json? (`nv run npm install --save-dev wrangler@<version>`)"
+                ))
             })?;
-        let v: Value = serde_json::from_str(json)
-            .context("unexpected output while reading the Wrangler config")?;
+        let v: Value = serde_json::from_str(json).context(crate::tr!(
+            "Wrangler の設定を読んだ結果が想定と違います",
+            "unexpected output while reading the Wrangler config"
+        ))?;
         if v["error"] == "wrangler-missing" {
-            bail!(
+            bail!(crate::tr!(
+                "{} に wrangler が入っていません。`nv run npm install --save-dev wrangler@<版>` でプロジェクトに入れてください",
                 "wrangler is not installed in {}; add it to the project with `nv run npm install --save-dev wrangler@<version>`",
                 dir.display()
-            );
+            ));
         }
 
         let version = v["version"].as_str().unwrap_or("0.0.0");
         if parse_version(version) < MIN_WRANGLER {
-            bail!(
+            bail!(crate::tr!(
+                "プロジェクトの Wrangler は {version} です。wrangler-compose には {}.{}.{} 以上が要ります(`nv run npm install --save-dev wrangler@<版>`)",
                 "the project's Wrangler is {version}; wrangler-compose needs {}.{}.{} or newer (`nv run npm install --save-dev wrangler@<version>`)",
                 MIN_WRANGLER.0,
                 MIN_WRANGLER.1,
                 MIN_WRANGLER.2
-            );
+            ));
         }
         let envs: Vec<String> = strings(&v["envs"]);
         if let Some(e) = &env
             && !envs.contains(e)
         {
             let list = if envs.is_empty() {
-                "(none)".to_string()
+                crate::tr!("(なし)", "(none)")
             } else {
                 envs.join(", ")
             };
-            bail!("environment `{e}` is not in the Wrangler config; available: {list}");
+            bail!(crate::tr!(
+                "環境 `{e}` は Wrangler の設定にありません。ある環境: {list}",
+                "environment `{e}` is not in the Wrangler config; available: {list}"
+            ));
         }
         let config = parse_config(&v, &dir)?;
         Ok(Project {
@@ -171,7 +198,7 @@ impl Project {
     }
 
     pub fn env_name(&self) -> &str {
-        self.env.as_deref().unwrap_or("(top level)")
+        self.env.as_deref().unwrap_or("(top level)") // the config's own word; not translated
     }
 
     fn wrangler_cmd<I, S>(&self, args: I) -> Command
@@ -200,9 +227,12 @@ impl Project {
         let shown = describe(&cmd);
         let status = cmd
             .status()
-            .with_context(|| format!("cannot start {shown}"))?;
+            .with_context(|| crate::tr!("{shown} を起動できません", "cannot start {shown}"))?;
         if !status.success() {
-            bail!("`{shown}` failed ({status})");
+            bail!(crate::tr!(
+                "`{shown}` が失敗しました({status})",
+                "`{shown}` failed ({status})"
+            ));
         }
         Ok(())
     }
@@ -221,9 +251,12 @@ impl Project {
         let shown = describe(&cmd);
         let status = cmd
             .status()
-            .with_context(|| format!("cannot start {shown}"))?;
+            .with_context(|| crate::tr!("{shown} を起動できません", "cannot start {shown}"))?;
         if !status.success() {
-            bail!("`{shown}` failed ({status})");
+            bail!(crate::tr!(
+                "`{shown}` が失敗しました({status})",
+                "`{shown}` failed ({status})"
+            ));
         }
         Ok(())
     }
@@ -238,7 +271,7 @@ impl Project {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .output()
-            .with_context(|| format!("cannot start {shown}"))?;
+            .with_context(|| crate::tr!("{shown} を起動できません", "cannot start {shown}"))?;
         if out.status.success() {
             return Ok(true);
         }
@@ -246,7 +279,12 @@ impl Project {
         if err.contains("not found") {
             return Ok(false);
         }
-        bail!("`{shown}` failed ({}): {}", out.status, err.trim());
+        bail!(crate::tr!(
+            "`{shown}` が失敗しました({}): {}",
+            "`{shown}` failed ({}): {}",
+            out.status,
+            err.trim()
+        ));
     }
 
     /// Run Wrangler and parse the JSON it prints on stdout.
@@ -260,21 +298,37 @@ impl Project {
         let out = cmd
             .stderr(Stdio::inherit())
             .output()
-            .with_context(|| format!("cannot start {shown}"))?;
+            .with_context(|| crate::tr!("{shown} を起動できません", "cannot start {shown}"))?;
         if !out.status.success() {
-            bail!("`{shown}` failed ({})", out.status);
+            bail!(crate::tr!(
+                "`{shown}` が失敗しました({})",
+                "`{shown}` failed ({})",
+                out.status
+            ));
         }
         let text = String::from_utf8_lossy(&out.stdout);
-        let start = text
-            .find(['[', '{'])
-            .ok_or_else(|| anyhow!("`{shown}` printed no JSON"))?;
-        serde_json::from_str(&text[start..])
-            .with_context(|| format!("`{shown}` printed unexpected output"))
+        let start = text.find(['[', '{']).ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "`{shown}` が JSON を出しませんでした",
+                "`{shown}` printed no JSON"
+            ))
+        })?;
+        serde_json::from_str(&text[start..]).with_context(|| {
+            crate::tr!(
+                "`{shown}` の出力が想定と違います",
+                "`{shown}` printed unexpected output"
+            )
+        })
     }
 
     pub fn config_file_bytes(&self) -> Result<Vec<u8>> {
-        std::fs::read(&self.config.config_path)
-            .with_context(|| format!("cannot read {}", self.config.config_path.display()))
+        std::fs::read(&self.config.config_path).with_context(|| {
+            crate::tr!(
+                "{} を読めません",
+                "cannot read {}",
+                self.config.config_path.display()
+            )
+        })
     }
 }
 
@@ -302,7 +356,12 @@ fn opt_string(v: &Value) -> Option<String> {
 }
 
 fn parse_config(v: &Value, dir: &Path) -> Result<Config> {
-    let missing = || anyhow!("the Wrangler config could not be read with this Wrangler version");
+    let missing = || {
+        anyhow!(crate::tr!(
+            "この版の Wrangler では設定を読めませんでした",
+            "the Wrangler config could not be read with this Wrangler version"
+        ))
+    };
     let worker = opt_string(&v["worker"]).ok_or_else(missing)?;
     let config_path = PathBuf::from(opt_string(&v["configPath"]).ok_or_else(missing)?);
     let d1 = v["d1"]
