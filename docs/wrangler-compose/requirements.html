@@ -34,12 +34,18 @@
     <li><a href="#req-010">REQ-010 配り方と更新</a></li>
     <li><a href="#req-011">REQ-011 dry-run</a></li>
     <li><a href="#req-012">REQ-012 表示の言語</a></li>
+    <li><a href="#req-013">REQ-013 手元の環境 local</a></li>
+    <li><a href="#req-014">REQ-014 local の up</a></li>
+    <li><a href="#req-015">REQ-015 手元の S3 の口</a></li>
+    <li><a href="#req-016">REQ-016 local の down</a></li>
+    <li><a href="#req-017">REQ-017 local の backup・restore</a></li>
+    <li><a href="#open">決めること</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
 <main>
 <h1>wrangler-compose 要求仕様</h1>
-<p class="lead">Cloudflare Workers のプロジェクトを、docker compose のように「環境を指定して 1 コマンド」で建てる・組む・下ろす・控える・戻すための道具。どのプロジェクトでも使い回す。</p>
+<p class="lead">Cloudflare Workers のプロジェクトを、docker compose のように「環境を指定して 1 コマンド」で建てる・組む・下ろす・控える・戻すための道具。手元の開発も、<code>local</code> という環境として同じ操作で扱う。どのプロジェクトでも使い回す。</p>
 
 <h2 id="commands">コマンド体系</h2>
 <p>形は <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code>。<code>--env</code> は短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code> で指定する(<a href="#req-001">REQ-001</a>)。</p>
@@ -53,6 +59,15 @@
   <tr><td><code>restore &lt;控えのフォルダ&gt;</code></td><td>控えを空の D1・R2 へ戻す(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
   <tr><td><code>restore --drop &lt;控えのフォルダ&gt;</code></td><td>いまの D1・R2 の中身を消して、控えに入れ替える(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
   <tr><td><code>--dry-run &lt;操作&gt;</code></td><td>上のどの操作も、何も変えずに何をするかだけを示す</td><td><a href="#req-011">REQ-011</a></td></tr>
+</table>
+<p>環境名 <code>local</code> は手元の開発のための決まった名前で、同じ操作が Cloudflare ではなくこの PC の上で動く(<a href="#req-013">REQ-013</a>)。</p>
+<table>
+  <tr><th style="width:38%">操作(<code>--env local</code>)</th><th>すること</th><th style="width:12%">条項</th></tr>
+  <tr><td><code>up</code></td><td>手元の D1 に未適用の移行を当て、手元で Worker を動かす(前面で動き、Ctrl+C で止まる)。R2 は S3 互換の口(署名付き URL を含む)でも読み書きできる</td><td><a href="#req-014">REQ-014</a>・<a href="#req-015">REQ-015</a></td></tr>
+  <tr><td><code>down</code></td><td>ほかの端末で動いている <code>--env local up</code> を止める。手元のデータは残す</td><td><a href="#req-016">REQ-016</a></td></tr>
+  <tr><td><code>down --purge</code></td><td>手元のデータ(D1・R2 ほか、Wrangler が手元に置いた状態)を消す</td><td><a href="#req-016">REQ-016</a></td></tr>
+  <tr><td><code>backup [&lt;書き出し先&gt;]</code></td><td>手元の D1・R2 の中身を <code>&lt;書き出し先&gt;/local/&lt;日時&gt;/</code> へ書き出す(API キーは要らない)</td><td><a href="#req-017">REQ-017</a></td></tr>
+  <tr><td><code>restore [--drop] &lt;控えのフォルダ&gt;</code></td><td>控え(<code>staging</code> などほかの環境で取ったものも)を手元の D1・R2 へ戻す</td><td><a href="#req-017">REQ-017</a></td></tr>
 </table>
 <p>Cloudflare に触れる操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)は、環境の指定が無ければ止まる。Wrangler の操作そのものは <code>nv run wrangler …</code> で行える。</p>
 <p>wrangler-compose の更新とエージェント用のスキルは nv が受け持つ(<code>nv self update</code>・<code>nv install skill</code>。<a href="#req-010">REQ-010</a>)。wrangler-compose 自身はこの 2 つを持たない。</p>
@@ -73,6 +88,9 @@
   <li>シークレットと wrangler-compose が使う値は、プロジェクトの <code>.env.&lt;環境名&gt;</code> に書く</li>
   <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
   <li>個人の道具として nv と 1 つのリポジトリにまとめる。更新とエージェント用のスキルは nv に寄せる(wrangler-compose に <code>self update</code>・<code>install skill</code> を持たせない)</li>
+  <li>手元の開発を主な使い道として育てる。手元は <code>--env local</code> という環境として、Cloudflare の環境と同じ操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)で扱う(<code>dev</code> のような別の操作を足さない)</li>
+  <li>手元で使えない R2 の機能のうち、S3 互換の API(署名付き URL を含む)と、手元への backup・restore を補う。R2 の S3 互換の口は、Wrangler が持つ手元の口(<code>local_dev.experimental_s3_credentials</code>)を使い、自前のサーバは作らない</li>
+  <li>手元の控えと Cloudflare の環境の控えは同じ形にし、互いに戻せる(本番の控えを手元に戻して開発できる)</li>
 </ul>
 </div>
 
@@ -84,6 +102,10 @@
   <tr><td>作り直せるもの</td><td>Worker(コード・静的なファイル・ルート)。git にあるものから <code>up</code> で同じものができる</td></tr>
   <tr><td>データ</td><td>環境の設定がつなぐ D1 データベースと R2 バケットの中身。git に無く、作り直せない</td></tr>
   <tr><td>API キー</td><td>R2 の S3 互換の API のアクセスキー ID とシークレット(ダッシュボードで人が発行する)</td></tr>
+  <tr><td>手元</td><td>この PC。<code>--env local</code> の操作は、Cloudflare ではなく手元の Wrangler(miniflare)の上で動く</td></tr>
+  <tr><td>手元のデータ</td><td>Wrangler が手元の開発のためにプロジェクトの <code>.wrangler/state/</code> に置く D1・R2 などの中身</td></tr>
+  <tr><td>手元の S3 の口</td><td>手元の R2 バケットを S3 互換の API で読み書きする口(<code>http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/r2/s3/&lt;バケット名&gt;</code>)。Worker のバインディング(<code>env.&lt;バインディング&gt;</code>)と同じ中身が見える</td></tr>
+  <tr><td>手元の鍵</td><td>手元の S3 の口の署名に使うアクセスキー ID とシークレット。手元でしか通じない</td></tr>
 </table>
 
 <h2>要求</h2>
@@ -91,7 +113,7 @@
 <h3 id="req-001"><span class="id">REQ-001</span>環境の指定</h3>
 <ul>
   <li>環境は <code>--env &lt;環境名&gt;</code>(短く <code>-e</code>)か、環境変数 <code>CLOUDFLARE_ENV</code> で指定する。両方あれば <code>--env</code> を優先する</li>
-  <li>環境名は Wrangler の設定の環境名そのもの。別名は持たない</li>
+  <li>環境名は Wrangler の設定の環境名そのもの。別名は持たない。ただし <code>local</code> だけは手元の開発のための決まった名前として wrangler-compose が受け持つ(<a href="#req-013">REQ-013</a>)</li>
   <li>Cloudflare に触れる操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)は、環境の指定が無ければ何もせずに止まる(設定の一番上の階層を誤ってデプロイしない)</li>
   <li>設定に無い環境名なら、何もせずに止まり、設定にある環境名を並べて示す</li>
 </ul>
@@ -176,7 +198,7 @@
 
 <h3 id="req-009"><span class="id">REQ-009</span>秘密の扱い</h3>
 <ul>
-  <li>シークレットの値と API キーを、どの操作でも、画面・ログ・控えの目録に出さない</li>
+  <li>シークレットの値と API キーを、どの操作でも、画面・ログ・控えの目録に出さない。手元の鍵(<a href="#req-015">REQ-015</a>)は手元でしか通じないので秘密として扱わず、<code>--env local up</code> が画面に示す</li>
   <li>API キーは <code>.env.&lt;環境名&gt;</code> の <code>WRANGLER_COMPOSE_R2_ACCESS_KEY_ID</code>・<code>WRANGLER_COMPOSE_R2_SECRET_ACCESS_KEY</code>、または同じ名前の環境変数から受け取る(環境変数を優先する)</li>
   <li>S3 互換の API に要るアカウント ID と管轄(EU など)は、Wrangler の設定とログインから得る(利用者に別に書かせない)</li>
   <li><code>.env.&lt;環境名&gt;</code> を読む操作(<code>up</code>・<code>down --purge</code>・<code>backup</code>・<code>restore</code>)は、プロジェクトが git の中にあって、そのファイルが <code>.gitignore</code> で外れていないか、すでに git に入っていれば、何もせずに止まる。プロジェクトが git の外なら確かめない</li>
@@ -205,10 +227,81 @@
   <li>Wrangler の出力は、そのまま出す(訳さない)</li>
 </ul>
 
+<h3 id="req-013"><span class="id">REQ-013</span>手元の環境 local</h3>
+<ul>
+  <li><code>--env local</code>(<code>-e local</code>・<code>CLOUDFLARE_ENV=local</code> も同じ)は手元の開発を指す。<code>local</code> の操作は Cloudflare に触れず、ログインも要らない</li>
+  <li><code>local</code> は Wrangler の設定の一番上の階層を使う(環境を付けずに <code>wrangler dev</code> を動かしたときと同じ)</li>
+  <li>設定に <code>env.local</code> があれば、何もせずに止まり、名前がぶつかることと、その環境の名前を変えるよう示す(1 つの名前に 2 つの意味を持たせない)</li>
+  <li>手元のデータは Wrangler の既定の置き場(<code>.wrangler/state/</code>)に置く。wrangler-compose は別の置き場を作らない(<code>nv run wrangler d1 execute &lt;DB&gt; --local</code> などで同じデータが見える)</li>
+  <li><code>.env.local</code> は、Wrangler が手元の開発で自ら読み、Worker の変数として渡す(wrangler-compose はシークレットとして入れる段を持たない)。wrangler-compose はそこから <code>WRANGLER_COMPOSE_</code> で始まる値(手元の鍵。<a href="#req-015">REQ-015</a>)だけを読む。git の確かめは <a href="#req-009">REQ-009</a> と同じに行う</li>
+  <li><code>--env local build</code> は、設定の一番上の階層を組む(環境を付けない <code>build</code> と同じ)</li>
+  <li>dry-run(<a href="#req-011">REQ-011</a>)と表示の言語(<a href="#req-012">REQ-012</a>)は、<code>local</code> の操作にも同じに効く</li>
+</ul>
+
+<h3 id="req-014"><span class="id">REQ-014</span>local の up(手元で動かす)</h3>
+<ul>
+  <li><code>--env local up</code> は次の順で行う: (1) 移行のフォルダを持つ手元の D1 ごとに、未適用の移行を当てる(確認を求めない) → (2) 手元で Worker を動かす。移行が失敗したら動かさず、どの移行で止まったかを示す</li>
+  <li>前面で動き続け、Worker のログ(<code>console</code> の出力と要求ごとの記録)を流す。Ctrl+C で止まり、止まったあとに手元のプロセスを残さない</li>
+  <li>コードと設定が変われば、作り直して動かし直す(<code>wrangler dev</code> と同じ)。動かし直しで移行は当てない(移行を足したら <code>up</code> を打ち直す)</li>
+  <li>動き出したら、Worker の URL と、R2 のバインディングごとに、手元の S3 の口・バケット名・手元の鍵を示す(<a href="#req-015">REQ-015</a>)</li>
+  <li>待ち受けのポートは、設定の <code>dev.port</code>、無ければ Wrangler の既定(8787)。使えなければ、理由を示して止まる</li>
+  <li>待ち受けのアドレスは、設定の <code>dev.ip</code>、無ければ <code>127.0.0.1</code>(手元の鍵は秘密でないので、既定ではほかの機械から届かないようにする)</li>
+  <li>同じプロジェクトで <code>--env local up</code> がすでに動いていれば、2 つ目は何もせずに止まり、動いているものの URL を示す(同じ手元のデータを 2 つが同時に書かないため)</li>
+</ul>
+
+<h3 id="req-015"><span class="id">REQ-015</span>手元の S3 の口(R2 の代わり)</h3>
+<ul>
+  <li><code>--env local up</code> は、設定のすべての R2 バインディングについて、手元の S3 の口を開く。Wrangler の手元の口(<code>local_dev.experimental_s3_credentials</code> の働き)を使い、設定ファイルは書き換えない(<a href="#req-002">REQ-002</a>)</li>
+  <li>口は Worker のバインディングと同じ中身を読み書きする(バインディングで置いたものが口で見え、口で置いたものがバインディングで見える)</li>
+  <li>口が受ける操作は、Wrangler の手元の口のとおり(GetObject・HeadObject・PutObject・CopyObject・DeleteObject・DeleteObjects・ListObjectsV2・分割アップロードなど)。署名は AWS Signature Version 4 で、ヘッダの署名と、URL に署名を載せる署名付き URL の両方が通る。鍵や署名が合わなければ拒む</li>
+  <li>手元の鍵は次の順で決める
+    <ol>
+      <li>設定の R2 バインディングに <code>local_dev.experimental_s3_credentials</code> が書いてあれば、それ(Wrangler の決まりを優先する)</li>
+      <li>環境変数か <code>.env.local</code> の <code>WRANGLER_COMPOSE_R2_ACCESS_KEY_ID</code>・<code>WRANGLER_COMPOSE_R2_SECRET_ACCESS_KEY</code>(Cloudflare の環境の API キーと同じ名前。環境変数を優先する)</li>
+      <li>どちらも無ければ、wrangler-compose の決まった値</li>
+    </ol>
+  </li>
+  <li>口の URL は <code>http://&lt;アドレス&gt;:&lt;ポート&gt;/cdn-cgi/local/r2/s3</code>(パス形式)、バケット名は設定の <code>bucket_name</code>、地域は <code>auto</code>。アプリが本番と手元で変えるのは、口の URL と鍵だけで済むようにする(<code>up</code> がこの 3 つを示す)</li>
+  <li>Wrangler の版によって手元の口の設定の書き方が違うときは(Wrangler 5 で <code>dev</code> の下へ移る)、wrangler-compose が版に合わせる。合わせ方の分からない版なら、口を開かずに動かし、そのことを示す</li>
+</ul>
+
+<h3 id="req-016"><span class="id">REQ-016</span>local の down(止める・手元のデータを消す)</h3>
+<ul>
+  <li><code>--env local down</code> は、同じプロジェクトでほかの端末から動かしている <code>--env local up</code> を止める。手元のデータは残す。動いていなければ、そう示して何もしない(失敗としない)</li>
+  <li><code>--env local down</code> は打ち直しの確かめを求めない(止めるのは動いているプロセスだけで、データは消さないため)</li>
+  <li><code>--env local down --purge</code> は、手元のデータ(<code>.wrangler/state/</code>。D1・R2 に加えて、KV・Durable Objects など Wrangler が手元に置いたすべて)を消す。<code>up</code> が動いていれば先に止める</li>
+  <li>消す前に、消すもの(置き場のフォルダ、D1 ごとの表の数、バケットごとのオブジェクトの数)を示し、<code>local</code> を打ち直して確かめる。打ち直しを受けられない場では止まる(<a href="#req-005">REQ-005</a> と同じ。<a href="#open">決めること</a> 1)</li>
+  <li>手元のデータだけを消す。<code>.wrangler/</code> のほかのもの(Wrangler の組み立ての一時ファイルなど)と、プロジェクトのファイルには触れない</li>
+</ul>
+
+<h3 id="req-017"><span class="id">REQ-017</span>local の backup・restore(手元を控える・手元へ戻す)</h3>
+<ul>
+  <li><code>--env local backup</code> は、手元の D1・R2 の中身を、<a href="#req-007">REQ-007</a> と同じ形(目録・D1 の SQL と移行の履歴・R2 のオブジェクトとメタデータ)で <code>&lt;書き出し先&gt;/local/&lt;日時&gt;/</code> に書き出す。書き出し先の決まり・git の確かめ・書きかけの扱いは REQ-007 と同じ</li>
+  <li><code>--env local restore [--drop] &lt;控えのフォルダ&gt;</code> は、<a href="#req-008">REQ-008</a> と同じ決まり(空でなければ止まる・<code>--drop</code> で入れ替える・打ち直しは <code>local</code>・控えのあとの移行を当てる・書きかけの控えは戻さない)で手元へ戻す</li>
+  <li>控えはどの環境で取ったものでもよい。バインディングの名前で照らす(<code>staging</code> や <code>production</code> の控えを手元に戻して開発できる)。戻す前に、控えを取った環境名を示す</li>
+  <li>逆に、手元の控え(<code>backups/local/…</code>)を Cloudflare の環境へ戻すこともできる(REQ-008 のとおり。手元で作ったデータで <code>staging</code> を埋めるなど)</li>
+  <li>手元では入れ物を作る段が要らない(Wrangler が使うときに作る)。REQ-008 の「戻す先が無ければ止まる」は <code>local</code> には当てはめない</li>
+  <li>R2 は手元の S3 の口で読み書きする。API キーは要らない(手元の鍵を使う)。<code>--env local up</code> が動いていればその口を使い、動いていなければ、操作の間だけ手元で Worker を動かして口を開き、終われば止める(<code>up</code> を打っておかなくてよい)</li>
+  <li>戻している間に <code>up</code> が動いていれば、Worker から欠けたデータが見えうる。REQ-008 と同じく、始める前にそのことを示す</li>
+</ul>
+
+<h2 id="open">決めること(利用者)</h2>
+<div class="box open">
+<ol>
+  <li><strong><code>--env local down --purge</code> を、端末でない場(エージェント)から打てるようにするか</strong>。案 A(推奨): いまの決まりと同じく、打ち直しを受けられない場では止まる(本番の控えを戻した手元のデータも、消すと戻せないため)。案 B: <code>local</code> だけは <code>--yes</code> で打ち直しを省ける(エージェントが手元を作り直せる)</li>
+  <li><strong>手元の鍵の既定の値</strong>。案 A(推奨): どの PC・どのプロジェクトでも同じ決まった値(手元でしか通じない。README とスキルに書ける)。案 B: プロジェクトごとに作って <code>.wrangler/</code> に置く</li>
+  <li><strong><code>up</code> を裏で動かす(<code>up -d</code>)を今回持つか</strong>。案 A(推奨): 持たない。前面で動かし、ほかの端末から <code>down</code> で止められれば足りる。案 B: 持つ(ログは <code>logs</code> が要るようになる)</li>
+</ol>
+</div>
+
 <h2 id="out-of-scope">範囲外</h2>
 <ul>
   <li>Node・npm の取得と版の管理(nv が受け持つ)</li>
-  <li>手元の開発(<code>wrangler dev</code>)、状態の一覧(<code>ps</code>)、ログの表示(<code>logs</code>)。必要になったら足す(Wrangler の操作そのものは <code>nv run wrangler …</code> で行える)</li>
+  <li>状態の一覧(<code>ps</code>)、Cloudflare の環境のログの表示(<code>logs</code>)、手元の <code>up</code> を裏で動かすこと(<code>up -d</code>)。必要になったら足す(Wrangler の操作そのものは <code>nv run wrangler …</code> で行える)</li>
+  <li>R2 の公開の URL(<code>r2.dev</code>・独自ドメイン)を手元で再現すること。手元では Worker を通すか、手元の S3 の口の署名付き URL で配る</li>
+  <li>複数の Worker(サービスバインディングでつないだもの)をまとめて手元で動かすこと</li>
+  <li>手元の KV・Queues・Durable Objects の控え(<code>local down --purge</code> では消える)</li>
+  <li>設定で <code>remote: true</code> にしたバインディング(手元の開発から Cloudflare の資源につなぐもの)。Wrangler の振る舞いに従い、wrangler-compose は手を加えない</li>
   <li>R2 の CORS・ライフサイクルの設定(Wrangler の設定ファイルに書けない、バケットごとの設定のため。<code>nv run wrangler r2 bucket cors …</code> などで行える)</li>
   <li>D1・R2 以外の資源(KV・Queues など)の控えと消去。Durable Objects のデータの控え(消えるのは <code>down</code> で Worker と一緒に。REQ-005)</li>
 </ul>
