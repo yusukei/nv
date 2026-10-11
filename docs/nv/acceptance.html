@@ -30,6 +30,7 @@
     <li><a href="#ac-009">AC-009 配り方</a></li>
     <li><a href="#ac-010">AC-010 更新</a></li>
     <li><a href="#ac-011">AC-011 表示の言語</a></li>
+    <li><a href="#ac-012">AC-012 add・remove</a></li>
   </ul>
 </nav>
 <main>
@@ -81,6 +82,9 @@
 <h3 id="ac-006"><span class="id">AC-006</span>Node の版の管理 <span class="refs">REQ-006</span></h3>
 <ul>
   <li><code>nv node install 22.11.0</code> のあと <code>nv node list</code> に <code>22.11.0</code> が出る。<code>nv node uninstall 22.11.0</code> のあと出ない</li>
+  <li><code>nv node list --remote</code> は、系列ごとに最新の版が 1 行ずつ、新しい順に並ぶ。LTS の版には LTS の名前が付き、置き場に入っている版には印が付く。その OS 向けの配布物が無い版は出ない</li>
+  <li><code>nv node list --remote 24</code> は 24 系のすべての版、<code>--lts</code> は LTS の版だけ、<code>--all</code> はすべての版を出す</li>
+  <li>取り先を <code>NV_NODE_MIRROR</code> で差し替えると、その取り先の一覧を出す</li>
 </ul>
 
 <h3 id="ac-007"><span class="id">AC-007</span>利用者の環境 <span class="refs">REQ-007</span></h3>
@@ -127,6 +131,15 @@
   <li><code>NV_LANG=en</code> を付けると日本語の PC でも英語、<code>NV_LANG=ja</code> を付けると英語の PC でも日本語が出る</li>
   <li>Windows の PowerShell と cmd で、日本語のメッセージが化けずに読める</li>
   <li><code>nv run npm install</code> の npm の出力は、言語によらず npm のまま出る</li>
+</ul>
+
+<h3 id="ac-012"><span class="id">AC-012</span>add・remove <span class="refs">REQ-012</span></h3>
+<ul>
+  <li><code>package-lock.json</code> の無いプロジェクトで <code>nv add semver</code> を打つと、<code>package.json</code> の <code>dependencies</code> に semver が入り、<code>package-lock.json</code> ができ、<code>.node-version</code> の Node に付いた npm が使われる</li>
+  <li><code>nv add --dev typescript@5.6.3 --exact</code> は、<code>devDependencies</code> に <code>"5.6.3"</code>(幅なし)で入る</li>
+  <li><code>nv add</code> のあとすぐ <code>nv run</code> を打っても、依存を入れ直さない</li>
+  <li><code>nv remove semver</code> のあと、<code>package.json</code> と <code>package-lock.json</code> から semver が消え、<code>nv run semver</code> は動かない。続けて <code>nv run</code> を打っても依存を入れ直さない</li>
+  <li>依存に無いパッケージを <code>nv remove</code> すると、何も変わらずに止まる</li>
 </ul>
 
 <footer>docs/nv/acceptance.html</footer>

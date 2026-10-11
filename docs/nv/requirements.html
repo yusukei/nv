@@ -33,6 +33,7 @@
     <li><a href="#req-009">REQ-009 配り方</a></li>
     <li><a href="#req-010">REQ-010 更新</a></li>
     <li><a href="#req-011">REQ-011 表示の言語</a></li>
+    <li><a href="#req-012">REQ-012 add・remove</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
@@ -48,7 +49,10 @@
   <tr><td><code>nv sync</code></td><td>Node を揃え、<code>package-lock.json</code> のとおりに依存を入れる</td><td><a href="#req-003">REQ-003</a></td></tr>
   <tr><td><code>nv run &lt;コマンド&gt; [引数…]</code></td><td>揃えた Node・npm・<code>node_modules/.bin</code> でコマンドを動かす(足りなければ先に揃える)</td><td><a href="#req-004">REQ-004</a></td></tr>
   <tr><td><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code><br><code>[--node &lt;版&gt;]</code></td><td>プロジェクトに入れずに道具を 1 回動かす</td><td><a href="#req-005">REQ-005</a></td></tr>
+  <tr><td><code>nv add &lt;パッケージ&gt;[@版]… [--dev] [--exact]</code></td><td>依存を足し、<code>package.json</code> と <code>package-lock.json</code> に書く</td><td><a href="#req-012">REQ-012</a></td></tr>
+  <tr><td><code>nv remove &lt;パッケージ&gt;…</code></td><td>依存を外し、<code>package.json</code> と <code>package-lock.json</code> から消す</td><td><a href="#req-012">REQ-012</a></td></tr>
   <tr><td><code>nv node list</code></td><td>置き場にある Node の版を並べる</td><td><a href="#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node list --remote [&lt;系列&gt;] [--all] [--lts]</code></td><td>入れられる Node の版を並べる(既定は系列ごとの最新)</td><td><a href="#req-006">REQ-006</a></td></tr>
   <tr><td><code>nv node install &lt;版&gt;</code></td><td>その版の Node を取る</td><td><a href="#req-006">REQ-006</a></td></tr>
   <tr><td><code>nv node uninstall &lt;版&gt;</code></td><td>その版の Node を置き場から消す</td><td><a href="#req-006">REQ-006</a></td></tr>
   <tr><td><code>nv install skill</code></td><td>Claude Code と Codex に、nv と wrangler-compose のスキルを入れる(利用者全体)</td><td><a href="#req-008">REQ-008</a></td></tr>
@@ -126,6 +130,13 @@
   <li><code>nv node list</code> は、置き場にある Node の版を並べる</li>
   <li><code>nv node install &lt;版&gt;</code> は、その版を取る(REQ-002)</li>
   <li><code>nv node uninstall &lt;版&gt;</code> は、置き場からその版を消す</li>
+  <li><code>nv node list --remote</code> は、入れられる Node の版を並べる。その OS 向けの配布物がある版だけを、Node の公式の一覧(REQ-002 と同じ取り先)から出す(利用者の決定)
+    <ul>
+      <li>既定では、大きい版(系列)ごとに最新の版を 1 つずつ、新しい順に出す</li>
+      <li>系列を指定すると(<code>nv node list --remote 24</code>)、その系列のすべての版を出す。<code>--all</code> はすべての版、<code>--lts</code> は LTS の版だけ</li>
+      <li>各版に、LTS の名前と、置き場に入っているかの印を付ける</li>
+    </ul>
+  </li>
 </ul>
 
 <h3 id="req-007"><span class="id">REQ-007</span>利用者の環境に手を出さない</h3>
@@ -140,7 +151,7 @@
   <li>入れる範囲は利用者全体(その PC のすべてのプロジェクトで効く)(利用者の決定)</li>
   <li>Codex 向けには、利用者全体の共有の置き場 <code>~/.agents/skills/</code> に常に入れる(Codex が利用者のスキルを読む場所。OpenAI の資料「Build skills」)。この置き場はほかのエージェントとも共有で、Codex が入っているかは見分けない(利用者の決定)</li>
   <li>Claude Code 向けには <code>~/.claude/skills/</code> に入れる。<code>~/.claude</code> が無い PC(Claude Code が無い)では入れず、入れなかったことを示す</li>
-  <li>スキルは、エージェントに次を守らせる: Node・npm・npx を直接打たず、<code>nv sync</code>・<code>nv run &lt;コマンド&gt;</code>・<code>nv x &lt;パッケージ&gt;@&lt;版&gt;</code> を使う。JS のスクリプトは <code>nv run node &lt;スクリプト&gt;</code> で動かす。Cloudflare の環境の建てる・下ろす・控える・戻すは、<code>wrangler deploy</code> などを直接打たず <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code> で行う</li>
+  <li>スキルは、エージェントに次を守らせる: Node・npm・npx を直接打たず、<code>nv sync</code>・<code>nv run &lt;コマンド&gt;</code>・<code>nv x &lt;パッケージ&gt;@&lt;版&gt;</code> を使う。JS のスクリプトは <code>nv run node &lt;スクリプト&gt;</code> で動かす。依存を足す・外すのは <code>nv add</code>・<code>nv remove</code>。Cloudflare の環境の建てる・下ろす・控える・戻すは、<code>wrangler deploy</code> などを直接打たず <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code> で行う</li>
   <li>スキルの中身は、その版の nv と wrangler-compose の使い方と一致する(nv を更新したら、入れてあるスキルも合わせる。REQ-010)</li>
   <li>入れる・消すときに、どのエージェントのどこに入れた・消したかを示す</li>
 </ul>
@@ -172,10 +183,20 @@
   <li>nv が動かしたコマンド(Node・npm・道具)の出力は、そのまま出す(訳さない)。エージェント用のスキルの中身は英語のまま</li>
 </ul>
 
+<h3 id="req-012"><span class="id">REQ-012</span>add・remove(依存を足す・外す)</h3>
+<ul>
+  <li><code>nv add &lt;パッケージ&gt;[@版]…</code> は、固定した Node に付いた npm でパッケージを入れ、<code>package.json</code> と <code>package-lock.json</code> に書く(利用者の決定)</li>
+  <li><code>--dev</code> で開発用の依存として書く。<code>--exact</code> で版を幅なしで書く</li>
+  <li>版は幅のある書き方(<code>foo</code>・<code>foo@^1</code>)も受ける(実際の版は <code>package-lock.json</code> が固定する)</li>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、ここで作る</li>
+  <li><code>nv remove &lt;パッケージ&gt;…</code> は、固定した Node に付いた npm でパッケージを外し、<code>package.json</code> と <code>package-lock.json</code> から消す(利用者の決定)。依存に無いパッケージを指定したら、何も変えずに止まる</li>
+  <li>足した・外したあと、次の <code>nv run</code> で依存を入れ直さない(依存が揃っている状態として扱う。REQ-004)</li>
+</ul>
+
 <h2 id="out-of-scope">範囲外</h2>
 <ul>
   <li>npm 以外の依存の道具(yarn・pnpm・bun)</li>
-  <li>依存の解決(<code>npm install</code> で <code>package-lock.json</code> を書き換えること)。依存を変えるときは <code>nv run npm install …</code> で npm に任せる</li>
+  <li>依存の版を上げるための専用のコマンド。<code>nv run npm update …</code> で npm に任せる。依存を足す・外すのは <code>nv add</code>・<code>nv remove</code>(REQ-012)</li>
   <li>グローバルへの導入とシェルへの組み込み(fnm の <code>use</code> や、シムのようなもの)</li>
 </ul>
 

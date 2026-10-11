@@ -23,6 +23,71 @@ fn platform() -> Result<&'static str> {
     })
 }
 
+fn mirror() -> String {
+    std::env::var("NV_NODE_MIRROR")
+        .ok()
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| DEFAULT_MIRROR.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// The name this machine's archive has in the `files` list of index.json.
+fn index_file_key() -> Result<&'static str> {
+    Ok(match platform()? {
+        "darwin-arm64" => "osx-arm64-tar",
+        "darwin-x64" => "osx-x64-tar",
+        "linux-x64" => "linux-x64",
+        _ => "win-x64-zip",
+    })
+}
+
+/// A Node release that can be installed on this machine.
+#[derive(Debug, PartialEq)]
+pub struct Release {
+    pub version: Version,
+    pub lts: Option<String>,
+}
+
+/// Every release with an archive for this machine, newest first (DES-008).
+pub fn remote(index: Option<&str>) -> Result<Vec<Release>> {
+    let text = match index {
+        Some(t) => t.to_string(),
+        None => http::get_text(&format!("{}/index.json", mirror()))?,
+    };
+    let json: serde_json::Value = serde_json::from_str(&text).context(crate::tr!(
+        "Node の版の一覧(index.json)を読めません",
+        "cannot read the Node release list (index.json)"
+    ))?;
+    let key = index_file_key()?;
+    let mut out: Vec<Release> = json
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| {
+            r["files"]
+                .as_array()
+                .is_some_and(|f| f.iter().any(|x| x.as_str() == Some(key)))
+        })
+        .filter_map(|r| {
+            Some(Release {
+                version: r["version"].as_str()?.parse().ok()?,
+                lts: r["lts"].as_str().map(str::to_string),
+            })
+        })
+        .collect();
+    out.sort_by_key(|r| std::cmp::Reverse(r.version));
+    Ok(out)
+}
+
+/// Keep the newest release of each major line (input is newest first).
+pub fn latest_per_major(all: Vec<Release>) -> Vec<Release> {
+    let mut seen = std::collections::BTreeSet::new();
+    all.into_iter()
+        .filter(|r| seen.insert(r.version.major))
+        .collect()
+}
+
 fn archive_ext() -> &'static str {
     if cfg!(windows) { "zip" } else { "tar.gz" }
 }
@@ -92,8 +157,7 @@ pub fn ensure(home: &NvHome, v: Version) -> Result<Node> {
 }
 
 fn install(home: &NvHome, v: Version, dest: &Path) -> Result<()> {
-    let mirror = std::env::var("NV_NODE_MIRROR").unwrap_or_else(|_| DEFAULT_MIRROR.to_string());
-    let mirror = mirror.trim_end_matches('/');
+    let mirror = mirror();
     let stem = format!("node-v{v}-{}", platform()?);
     let file = format!("{stem}.{}", archive_ext());
 
@@ -182,4 +246,38 @@ pub fn uninstall(home: &NvHome, v: Version) -> Result<bool> {
     remove_any(&dir)
         .with_context(|| crate::tr!("{} を消せません", "cannot remove {}", dir.display()))?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index() -> String {
+        let key = index_file_key().unwrap();
+        format!(
+            r#"[
+              {{"version":"v26.11.1","lts":false,"files":["{key}","linux-x64"]}},
+              {{"version":"v24.21.0","lts":"Krypton","files":["{key}"]}},
+              {{"version":"v24.20.0","lts":"Krypton","files":["{key}"]}},
+              {{"version":"v25.0.0","lts":false,"files":["aix-ppc64"]}},
+              {{"version":"v0.1.14","lts":false,"files":[]}}
+            ]"#
+        )
+    }
+
+    #[test]
+    fn keeps_only_releases_for_this_machine_newest_first() {
+        let all = remote(Some(&index())).unwrap();
+        let names: Vec<String> = all.iter().map(|r| r.version.to_string()).collect();
+        assert_eq!(names, vec!["26.11.1", "24.21.0", "24.20.0"]);
+        assert_eq!(all[1].lts.as_deref(), Some("Krypton"));
+        assert_eq!(all[0].lts, None);
+    }
+
+    #[test]
+    fn picks_the_newest_release_of_each_major() {
+        let latest = latest_per_major(remote(Some(&index())).unwrap());
+        let names: Vec<String> = latest.iter().map(|r| r.version.to_string()).collect();
+        assert_eq!(names, vec!["26.11.1", "24.21.0"]);
+    }
 }

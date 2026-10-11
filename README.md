@@ -54,8 +54,11 @@ Windows は `& "$HOME\.local\bin\nv.exe" --version`。以後の更新は `nv sel
 ## nv の使い方
 
 ```bash
+nv node list --remote       # 入れられる Node の版(系列ごとの最新・LTS の名前)
 echo 24.11.1 > .node-version
-nv run npm install          # 最初の package-lock.json を作る
+nv add semver               # 依存を足す(package-lock.json が無ければ作る)
+nv add --dev typescript     # 開発用の依存
+nv remove semver            # 依存を外す
 nv sync                     # package-lock.json のとおりに入れる
 nv run npm run build        # 揃えた Node・npm で動かす
 nv run wrangler deploy      # プロジェクトの依存の道具

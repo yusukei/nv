@@ -14,7 +14,9 @@ the versions found on PATH differ between machines, and on Windows they are ofte
 | Run a JavaScript file | `nv run node <script.js> [args…]` |
 | Run a package.json script | `nv run npm run <script>` |
 | Run a tool installed in the project (e.g. wrangler, vite, tsc) | `nv run <tool> [args…]` |
-| Add or change a dependency | `nv run npm install <package>@<version>` |
+| Add a dependency (`--dev` for devDependencies, `--exact` to pin) | `nv add <package>[@<version>]` |
+| Remove a dependency | `nv remove <package>` |
+| See which Node versions can be pinned | `nv node list --remote` (`--lts`, or a major like `24` for every version) |
 | Run a tool that is not in the project, once | `nv x <package>@<exact version> [args…]` |
 
 - `nv run` installs the pinned Node and the locked dependencies first when they are missing.

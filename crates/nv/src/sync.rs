@@ -32,10 +32,26 @@ pub fn install(home: &NvHome, project: &Project, node: &Node) -> Result<()> {
         )
     );
     exec::npm(home, node, &project.dir, &["ci", "--no-audit", "--no-fund"])?;
+    write_stamp(project, &stamp)
+}
+
+fn write_stamp(project: &Project, stamp: &str) -> Result<()> {
     let path = project.node_modules().join(STAMP);
     fs::write(&path, stamp)
         .with_context(|| crate::tr!("{} に書き込めません", "cannot write {}", path.display()))?;
     Ok(())
+}
+
+/// After npm itself changed node_modules to match package-lock.json
+/// (`nv add` / `nv remove`), record that they agree (DES-014).
+pub fn record(project: &Project, node: &Node) -> Result<()> {
+    write_stamp(project, &stamp_text(project, node)?)
+}
+
+/// Only one nv at a time may change a project's node_modules (DES-005).
+pub fn lock_project(home: &NvHome, project: &Project) -> Result<fs::File> {
+    let key = http::sha256_bytes_hex(project.dir.to_string_lossy().as_bytes());
+    home.lock(&format!("project-{}", &key[..16]))
 }
 
 /// Node and dependencies for `project`, installing whatever is missing.
@@ -46,8 +62,7 @@ pub fn ensure(home: &NvHome, project: &Project, force: bool) -> Result<Node> {
         return Ok(node);
     }
     // Two nv in one project must not run `npm ci` into the same node_modules at once.
-    let key = http::sha256_bytes_hex(project.dir.to_string_lossy().as_bytes());
-    let _lock = home.lock(&format!("project-{}", &key[..16]))?;
+    let _lock = lock_project(home, project)?;
     if force || !is_current(project, &node)? {
         install(home, project, &node)?;
     }

@@ -33,6 +33,7 @@
     <li><a href="#des-011">DES-011 self update</a></li>
     <li><a href="#des-012">DES-012 出力と終了コード</a></li>
     <li><a href="#des-013">DES-013 試験</a></li>
+    <li><a href="#des-014">DES-014 add・remove</a></li>
     <li><a href="#unverified">確かめていないこと</a></li>
   </ul>
 </nav>
@@ -139,6 +140,16 @@
 <h3 id="des-008"><span class="id">DES-008</span>node list / install / uninstall <span class="refs">REQ-006</span></h3>
 <ul>
   <li><code>list</code> は <code>cache/node/</code> のフォルダ名を版の順に並べる。<code>install</code> は DES-004。<code>uninstall</code> は錠を取ってフォルダを消す</li>
+  <li><code>list --remote</code> は、取り先(既定 <code>https://nodejs.org/dist</code>。<code>NV_NODE_MIRROR</code>)の <code>index.json</code> を読む。各版の <code>files</code> に、この OS の配布物の名前(macOS arm64 は <code>osx-arm64-tar</code>、macOS x64 は <code>osx-x64-tar</code>、Linux は <code>linux-x64</code>、Windows は <code>win-x64-zip</code>)がある版だけを残す(<code>index.json</code> の中身は 2026-10 の実物で確認: 870 版、<code>version</code>・<code>date</code>・<code>lts</code>(名前か false)・<code>files</code> などを持つ)</li>
+  <li>結果は標準出力に 1 版 1 行で出す(<code>24.21.0  LTS Krypton  (入れてある)</code>)。版の前の <code>v</code> は付けない(<code>.node-version</code> にそのまま書けるように)</li>
+</ul>
+
+<h3 id="des-014"><span class="id">DES-014</span>add・remove <span class="refs">REQ-012</span></h3>
+<ul>
+  <li><code>nv add</code> は Node を揃え(REQ-002)、<code>npm install --save</code>(<code>--dev</code> なら <code>--save-dev</code>、<code>--exact</code> なら <code>--save-exact</code>)を、プロジェクトの錠(DES-005)を取って動かす。npm の出力は標準エラーへ(DES-012)</li>
+  <li><code>nv remove</code> は、先に <code>package.json</code> の <code>dependencies</code>・<code>devDependencies</code>・<code>optionalDependencies</code> にその名前があるかを見て、無ければ止まる(npm は無い名前の <code>uninstall</code> を黙って成功させるため)。あれば <code>npm uninstall</code> を動かす</li>
+  <li>どちらも、終わったあと DES-005 の印(<code>package-lock.json</code> の SHA-256 と Node の版)を書き直す。npm が <code>node_modules</code> をロックファイルのとおりにしているので、次の <code>nv run</code> は入れ直さない</li>
+  <li>却下: <code>package.json</code> を nv が書き換えてから <code>npm install</code>(npm と同じ解決を二重に持つことになる)</li>
 </ul>
 
 <h3 id="des-009"><span class="id">DES-009</span>エージェント用のスキル <span class="refs">REQ-008</span></h3>

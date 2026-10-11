@@ -2,6 +2,7 @@
 
 #[macro_use]
 mod i18n;
+mod deps;
 mod exec;
 mod http;
 mod node;
@@ -55,6 +56,23 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<OsString>,
     },
+    /// Add dependencies to package.json and package-lock.json
+    Add {
+        /// <package>[@version] (ranges are fine; package-lock.json pins them)
+        #[arg(required = true)]
+        packages: Vec<String>,
+        /// Add as development dependencies
+        #[arg(long)]
+        dev: bool,
+        /// Write the exact version instead of a range
+        #[arg(long)]
+        exact: bool,
+    },
+    /// Remove dependencies from package.json and package-lock.json
+    Remove {
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
     /// Manage downloaded Node versions
     Node {
         #[command(subcommand)]
@@ -80,8 +98,21 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum NodeCmd {
-    /// List downloaded Node versions
-    List,
+    /// List downloaded Node versions; with --remote, the versions you can install
+    List {
+        /// List versions available from the Node distribution site
+        #[arg(long)]
+        remote: bool,
+        /// Only this major line, every version (e.g. 24)
+        #[arg(requires = "remote")]
+        major: Option<u64>,
+        /// Every version, not just the newest of each major line
+        #[arg(long, requires = "remote")]
+        all: bool,
+        /// Only LTS versions
+        #[arg(long, requires = "remote")]
+        lts: bool,
+    },
     /// Download a Node version
     Install {
         #[arg(id = "node_version", value_name = "VERSION")]
@@ -136,8 +167,19 @@ const JA_ABOUT: &[(&str, &str)] = &[
         "x",
         "版をそのまま指定した道具を、プロジェクトに入れずに動かす",
     ),
+    (
+        "add",
+        "依存を足し、package.json と package-lock.json に書く",
+    ),
+    (
+        "remove",
+        "依存を外し、package.json と package-lock.json から消す",
+    ),
     ("node", "取った Node の版を管理する"),
-    ("node list", "取った Node の版を並べる"),
+    (
+        "node list",
+        "取った Node の版を並べる。--remote なら入れられる版を並べる",
+    ),
     ("node install", "Node の版を取る"),
     ("node uninstall", "取った Node の版を消す"),
     (
@@ -157,6 +199,22 @@ const JA_ARGS: &[(&str, &str, &str)] = &[
     ("x", "node", "プロジェクトの外で使う Node の版"),
     ("x", "package", "<パッケージ>@<版>"),
     ("x", "args", "道具に渡す引数"),
+    (
+        "add",
+        "packages",
+        "<パッケージ>[@版](幅のある書き方も可。package-lock.json が固定する)",
+    ),
+    ("add", "dev", "開発用の依存として足す"),
+    ("add", "exact", "版を幅なしで書く"),
+    ("remove", "packages", "外すパッケージの名前"),
+    (
+        "node list",
+        "remote",
+        "Node の配布元から、入れられる版を並べる",
+    ),
+    ("node list", "major", "この系列だけを、すべての版で(例: 24)"),
+    ("node list", "all", "系列ごとの最新だけでなく、すべての版"),
+    ("node list", "lts", "LTS の版だけ"),
     ("self update", "check", "新しい版があるかだけを示す"),
 ];
 
@@ -238,6 +296,41 @@ fn parse_cli() -> Cli {
     Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
+/// `nv node list --remote` (REQ-006): one release per line on stdout.
+fn list_remote(home: &NvHome, major: Option<u64>, all: bool, lts: bool) -> Result<()> {
+    let mut releases = node::remote(None)?;
+    if let Some(m) = major {
+        releases.retain(|r| r.version.major == m);
+    }
+    if lts {
+        releases.retain(|r| r.lts.is_some());
+    }
+    if major.is_none() && !all {
+        releases = node::latest_per_major(releases);
+    }
+    if releases.is_empty() {
+        eprintln!(
+            "nv: {}",
+            tr!("当てはまる版はありません", "no matching versions")
+        );
+        return Ok(());
+    }
+    let installed = node::installed(home)?;
+    for r in releases {
+        let mut line = format!("{:<10}", r.version.to_string());
+        if let Some(name) = &r.lts {
+            line.push_str(&format!("  LTS {name:<10}"));
+        } else {
+            line.push_str(&" ".repeat(16));
+        }
+        if installed.contains(&r.version) {
+            line.push_str(&format!("  {}", tr!("(入れてある)", "(installed)")));
+        }
+        println!("{}", line.trim_end());
+    }
+    Ok(())
+}
+
 fn main() {
     let cli = parse_cli();
     if let Err(e) = dispatch(cli) {
@@ -265,12 +358,24 @@ fn dispatch(cli: Cli) -> Result<()> {
         } => {
             x::run(&home, &package, node, &args)?;
         }
+        Cmd::Add {
+            packages,
+            dev,
+            exact,
+        } => deps::add(&home, &packages, dev, exact)?,
+        Cmd::Remove { packages } => deps::remove(&home, &packages)?,
         Cmd::Node { command } => match command {
-            NodeCmd::List => {
+            NodeCmd::List { remote: false, .. } => {
                 for v in node::installed(&home)? {
                     println!("{v}");
                 }
             }
+            NodeCmd::List {
+                remote: true,
+                major,
+                all,
+                lts,
+            } => list_remote(&home, major, all, lts)?,
             NodeCmd::Install { version } => {
                 node::ensure(&home, version)?;
             }
