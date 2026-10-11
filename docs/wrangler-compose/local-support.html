@@ -119,6 +119,19 @@
   <tr><td>キャッシュ(Cache API・<code>fetch</code> のキャッシュ)</td><td>手元のキャッシュで、本番の拠点ごとのキャッシュとは振る舞いが違う</td><td>推測</td></tr>
 </table>
 
+<h2 id="r2">R2 の機能ごとの手元の状況</h2>
+<p>要求は「可能な限り本物と同じ機能をすべて提供する」(<a href="requirements.html#req-009">REQ-009</a>)。下の「無い」ものは道具のサービスで補う。「無い」の判断は Wrangler の変更履歴と実測からの見立てで、作る前に一つずつ実物で確かめる。</p>
+<table>
+  <tr><th style="width:34%">R2 の機能</th><th style="width:22%">Wrangler の手元の模擬</th><th>揃え方</th></tr>
+  <tr><td>バインディングの API(get・put・head・list・delete・分割アップロード・条件つき・範囲指定・メタデータ)</td><td>ある</td><td>そのまま使う</td></tr>
+  <tr><td>S3 互換の API・署名付き URL</td><td>ある(4.115.0 から。実測)</td><td>そのまま使う</td></tr>
+  <tr><td>公開の URL(<code>r2.dev</code>・独自ドメイン)</td><td>無い</td><td>道具のサービスで配る</td></tr>
+  <tr><td>CORS</td><td>無い(バケットの設定の読み出しに決まった答えを返すだけ)</td><td>道具のサービスで効かせる</td></tr>
+  <tr><td>ライフサイクル(期限で消す・保管の種類を変える)</td><td>無い</td><td>道具のサービスで行う</td></tr>
+  <tr><td>イベント通知(オブジェクトの変化を Queue へ)</td><td>無い</td><td>道具のサービスで送る</td></tr>
+  <tr><td>オブジェクトのロック・保管の種類</td><td>無い</td><td>道具のサービスで行う</td></tr>
+</table>
+
 <h2 id="covered">wrangler-compose が補うもの</h2>
 <table>
   <tr><th style="width:30%">足りないもの</th><th>wrangler-compose での扱い</th></tr>
