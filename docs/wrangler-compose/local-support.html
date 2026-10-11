@@ -129,6 +129,9 @@
   <tr><td>CORS</td><td>無い</td><td>再現する(道具のサービス)。ブラウザから署名付き URL で直接上げるときに要る</td></tr>
   <tr><td>公開の URL(<code>r2.dev</code>・独自ドメイン)</td><td>無い</td><td>再現する(道具のサービス)</td></tr>
   <tr><td>イベント通知(オブジェクトの変化を Queue へ)</td><td>無い</td><td>再現する(道具のサービス)</td></tr>
+  <tr><td>イベント通知の作成の種類</td><td>-</td><td>手元では作成をすべて <code>PutObject</code> として送る(<code>CopyObject</code>・<code>CompleteMultipartUpload</code> を見分けない)。道具がバケットを毎秒見比べて送るので、届くまで 1〜2 秒かかる</td></tr>
+  <tr><td>公開の URL の範囲指定の取得(<code>Range</code>)と <code>ETag</code></td><td>-</td><td>手元の公開の URL は答えない(オブジェクト全体を返す)</td></tr>
+  <tr><td>CORS・公開の URL(<code>ports</code> の無い r2 のサービス)</td><td>-</td><td>r2 のサービスに <code>ports</code> が無いと、手元の模擬の口がすべての送り元を許し、公開の URL も無い。本番と同じにするには <code>ports</code> を書く</td></tr>
   <tr><td>ライフサイクル(期限で消す・保管の種類を変える)</td><td>無い</td><td>再現しない。手元の開発で期限切れを待つことはまず無い。リモートには設定を入れる</td></tr>
   <tr><td>オブジェクトのロック・保管の種類</td><td>無い</td><td>再現しない。ほとんど使わない。リモートには設定を入れる</td></tr>
 </table>

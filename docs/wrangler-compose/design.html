@@ -39,6 +39,7 @@
     <li><a href="#des-015">DES-015 dry-run と確かめ</a></li>
     <li><a href="#des-016">DES-016 0.1 系から引き継ぐもの</a></li>
     <li><a href="#des-017">DES-017 試験</a></li>
+    <li><a href="#des-019">DES-019 手元の R2 の口</a></li>
     <li><a href="#unverified">確かめていないこと</a></li>
   </ul>
 </nav>
@@ -115,9 +116,12 @@
 <ul>
   <li>すべての Worker(利用者のものと道具のサービス)を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;Worker&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同時の書き込みで壊れない</li>
   <li>入口は道具のサービス(DES-011)で、<code>ports</code> を持つ Worker へのつながりを持ち、要求の URL のポートで振り分ける。道具は <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(WebSocket もそのまま通る)</li>
-  <li>手元の S3 互換の口(<code>/cdn-cgi/local/r2/s3/</code>)は、どのポートからも届く。<code>up</code> は口の URL・バケット名・鍵を示す</li>
+  <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)</li>
+  <li><strong>ログ</strong>: 手元では、Worker のログにどの Worker のものかが付かない(実測)。そこで道具がサービスごとに小さな tail の受け手(<code>wc-logs-&lt;サービス&gt;</code>)を置き、受け手が届いたログにサービス名を付けて出す。道具は Wrangler 自身の行(起動・再読み込み・エラー)と受け手の行だけを画面と <code>.wrangler/compose/local/logs/up.log</code> に出し、名前の付かない生の行は出さない</li>
+  <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る</li>
   <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。git の外)</li>
   <li>動かす前に、移行を <code>d1 migrations apply --local --persist-to …</code> で当てる</li>
+  <li>使う Wrangler は 4.149.0 以上(この設計を確かめた版)</li>
   <li>Queue の受け手は、compose ファイルに設定を持たないので、手元の設定に本物の既定値(<code>max_batch_size: 10</code>・<code>max_batch_timeout: 5</code>・<code>max_retries: 3</code>)を書いて渡す。手元の模擬の既定値(5・1・2)は本物と違うため(実測)</li>
   <li>動いていることの記録と錠・ほかの端末からの止め方は 0.1 系のものを引き継ぐ。ログは画面と <code>.wrangler/compose/local/logs/</code> の両方に出す</li>
   <li>compose ファイルか <code>.env.local</code> が変われば、設定を作り直して動かし直す。コードが変われば組み立て直して動かし直す</li>
@@ -162,13 +166,16 @@
 <h3 id="des-013"><span class="id">DES-013</span>ps・logs <span class="refs">REQ-012</span></h3>
 <ul>
   <li><code>ps</code>(リモート): Worker は <code>deployments list</code>、資源は DES-004 の一覧、未適用の移行は履歴の表を <code>SELECT</code> で読む。手元: 動いている記録と URL</li>
-  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す。手元: <code>.wrangler/compose/local/logs/</code> を読む</li>
+  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す。手元: <code>up</code> が書く <code>.wrangler/compose/local/logs/up.log</code> を読む(<code>-f</code> なら追う)</li>
 </ul>
 
 <h3 id="des-014"><span class="id">DES-014</span>backup・restore <span class="refs">REQ-013</span></h3>
 <ul>
-  <li>D1 は Wrangler の管理の操作(<code>d1 export</code>・<code>d1 execute --file</code>)、R2・KV はデータのサービスで、その環境の中から書き出し・読み込む。道具は控えのファイルとの受け渡しだけを行う</li>
-  <li>控えの目録は 0.1 系のもの(書きかけの見分け・SHA-256 の照合)を引き継いで <code>format: 2</code> にする: <code>project</code>・<code>environment</code>・サービスごとの <code>d1</code>・<code>r2</code>・<code>kv</code>。戻すときはサービスの名前と型で照らす</li>
+  <li>D1・R2・KV のどれも、データのサービスで、その環境の中から書き出し・読み込む。道具は控えのファイルとの受け渡しだけを行う。D1 もデータのサービスで扱うのは、手元で <code>up</code> が動いている最中に別のプロセスから D1 を書き出す・戻すと、同時の書き込みで失敗する(<code>SQLITE_BUSY</code>。実測)ため</li>
+  <li>控えの形(<code>format: 2</code>。環境によらず同じ): <code>manifest.json</code>(最後に書く。無いフォルダは書きかけ)に <code>project</code>・<code>environment</code>・<code>created</code>・資源ごとの <code>type</code>・<code>key</code>・ファイルと SHA-256。D1 は <code>d1/&lt;key&gt;.jsonl</code>(表の作り・行・索引など。1 行 1 つの JSON。BLOB は base64)、R2 は <code>r2/&lt;key&gt;/</code> にオブジェクトとメタデータ、KV は <code>kv/&lt;key&gt;.jsonl</code>(キー・値(base64)・メタデータ・期限)</li>
+  <li>戻すときは、資源の名前と型で compose ファイルに照らし、すべてのファイルの SHA-256 を確かめてから始める。D1 は表の作り → 行(50 行ずつ。外部キーは確かめを後回しにする)→ 索引などの順に入れ、最後に控えのあとの移行を当てる(移行の SQL の分け方は Wrangler の <code>unstable_splitSqlQuery</code>)。KV は戻す時点で期限が切れたものを戻さない</li>
+  <li>D1 の仮想表(FTS など)は控えられない(止まって示す)</li>
+  <li>手元で <code>up</code> が動いていなければ、操作の間だけ入口とデータのサービスだけの実行環境を立てる</li>
 </ul>
 
 <h3 id="des-015"><span class="id">DES-015</span>dry-run と確かめ <span class="refs">REQ-014・REQ-015</span></h3>
@@ -190,6 +197,14 @@
   <li>単体: compose ファイルの確かめ・値の展開・サービスの順・作る設定・Worker のフォルダの確かめ・Durable Objects のタグ・控えの目録</li>
   <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
   <li>リモート: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
+</ul>
+
+<h3 id="des-019"><span class="id">DES-019</span>手元の R2 の口 <span class="refs">REQ-009</span></h3>
+<ul>
+  <li>手元の模擬の S3 互換の口は、バケットの CORS の設定によらず、すべての送り元を許す(実測)。そのままでは手元で通って本番で失敗するので、<code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受ける</li>
+  <li><strong>S3 互換の口</strong>(<code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code>): ブラウザの事前確認(<code>OPTIONS</code>)には、道具が compose ファイルの <code>cors</code> どおりに答える(合わなければ 403)。ほかの要求は、見出しを変えずに(署名がそのまま通る)入口の内側のポートの手元の模擬へ渡し、答えの CORS の見出しを捨てて <code>cors</code> どおりに付け直す。送り元の決まりは R2 と同じ(送り元に <code>*</code> を 1 つ書ける)</li>
+  <li><strong>公開の URL</strong>: <code>Host</code> が <code>&lt;バケット名&gt;.localhost</code> の要求は、<code>public: true</code> のバケットだけ、データのサービスから中身を取って配る(内容の種類などの見出しを付ける)。範囲指定の取得(<code>Range</code>)と <code>ETag</code> には答えない</li>
+  <li>1 つの接続で 1 つの要求だけを受け、答えたら閉じる(<code>Connection: close</code>)。HTTP の読み取りを見出しだけにするため</li>
 </ul>
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>

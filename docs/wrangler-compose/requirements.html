@@ -116,6 +116,7 @@ services:
 
   storage:
     type: r2
+    ports: ["9000:9000"]            # 手元の R2 の口(S3 互換の API・公開の URL)
     buckets:                        # 複数のバケット。1 つなら省略形でもよい(REQ-002)
       files:
         public: true                # 公開の URL で配る
@@ -172,6 +173,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
+  <li>r2 のサービスにも <code>ports</code> を書ける。そのポートが手元の R2 の口(S3 互換の API とバケットの CORS・公開の URL)になる</li>
   <li>実際の名前は既定では道具が環境の名前を付けて決め(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、複数形は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;-&lt;名前&gt;</code>)、<code>name</code> に書けばそれを使う</li>
   <li>D1・R2・KV・Queue は、1 つのサービスに複数を名前つきで定義できる。1 つなら省略形で書いてよく、そのときの名前はサービスの名前から決まる</li>
   <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルにバケットごとに書き、手元にもリモートにも同じに入れる</li>
@@ -210,7 +212,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:26%">建つもの</th></tr>
   <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
   <tr><td><code>d1</code></td><td>省略形: <code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)。複数形: <code>databases.&lt;名前&gt;</code> の下に同じキー</td><td>D1 データベース 1 つ以上</td></tr>
-  <tr><td><code>r2</code></td><td>省略形: バケットのキー。複数形: <code>buckets.&lt;名前&gt;</code> の下にバケットのキー。バケットのキーは <code>name</code>・<code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ以上</td></tr>
+  <tr><td><code>r2</code></td><td><code>ports</code>(手元の R2 の口)。省略形: バケットのキー。複数形: <code>buckets.&lt;名前&gt;</code> の下にバケットのキー。バケットのキーは <code>name</code>・<code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ以上</td></tr>
   <tr><td><code>kv</code></td><td>省略形: <code>name</code>。複数形: <code>namespaces.&lt;名前&gt;</code> の下に <code>name</code></td><td>KV 名前空間 1 つ以上</td></tr>
   <tr><td><code>queue</code></td><td>省略形: <code>name</code>。複数形: <code>queues.&lt;名前&gt;</code> の下に <code>name</code></td><td>Queue 1 つ以上</td></tr>
 </table>
@@ -280,6 +282,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li><code>--env local up</code> は、Cloudflare に触れず(ログインも網も要らず)、すべてのサービスを手元で動かす。前面で動き、Ctrl+C ですべて止まり、何も残さない</li>
   <li>手元では、<strong>ふつうのプロダクトを作るのに無いと困る機能</strong>を、本物と同じに提供し、同じに振る舞わせる(動作が違えば手元で開発する意義が薄れるため。利用者の決定)。本物にあって手元の模擬に無いものは、道具のサービス(REQ-017)で補う</li>
   <li>実際のプロダクトでほとんど使わない機能は、手元で再現しない(利用者の決定)。再現しないものは <a href="local-support.html">手元で使えないもの</a>に理由とともに書く</li>
+  <li>r2 のサービスに <code>ports</code> を書くと、そのポートが手元の R2 の口になる: S3 互換の API(署名付き URL を含む)は <code>http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/r2/s3</code> で、CORS はバケットの <code>cors</code> どおりに答える。<code>public: true</code> のバケットは <code>http://&lt;バケット名&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で配る(利用者の決定)。<code>ports</code> が無いと CORS と公開の URL は本番と同じにならず、<code>up</code> がそのことを知らせる</li>
   <li>R2 は、手元でも本物と同じに使える: バインディングの API、S3 互換の API(署名付き URL を含む)、CORS、公開の URL、イベント通知(Queue へ)。ライフサイクル・オブジェクトのロック・保管の種類は手元では再現しない(リモートには設定を入れる)(利用者の決定)</li>
   <li>D1・KV・Queue は、ふだん使う API(読み書き・一覧・一括処理・移行・送受信・やり直しなど)を手元でも本物と同じに使える。Queue の受け手は、手元でも本物の既定値(1 回にまとめる数 10・待つ時間 5 秒・やり直し 3 回)で動く。D1 の上限の一部・KV の結果整合・Queue の同時処理などは手元で再現しない(<a href="local-support.html">手元で使えないもの</a>に理由とともに書く)(利用者の決定)</li>
   <li>それでも本物と違うところは、<a href="local-support.html">手元で使えないもの</a>に理由とともに書き、無くしていく(REQ-018)</li>
