@@ -20,6 +20,7 @@
     <li><a href="local-support.html">手元で使えないもの</a></li>
   </ul>
   <ul>
+    <li><a href="#definition">定義</a></li>
     <li><a href="#goals">目的</a></li>
     <li><a href="#principles">理念</a></li>
     <li><a href="#example">compose ファイルの例</a></li>
@@ -52,13 +53,24 @@
 </nav>
 <main>
 <h1>wrangler-compose 要求仕様</h1>
-<p class="lead">Cloudflare Workers のアプリを、docker compose と同じく「1 つのファイルに書き、コマンド 1 つで建てる」ための道具。Worker も D1・R2・KV・Queue も、compose ファイルの<strong>サービス</strong>として並べる。同じファイルが、手元(<code>local</code>)でも Cloudflare の環境(<code>staging</code>・<code>production</code> など)でも同じ形で建つ。</p>
+<p class="lead">wrangler-compose は、<strong>手元で開発したサービスを、安全にリモートへ展開するための道具</strong>である。</p>
+
+<h2 id="definition">定義</h2>
+<div class="box decision">
+<p><strong>wrangler-compose は、「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong>(利用者の決定。この仕様のすべての要求は、この定義から決める)</p>
+<ul>
+  <li><strong>手元が出発点</strong>: サービスは手元で作り、手元で動かして確かめる。手元だけで開発が完結する(Cloudflare につながなくてよい)</li>
+  <li><strong>リモートは手元の再現</strong>: リモートには、手元で動いたものと同じ構成(同じ compose ファイル・同じコード・同じ移行)を展開する。違ってよいのは、環境ごとの値(<code>.env.&lt;環境&gt;</code>)と、資源の実際の名前だけ</li>
+  <li><strong>安全に</strong>: 展開の前に何が変わるかが分かり、データを壊さず、消す操作は確かめてから行い、本番を誤って変えない</li>
+</ul>
+<p>docker compose に寄せた書式・コマンド(サービス・<code>type</code>・<code>up</code>・<code>down</code> など)は、この定義を手で行う段取りなしに実現するための手段。</p>
+</div>
 
 
-<h2 id="goals">目的</h2>
+<h2 id="goals">目的(定義を満たすために要ること)</h2>
 <ol>
-  <li><strong>複数のサービスをまとめて扱う</strong>: Worker と、それが使う資源(D1・R2・KV・Queue・シークレット)を、まとめて建てる・止める・見る・控える</li>
-  <li><strong>手元で作ったものを、リモートで安全に再現する</strong>: 手元で動いたものと同じ構成を、Cloudflare の環境に、何が変わるかを見てから建てる</li>
+  <li><strong>手元で作ったものを、リモートで安全に再現する</strong>(定義そのもの): 手元で動いたものと同じ構成を、Cloudflare の環境に、何が変わるかを見てから建てる</li>
+  <li><strong>複数のサービスをまとめて扱う</strong>(そのための手段): Worker と、それが使う資源(D1・R2・KV・Queue・シークレット)を、手元でもリモートでも、まとめて建てる・止める・見る・控える</li>
 </ol>
 
 <h2 id="principles">理念(docker compose から)</h2>
@@ -138,7 +150,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h2 id="decisions">決定(利用者)</h2>
 <div class="box decision">
 <ul>
-  <li>目的は 2 つ: 複数のサービスをまとめて扱うこと、手元で作ったものをリモートで安全に再現すること</li>
+  <li>定義: 手元で開発したサービスを、安全にリモートへ展開するためのもの(最も重要な決定)。目的は、手元で作ったものをリモートで安全に再現することと、そのために複数のサービスをまとめて扱うこと</li>
   <li>Wrangler でできることから組み立てず、compose として何ができるべきかから決める。実現の手段(Wrangler を使うか、自前で作るか)はそのあとに選ぶ</li>
   <li>手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る)が要る形にしない</li>
   <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code></li>
