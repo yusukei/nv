@@ -260,8 +260,22 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         .iter()
         .map(|(s, w)| (s.name.clone(), build::newest_change(&w.build)))
         .collect();
+    let has_notify = ctx.compose.services.iter().any(|s| {
+        matches!(&s.kind, Kind::R2(list) if list.iter().any(|r| !r.spec.notifications.is_empty()))
+    });
+    let notifier = has_notify.then(|| crate::data::Client::new(format!("http://127.0.0.1:{gateway_port}"), token.clone()));
+    let mut last_tick = Instant::now();
+    let mut last_watch = Instant::now();
     let result = loop {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(250));
+        if let Some(n) = &notifier
+            && last_tick.elapsed() >= Duration::from_secs(1)
+        {
+            last_tick = Instant::now();
+            if let Err(e) = n.notify_tick() {
+                say(crate::tr!("R2 の通知を送れません: {e:#}", "cannot send R2 notifications: {e:#}"));
+            }
+        }
         if crate::interrupt::check().is_err() {
             break Stop::Done;
         }
@@ -272,6 +286,10 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         if stamps(&compose_files) != compose_stamp {
             break Stop::Restart;
         }
+        if last_watch.elapsed() < Duration::from_millis(500) {
+            continue;
+        }
+        last_watch = Instant::now();
         for (s, w) in &workers {
             let now = build::newest_change(&w.build);
             if seen.get(&s.name) != Some(&now) {

@@ -84,6 +84,12 @@ impl Client {
         Ok(v)
     }
 
+    /// One look for R2 event notifications (the data service sends them).
+    pub fn notify_tick(&self) -> Result<()> {
+        self.post("notify/tick", &json!({}))?;
+        Ok(())
+    }
+
     pub fn query(&self, db: &str, sql: &str, params: Vec<Value>) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
         let v = self.post(&format!("d1/{db}/query"), &json!({ "sql": sql, "params": params }))?;
         let cols = v["columns"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_string)).collect();

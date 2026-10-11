@@ -189,6 +189,8 @@ pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
     std::fs::write(&script, DATA_JS)?;
     let (mut d1, mut r2, mut kv) = (Vec::new(), Vec::new(), Vec::new());
     let (mut d1m, mut r2m, mut kvm) = (Map::new(), Map::new(), Map::new());
+    let mut notify = Vec::new();
+    let mut producers: Vec<Value> = Vec::new();
     for s in &c.services {
         match &s.kind {
             Kind::D1(list) => {
@@ -203,6 +205,12 @@ pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
                     let b = format!("R2_{}", r2.len());
                     r2.push(json!({ "binding": b, "bucket_name": r.key }));
                     r2m.insert(r.key.clone(), json!(b));
+                    for n in &r.spec.notifications {
+                        let q = format!("Q_{}", producers.len());
+                        producers.push(json!({ "binding": q, "queue": n.queue }));
+                        notify.push(json!({ "bucket": b, "name": r.key, "queue": q,
+                            "events": n.events, "prefix": n.prefix, "suffix": n.suffix }));
+                    }
                 }
             }
             Kind::Kv(list) => {
@@ -219,8 +227,11 @@ pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
         "name": DATA,
         "main": script,
         "compatibility_date": "2026-09-01",
-        "vars": { "WC_MAP": { "d1": d1m, "r2": r2m, "kv": kvm } },
+        "vars": { "WC_MAP": { "d1": d1m, "r2": r2m, "kv": kvm }, "WC_NOTIFY": notify },
     });
+    if !producers.is_empty() {
+        cfg["queues"] = json!({ "producers": producers });
+    }
     if !d1.is_empty() {
         cfg["d1_databases"] = json!(d1);
     }
@@ -304,11 +315,58 @@ const out = (v) => (v instanceof ArrayBuffer ? { $blob: b64(v) } : v);
 const inp = (v) => (v && typeof v === "object" && "$blob" in v ? unb64(v.$blob) : v);
 const json = (v, status = 200) => Response.json(v, { status });
 
+// R2 event notifications (REQ-009): the tool calls /__wc/notify/tick every
+// second; each bucket with notifications is compared with the last look and
+// the differences go to the queue in Cloudflare's message format. Creates
+// cannot be told apart from outside, so they are all reported as PutObject.
+const seen = new Map();
+async function listAll(bucket) {
+  const out = new Map();
+  let cursor;
+  do {
+    const r = await bucket.list({ cursor });
+    for (const o of r.objects) out.set(o.key, o);
+    cursor = r.truncated ? r.cursor : undefined;
+  } while (cursor);
+  return out;
+}
+async function tick(env) {
+  let sent = 0;
+  for (const n of env.WC_NOTIFY || []) {
+    const now = await listAll(env[n.bucket]);
+    const before = seen.get(n.bucket + n.queue);
+    seen.set(n.bucket + n.queue, now);
+    if (!before) continue;
+    const match = (k) => (!n.prefix || k.startsWith(n.prefix)) && (!n.suffix || k.endsWith(n.suffix));
+    const msgs = [];
+    const eventTime = new Date().toISOString();
+    if (n.events.includes("object-create")) {
+      for (const [k, o] of now) {
+        const b = before.get(k);
+        if ((!b || b.etag !== o.etag || b.uploaded.getTime() !== o.uploaded.getTime()) && match(k)) {
+          msgs.push({ account: "local", action: "PutObject", bucket: n.name, object: { key: k, size: o.size, eTag: o.etag }, eventTime });
+        }
+      }
+    }
+    if (n.events.includes("object-delete")) {
+      for (const k of before.keys()) {
+        if (!now.has(k) && match(k)) msgs.push({ account: "local", action: "DeleteObject", bucket: n.name, object: { key: k }, eventTime });
+      }
+    }
+    for (let i = 0; i < msgs.length; i += 100) {
+      await env[n.queue].sendBatch(msgs.slice(i, i + 100).map((body) => ({ body })));
+    }
+    sent += msgs.length;
+  }
+  return sent;
+}
+
 export default {
   async fetch(request, env) {
     const auth = request.headers.get("authorization") || "";
     if (!env.WC_TOKEN || !same(auth, `Bearer ${env.WC_TOKEN}`)) return new Response(null, { status: 404 });
     const url = new URL(request.url);
+    if (url.pathname === "/__wc/notify/tick") return json({ sent: await tick(env) });
     const [, , kind, key, op, ...rest] = url.pathname.split("/");
     const name = decodeURIComponent(rest.join("/"));
     const binding = env.WC_MAP[kind] && env.WC_MAP[kind][key];
