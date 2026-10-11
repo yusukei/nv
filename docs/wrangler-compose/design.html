@@ -22,201 +22,174 @@
   <ul>
     <li><a href="#facts">確かめた事実</a></li>
     <li><a href="#des-001">DES-001 作りの全体</a></li>
-    <li><a href="#des-002">DES-002 compose ファイルの読み方</a></li>
-    <li><a href="#des-003">DES-003 変数の展開</a></li>
-    <li><a href="#des-004">DES-004 資源の記録と見つけ直し</a></li>
-    <li><a href="#des-005">DES-005 Wrangler の設定を作る</a></li>
-    <li><a href="#des-006">DES-006 組み立てのキーの一覧</a></li>
-    <li><a href="#des-017">DES-017 build</a></li>
-    <li><a href="#des-007">DES-007 リモートの up</a></li>
-    <li><a href="#des-008">DES-008 Durable Objects の移行</a></li>
-    <li><a href="#des-009">DES-009 手元の up</a></li>
-    <li><a href="#des-010">DES-010 データのサービス</a></li>
-    <li><a href="#des-011">DES-011 down</a></li>
-    <li><a href="#des-012">DES-012 ps・logs</a></li>
-    <li><a href="#des-013">DES-013 backup・restore</a></li>
-    <li><a href="#des-014">DES-014 dry-run と確かめ</a></li>
-    <li><a href="#des-015">DES-015 前の版から引き継ぐもの</a></li>
-    <li><a href="#des-016">DES-016 試験</a></li>
+    <li><a href="#des-002">DES-002 compose ファイルを読む</a></li>
+    <li><a href="#des-003">DES-003 値の展開</a></li>
+    <li><a href="#des-004">DES-004 実際の名前と見つけ直し</a></li>
+    <li><a href="#des-005">DES-005 中で使う設定を作る</a></li>
+    <li><a href="#des-006">DES-006 Worker のフォルダの確かめ</a></li>
+    <li><a href="#des-007">DES-007 build</a></li>
+    <li><a href="#des-008">DES-008 手元の up</a></li>
+    <li><a href="#des-009">DES-009 リモートの up</a></li>
+    <li><a href="#des-010">DES-010 Durable Objects のクラスの足し引き</a></li>
+    <li><a href="#des-011">DES-011 道具のサービス</a></li>
+    <li><a href="#des-012">DES-012 down</a></li>
+    <li><a href="#des-013">DES-013 ps・logs</a></li>
+    <li><a href="#des-014">DES-014 backup・restore</a></li>
+    <li><a href="#des-015">DES-015 dry-run と確かめ</a></li>
+    <li><a href="#des-016">DES-016 0.1 系から引き継ぐもの</a></li>
+    <li><a href="#des-017">DES-017 試験</a></li>
     <li><a href="#unverified">確かめていないこと</a></li>
   </ul>
 </nav>
 <main>
 <h1>wrangler-compose 設計</h1>
-<p class="lead"><a href="requirements.html">要求仕様</a>(compose ファイルを正とする版)と<a href="acceptance.html">受け入れ条件</a>を満たす作り。Wrangler は中の実行役として使い、足りないところは wrangler-compose が作る。事実は手元の Wrangler 4.149.0 で 2026-10-11 に実測・読み取りした(Cloudflare には触れていない)。</p>
-<div class="box open">
-<p>要求仕様を、中で使う道具(Wrangler)に触れない形に書き直した(REQ-001〜019)。この頁は前の要求に合わせたままで、条項の番号も合っていない。要求が固まってから書き直す。</p>
-</div>
+<p class="lead"><a href="requirements.html">要求仕様</a>(REQ-001〜019)と<a href="acceptance.html">受け入れ条件</a>を満たす作り。中では Cloudflare の公式の道具 Wrangler を実行役として使う(利用者には見せない)。Wrangler に無い機能は道具のサービス(REQ-017)で受け持つ。事実は手元の Wrangler 4.149.0 で 2026-10-11 に実測・読み取りした。</p>
 
 <h2 id="facts">確かめた事実</h2>
 <table>
-  <tr><th>事実</th><th style="width:24%">出典</th></tr>
-  <tr><td>手元の Worker を別々の実行環境(workerd)で 2 つ動かし、同じ手元の D1 に同時に書くと、40 回中 10 回が <code>database is locked: SQLITE_BUSY</code> で失敗する</td><td>実測</td></tr>
-  <tr><td><code>wrangler dev -c a -c b</code>(1 つの実行環境に複数の Worker)では、同じ書き込み 40 回がすべて通る。Queue の送り手と受け手を別の Worker にしても届き、共有する KV も見える。外から届くのは最初の設定の Worker だけで、ほかはサービスバインディングから届く</td><td>実測・資料</td></tr>
-  <tr><td>最初の Worker を入口にし、ポートごとに TCP をそのまま入口のポートへ中継すると、入口の Worker から見える要求の URL と <code>Host</code> は、利用者がつないだポートのまま。入口がポートで振り分けてサービスバインディングへ渡すと、渡した先の Worker からも元の URL のまま見える</td><td>実測</td></tr>
-  <tr><td>R2 バインディングに <code>local_dev.experimental_s3_credentials</code> を書くと、手元の開発で <code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code> に S3 互換の口が開く(SigV4 のヘッダと署名付き URL の両方。違う鍵は 401、署名を変えると 403)。バインディングと同じ中身が見える</td><td>実測・CHANGELOG(4.115.0)</td></tr>
-  <tr><td>Wrangler のログイン(OAuth)の既定の権限には、R2 の中身を一覧する REST の口が無い(<code>r2 object</code> は get・put・delete だけ)。一覧には S3 互換の API とその API キーが要る</td><td>実装(<code>DefaultScopes</code>・<code>r2 object</code> の定義)</td></tr>
-  <tr><td>バインディングに <code>remote: true</code> を書くと、手元で動く Worker から Cloudflare の本物の資源を使える(remote bindings)。手元とリモートが混ざるので、wrangler-compose は使わない(REQ-020)</td><td>資料</td></tr>
-  <tr><td>Worker の R2 バインディングは <code>list</code>(1000 件ずつ、<code>cursor</code> で続き)・<code>get</code>(本体はストリーム)・<code>put</code>(ストリームを受ける)・<code>delete</code>(1000 件まで一度に)を持ち、KV バインディングは <code>list</code>(1000 件ずつ)・<code>getWithMetadata</code>・<code>put</code>(<code>expiration</code>・<code>metadata</code>)・<code>delete</code> を持つ。どれも Worker の中で、その環境の資源に対して動く</td><td>資料(R2・KV の Workers API)</td></tr>
-  <tr><td>手元のデータの置き場は <code>--persist-to</code> で決められ、その下に <code>v3/</code> が作られる。<code>d1 migrations apply</code>・<code>d1 export</code>・<code>d1 execute</code> は <code>--local --persist-to</code> で同じ置き場を読み書きする</td><td>実測</td></tr>
+  <tr><th>事実</th><th style="width:22%">出典</th></tr>
+  <tr><td>Workers・D1・R2・KV・Queues・Durable Objects・シークレットは、どれも Wrangler の手元の模擬(miniflare・workerd)で、網なしに動く</td><td>実装(<code>BINDING_LOCAL_SUPPORT</code>)・実測</td></tr>
+  <tr><td>手元の Worker を別々の実行環境で動かし、同じ手元の D1 に同時に書くと、40 回中 10 回が <code>SQLITE_BUSY</code> で失敗する。<code>wrangler dev -c a -c b</code>(1 つの実行環境に複数の Worker)では 40 回すべて通り、Queue の送り手と受け手を別の Worker にしても届く</td><td>実測</td></tr>
+  <tr><td><code>wrangler dev -c a -c b</code> で外から届くのは最初の Worker だけ。最初の Worker を入口にし、ポートごとに TCP をそのまま入口へ中継すると、入口の Worker から見える URL・<code>Host</code> は利用者がつないだポートのまま。入口がポートで振り分けて渡した先の Worker からも元の URL のまま見える</td><td>実測</td></tr>
+  <tr><td>R2 バインディングの <code>local_dev.experimental_s3_credentials</code> で、手元に S3 互換の口(<code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code>。SigV4 のヘッダと署名付き URL)が開き、バインディングと同じ中身が見える。違う鍵は 401、署名を変えると 403</td><td>実測・CHANGELOG(4.115.0)</td></tr>
+  <tr><td>Wrangler のログインの権限では R2 の中身を一覧できない(一覧は S3 互換の API と、人が発行する API キーが要る)。Worker の R2 バインディング(<code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code>)と KV バインディング(<code>list</code>・<code>getWithMetadata</code>・<code>put</code>・<code>delete</code>)なら、その環境の中で一覧・読み書きできる</td><td>実装・資料</td></tr>
+  <tr><td>手元のデータの置き場は <code>--persist-to</code> で決まり、<code>d1 migrations apply</code>・<code>d1 export</code>・<code>d1 execute</code> は <code>--local --persist-to</code> で同じ置き場を扱う</td><td>実測</td></tr>
   <tr><td>D1 の書き出しは表の作りと中身と <code>d1_migrations</code> を含み、表を消した D1 に流して移行を当てると、控えのあとの移行だけが当たる(手元・Cloudflare とも)</td><td>実測(0.1 系)</td></tr>
-  <tr><td>Wrangler の標準入力を空にすると、確かめの問いは既定の答えで進み、自動で作った資源の ID を設定ファイルへ書き戻さない</td><td>実装(0.1 系で確認)</td></tr>
-  <tr><td><code>deploy --secrets-file</code> はファイルに無いシークレットを消さない(前の版から残る)</td><td>実装(0.1 系で確認)</td></tr>
-  <tr><td>バインディングの種類ごとの手元の扱いは Wrangler の <code>BINDING_LOCAL_SUPPORT</code> が決める。使う型(D1・R2・KV・Queue・サービス・Durable Objects)はどれも手元で動く</td><td>実装</td></tr>
+  <tr><td>Wrangler の標準入力を空にすると、確かめの問いは既定の答えで進み、資源の ID を設定ファイルへ書き戻さない。<code>deploy --secrets-file</code> はファイルに無いシークレットを消さない</td><td>実装(0.1 系)</td></tr>
 </table>
 
 <h2>設計</h2>
 
-<h3 id="des-001"><span class="id">DES-001</span>作りの全体 <span class="refs">REQ-001・REQ-018</span></h3>
+<h3 id="des-001"><span class="id">DES-001</span>作りの全体 <span class="refs">REQ-001・REQ-007・REQ-019</span></h3>
 <ul>
-  <li>クレート <code>crates/wrangler-compose</code> を作り直す。流れは: compose ファイルを読む(DES-002) → 変数を展開する(DES-003) → サービスの順を決める → 環境ごとの Wrangler の設定を作る(DES-005) → <code>nv run wrangler …</code> で動かす</li>
-  <li>wrangler-compose が作るものは、すべてプロジェクトの <code>.wrangler/compose/&lt;環境&gt;/</code> の下に置く: 作った Wrangler の設定、資源の記録(DES-004)、手元のデータ(<code>local/state/</code>)、手元のログ。プロジェクトのファイルは書き換えない</li>
-  <li>Wrangler は compose の根の <code>package.json</code> の版を使う。Worker のフォルダに別の <code>package.json</code> があれば、組む前にそこで <code>nv sync</code> を動かす</li>
-  <li>前の版(0.1 系)のコードのうち、使えるもの(<code>.env</code> の読み・git の確かめ・打ち直しの確かめ・D1 の書き出しと戻し・控えの目録・表示の言語)は引き継ぐ(DES-015)</li>
+  <li>流れ: compose ファイルを読む(DES-002) → 値を展開する(DES-003) → サービスの順を決める → 環境ごとに中で使う設定を作る(DES-005) → Wrangler を <code>nv run wrangler …</code> で動かす</li>
+  <li>道具が作るものは、すべてプロジェクトの <code>.wrangler/compose/</code> の下に置く(組み立てたもの・中で使う設定・名前の記録・手元のデータ・手元のログ)。プロジェクトのファイルは書き換えない</li>
+  <li>Wrangler は compose ファイルのあるフォルダの <code>package.json</code> の版を使う。Worker のフォルダに別の <code>package.json</code> があれば、組み立ての前にそこで <code>nv sync</code> を動かす</li>
 </ul>
 
-<h3 id="des-002"><span class="id">DES-002</span>compose ファイルの読み方 <span class="refs">REQ-001・REQ-002・REQ-003</span></h3>
+<h3 id="des-002"><span class="id">DES-002</span>compose ファイルを読む <span class="refs">REQ-001・REQ-002・REQ-003</span></h3>
 <ul>
-  <li>YAML を読むクレートを 1 つ足す。候補は <code>serde-saphyr</code> と <code>serde_yaml_ng</code>。作る時点で手入れが続いている方を選ぶ。手入れの止まった <code>serde_yaml</code> は使わない</li>
-  <li>いったん値の木に読み、自前で確かめてから型のある形へ移す(<code>x-</code> を許しつつ知らないキーで止まる、を書くため)。止まるときは場所(<code>services.web.image</code>)と理由を示す</li>
-  <li>サービスの順: <code>bindings</code>・<code>consumes</code> の相手と <code>depends_on</code> を依存として、トポロジカルソートする。決まらないところはファイルに書いた順。輪は止まる</li>
-  <li>引数でサービスを指定したとき: <code>up</code> は依存をたどった閉じた集まり、<code>down</code> は指定したものだけ</li>
+  <li>YAML を読むクレートを 1 つ足す(<code>serde-saphyr</code> か <code>serde_yaml_ng</code>。作る時点で手入れが続いている方)。手入れの止まった <code>serde_yaml</code> は使わない</li>
+  <li>値の木に読み、自前で確かめてから型のある形へ移す(<code>x-</code> を許しつつ知らないキーで止まるため)。止まるときは場所と理由を示す</li>
+  <li>サービスの順: <code>bindings</code>・<code>consumes</code> の相手と <code>depends_on</code> を依存として並べる(決まらないところはファイルの順。輪は止まる)。<code>up</code> に名前を渡せば依存をたどった集まり、<code>down</code> は渡した名前だけ</li>
 </ul>
 
-<h3 id="des-003"><span class="id">DES-003</span>変数の展開 <span class="refs">REQ-005・REQ-004</span></h3>
+<h3 id="des-003"><span class="id">DES-003</span>値の展開 <span class="refs">REQ-004・REQ-005</span></h3>
 <ul>
-  <li>docker compose の展開の決まりを自前で書く: <code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR-既定}</code>・<code>${VAR:?説明}</code>・<code>${VAR?説明}</code>・<code>$$</code>。<code>$VAR</code>(波かっこ無し)も docker と同じに受ける</li>
-  <li>展開するのは YAML の文字列の値だけ(キーは展開しない)。展開は型の確かめの前に行う(展開した結果で確かめる)</li>
-  <li>値の探し方: 環境変数 → <code>.env.&lt;環境&gt;</code>。<code>.env</code> の読み方は 0.1 系のものを引き継ぐ</li>
-  <li>無い変数はすべて集めてから、まとめて示して止まる</li>
-  <li>シークレットの値は、展開した値を出す場面(<code>--dry-run</code> など)で伏せる</li>
+  <li>docker compose の展開の決まり(<code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR-既定}</code>・<code>${VAR:?説明}</code>・<code>${VAR?説明}</code>・<code>$VAR</code>・<code>$$</code>)を自前で書く。展開するのは文字列の値だけで、型の確かめの前に行う</li>
+  <li>値は環境変数 → <code>.env.&lt;環境&gt;</code>。無い変数は集めてからまとめて示す</li>
+  <li>シークレットの値は、表に出す場面(<code>--dry-run</code> など)で伏せる</li>
 </ul>
 
-<h3 id="des-004"><span class="id">DES-004</span>資源の記録と見つけ直し <span class="refs">REQ-006</span></h3>
+<h3 id="des-004"><span class="id">DES-004</span>実際の名前と見つけ直し <span class="refs">REQ-006</span></h3>
 <ul>
-  <li>リモートの資源の実際の名前は、サービスの <code>name</code>、無ければ <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>。Cloudflare の名前の決まり(長さ・使える字)に合わない名前になるときは止まる</li>
-  <li>記録(<code>.wrangler/compose/&lt;環境&gt;/resources.json</code>)は、名前と ID の対応の写しにすぎない。<code>up</code> のたびに、名前で Cloudflare を引いて確かめ直す(<code>d1 list</code>・<code>kv namespace list</code>・<code>r2 bucket list</code>・<code>queues list</code>)。だから記録を失っても、別の PC からでも、同じ資源につながる</li>
-  <li>名前の資源が無ければ作る(<code>d1 create</code>・<code>r2 bucket create</code>・<code>kv namespace create</code>・<code>queues create</code>)。あれば作らずに使う</li>
-  <li>環境があるか(初めての <code>up</code> か)は、その環境のどれかの Worker か資源が Cloudflare にあるかで見る(REQ-016 の確かめに使う)</li>
+  <li>実際の名前は、サービスの <code>name</code>、無ければ <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>。Cloudflare の名前の決まりに合わなければ止まる</li>
+  <li>ID の記録(<code>.wrangler/compose/&lt;環境&gt;/resources.json</code>)は写しにすぎない。<code>up</code> のたびに名前で Cloudflare を引き直す(<code>d1 list</code>・<code>kv namespace list</code>・<code>r2 bucket list</code>・<code>queues list</code>)ので、記録を失っても別の PC からでも同じものにつながる。無ければ作り、あれば使う</li>
+  <li>初めての環境かは、その環境の名前の Worker か資源が Cloudflare にあるかで見る(REQ-015)</li>
 </ul>
 
-<h3 id="des-005"><span class="id">DES-005</span>Wrangler の設定を作る <span class="refs">REQ-007・REQ-002・REQ-003</span></h3>
+<h3 id="des-005"><span class="id">DES-005</span>中で使う設定を作る <span class="refs">REQ-002・REQ-003・REQ-007</span></h3>
 <ul>
-  <li>Worker のサービスごと・環境ごとに、Wrangler の設定(JSON)を <code>.wrangler/compose/&lt;環境&gt;/&lt;サービス&gt;/wrangler.json</code> に書く。環境の階層(<code>env</code>)は使わない(1 つの環境に 1 つの設定)</li>
-  <li>中身: <code>name</code>(DES-004)・<code>main</code> と組み立てのキー(DES-006。Worker のフォルダの設定ファイルから写し、パスは絶対パスに直す)・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>vars</code>・<code>routes</code>・<code>triggers.crons</code>・<code>assets</code>・バインディング(相手の型と、DES-004 の名前と ID から)・<code>queues.consumers</code>・<code>durable_objects</code> と <code>migrations</code>(DES-008)</li>
-  <li>手元では、資源の ID の代わりにサービスの名前を使う(手元の置き場はその名前で分かれる)。R2 のバインディングに手元の S3 の鍵(<code>local_dev.experimental_s3_credentials</code>)を入れる。鍵は決まった値</li>
-  <li>D1 の移行のフォルダ(<code>migrations_dir</code>)は、compose ファイルの <code>migrations</code> を絶対パスにして書く</li>
-  <li>Durable Object を別の Worker から使うバインディングには <code>script_name</code>(相手の Worker の実際の名前)を入れる</li>
+  <li>Worker のサービスごと・環境ごとに Wrangler の設定(JSON)を <code>.wrangler/compose/&lt;環境&gt;/&lt;サービス&gt;/wrangler.json</code> に作る。Wrangler の環境の階層(<code>env</code>)は使わない</li>
+  <li>中身: 実際の名前、<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>vars</code>・<code>routes</code>・<code>triggers.crons</code>・<code>assets</code>、相手の型と実際の名前・ID から作るバインディング、<code>queues.consumers</code>、<code>durable_objects</code> と移行(DES-010)。別の Worker の Durable Object には <code>script_name</code> を入れる</li>
+  <li>手元では、ID の代わりにサービスの名前を使い、R2 には決まった手元の鍵(<code>local_dev.experimental_s3_credentials</code>)を入れる</li>
+  <li>リモート・手元とも、<code>remote</code> の指定は入れない(REQ-006)</li>
 </ul>
 
-<h3 id="des-006"><span class="id">DES-006</span>組み立てのキーの一覧 <span class="refs">REQ-007</span></h3>
+<h3 id="des-006"><span class="id">DES-006</span>Worker のフォルダの確かめ <span class="refs">REQ-007</span></h3>
 <ul>
-  <li>Worker のフォルダの設定ファイルで受けるキー: <code>$schema</code>・<code>main</code>・<code>build</code>(<code>command</code>・<code>cwd</code>・<code>watch_dir</code>)・<code>rules</code>・<code>find_additional_modules</code>・<code>base_dir</code>・<code>preserve_file_names</code>・<code>no_bundle</code>・<code>minify</code>・<code>tsconfig</code>・<code>alias</code>・<code>upload_source_maps</code></li>
-  <li>この一覧に無いキーがあれば止まる。止まるときに、そのキーが compose ファイルのどこに当たるか(<code>vars</code> → <code>services.&lt;名前&gt;.vars</code> など)を示す表を持つ</li>
-  <li><code>define</code> は組み立てのときの置き換えだが、値が振る舞いを変えるので受けない(要るなら <code>vars</code> を使う)</li>
-  <li>設定ファイルは Wrangler の読み方(<code>experimental_readRawConfig</code>)で読む(JSONC・TOML を自前で読まない)</li>
+  <li>Worker のフォルダに Wrangler の設定ファイルがあれば、Wrangler の読み方で読み、組み立てのためのキーだけを受ける: <code>main</code>・<code>build</code>・<code>rules</code>・<code>find_additional_modules</code>・<code>base_dir</code>・<code>preserve_file_names</code>・<code>no_bundle</code>・<code>minify</code>・<code>tsconfig</code>・<code>alias</code>・<code>upload_source_maps</code>・<code>$schema</code></li>
+  <li>ほかのキーがあれば止まり、compose ファイルのどこに書くか(<code>vars</code> → <code>services.&lt;名前&gt;.vars</code> など)を示す。<code>define</code> は値が振る舞いを変えるので受けない</li>
 </ul>
 
-<h3 id="des-017"><span class="id">DES-017</span>build <span class="refs">REQ-022</span></h3>
+<h3 id="des-007"><span class="id">DES-007</span>build <span class="refs">REQ-008・REQ-015</span></h3>
 <ul>
-  <li>Worker のサービスごとに、環境によらない組み立て用の設定(バインディングを持たない)で <code>wrangler deploy --dry-run --outdir .wrangler/compose/build/&lt;サービス&gt;/</code> を動かし、組み立てたもの(バンドル)を置く。docker のイメージに当たる</li>
-  <li>組み立てたものには、コードと Wrangler の設定ファイルの組み立てのキーと compose ファイルの要約(SHA-256)を添える。<code>up</code> は、いまのコードの要約と比べ、違えば組み立てたものが古いと示す(<code>--build</code> で組み直す。docker と同じく勝手には組み直さない)</li>
-  <li><code>up</code> は環境ごとの設定(名前・バインディング・変数・ルート・Cron)を DES-005 で作り、組み立てたものを組み直さずに上げる(手元の <code>wrangler dev</code> も、リモートの <code>deploy</code> も同じバンドルを使う)</li>
+  <li>Worker ごとに、バインディングを持たない組み立て用の設定で <code>wrangler deploy --dry-run --outdir .wrangler/compose/build/&lt;サービス&gt;/</code> を動かし、組み立てたもの(バンドル)を置く。docker のイメージに当たる</li>
+  <li>組み立てたものに、コードと組み立てのキーの要約(SHA-256)を添える。<code>up</code> はいまのコードと比べ、違えば古いと示す(<code>--build</code> で組み直す。docker と同じく勝手には組み直さない。ただし組み立てたものが無ければ組み立てる)</li>
+  <li>手元の <code>up</code> もリモートの <code>up</code> も、同じ組み立てたものを組み直さずに使う(手元は DES-008、リモートは <code>deploy --no-bundle</code>)</li>
 </ul>
 
-<h3 id="des-007"><span class="id">DES-007</span>リモートの up <span class="refs">REQ-008・REQ-004・REQ-016</span></h3>
+<h3 id="des-008"><span class="id">DES-008</span>手元の up <span class="refs">REQ-009・REQ-005・REQ-017</span></h3>
 <ul>
-  <li>段: 確かめ(変数・<code>.env</code> と git・初めての環境なら確かめ) → 資源を合わせる(DES-004) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>) → 組み立てたもの(DES-017)を使う(無ければ組み立てる。<code>--build</code> なら組み立て直す)→ 前回と同じなら飛ばす → 組み立てたものをそのままデプロイ(組み直さない。<code>deploy --no-bundle --secrets-file</code>) → compose から消えたシークレットを消す(<code>secret delete</code>)</li>
-  <li>「前回と同じ」は、組んだもの・作った設定・シークレットの値の要約(SHA-256)を記録と比べて決める。Cloudflare 側の版も見て、記録と違えば上げ直す</li>
-  <li>移行が失敗したら、その D1 をつなぐ Worker と、それより後のサービスは行わない</li>
-  <li>compose から消えた Worker は、記録と、名前の決め方(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-</code> で始まる Worker)から見つける。<code>--remove-orphans</code> のときだけ <code>delete</code> する</li>
-</ul>
-
-<h3 id="des-008"><span class="id">DES-008</span>Durable Objects の移行 <span class="refs">REQ-002・REQ-009</span></h3>
-<ul>
-  <li>Cloudflare は Durable Object のクラスの足し・消しを、Worker の設定の <code>migrations</code>(タグつき)で受ける。compose ファイルにはクラスの一覧(<code>durable_objects</code>)しか無いので、移行のタグは wrangler-compose が作る</li>
-  <li>前回デプロイしたクラスの一覧を、デプロイした Worker の設定から読み、足されたクラスは <code>new_sqlite_classes</code>、消えたクラスは <code>deleted_classes</code> の移行として、通し番号のタグ(<code>wc-1</code>・<code>wc-2</code> …)で足す</li>
-  <li>クラスを消すとその中身も消えるので、消えるクラスがあれば <code>up</code> は消すものとして示し、環境名の打ち直しで確かめる(REQ-016)</li>
-  <li>クラスの名前の変更(<code>renamed_classes</code>)は、消して足すのと区別できないので、今は受けない(<a href="#unverified">確かめていないこと</a>)</li>
-</ul>
-
-<h3 id="des-009"><span class="id">DES-009</span>手元の up <span class="refs">REQ-014・REQ-004</span></h3>
-<ul>
-  <li>すべての Worker を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;サービス 1&gt; -c &lt;サービス 2&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同じ資源への同時の書き込みで壊れない(確かめた事実)</li>
-  <li>入口は道具のサービス(入口のサービス。REQ-021) で、外から届く唯一の Worker。<code>ports</code> を持つ各サービスへのサービスバインディングを持ち、要求の URL のポートで振り分ける(確かめた事実)。入口のポートは空いている番号を使い、利用者には見せない</li>
-  <li>wrangler-compose は、各サービスの <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(HTTP を読まないので WebSocket もそのまま通る)</li>
-  <li>手元の S3 の口(<code>/cdn-cgi/local/r2/s3/</code>)はどのポートからも届く(入口より前で miniflare が受ける)。<code>up</code> は口の URL・バケット名・決まった鍵を示す</li>
-  <li>手元のシークレットと <code>vars</code> は、作った設定の横に <code>.dev.vars</code> を書いて渡す(Unix は 0600。<code>.wrangler/</code> の下で git の外)</li>
+  <li>すべての Worker(利用者のものと道具のサービス)を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;Worker&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同時の書き込みで壊れない</li>
+  <li>入口は道具のサービス(DES-011)で、<code>ports</code> を持つ Worker へのつながりを持ち、要求の URL のポートで振り分ける。道具は <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(WebSocket もそのまま通る)</li>
+  <li>手元の S3 互換の口(<code>/cdn-cgi/local/r2/s3/</code>)は、どのポートからも届く。<code>up</code> は口の URL・バケット名・鍵を示す</li>
+  <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。git の外)</li>
   <li>動かす前に、移行を <code>d1 migrations apply --local --persist-to …</code> で当てる</li>
-  <li>動いていることの記録と錠は、0.1 系の設計(錠のファイルと PID・URL の記録)を引き継ぐ。ログは画面に出すのと同時に <code>.wrangler/compose/local/logs/</code> に書き、<code>logs</code> が読む</li>
-  <li>compose ファイルか <code>.env.local</code> が変われば、作った設定を作り直して <code>wrangler dev</code> を動かし直す。コードの変化は <code>wrangler dev</code> に任せる</li>
+  <li>動いていることの記録と錠・ほかの端末からの止め方は 0.1 系のものを引き継ぐ。ログは画面と <code>.wrangler/compose/local/logs/</code> の両方に出す</li>
+  <li>compose ファイルか <code>.env.local</code> が変われば、設定を作り直して動かし直す。コードが変われば組み立て直して動かし直す</li>
 </ul>
 
-<h3 id="des-010"><span class="id">DES-010</span>データのサービス <span class="refs">REQ-021・REQ-012・REQ-009・REQ-010・REQ-015・REQ-020</span></h3>
+<h3 id="des-009"><span class="id">DES-009</span>リモートの up <span class="refs">REQ-010・REQ-005・REQ-015</span></h3>
 <ul>
-  <li>道具のサービスの 1 つ。名前は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>(手元では <code>wc-data</code>)。その環境のすべての R2・KV への、ふつうのバインディングを持つ Worker</li>
-  <li><code>up</code> が利用者のサービスと一緒に建てる: リモートでは Cloudflare にデプロイし、手元では同じ <code>wrangler dev</code> の中で動かす(1 つの実行環境。DES-009)。<code>down</code> が一緒に下ろす。R2・KV のサービスが足し引きされれば、<code>up</code> がバインディングを合わせて上げ直す</li>
-  <li>HTTP で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける。wrangler-compose は控えのファイルとの受け渡しだけを行う</li>
-  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚えておく。覚えていない PC(別の PC・記録を消した)では、使う前に合言葉を作り直してシークレットを入れ直す。リモートではルートを持たず <code>workers.dev</code> の URL だけで受け、手元では <code>127.0.0.1</code> だけで受ける</li>
-  <li>D1 は Wrangler の管理の操作(<code>d1 export</code>・<code>d1 execute --file</code>)で扱う(手元は <code>--local --persist-to</code>、リモートは <code>--remote</code>)。要るなら、D1 もデータのサービスに足す</li>
-  <li>却下: 操作のたびに使い捨てでデプロイする(要るサービスは初めから持つ。REQ-021)</li>
-  <li>却下: 手元で動かし <code>remote: true</code> でリモートの資源につなぐ(手元とリモートが混ざる。REQ-020)</li>
-  <li>却下: S3 互換の API(人が API キーを発行する段取りが要る。REQ-015)</li>
+  <li>段: 確かめ(値・<code>.env</code> と git・初めての環境なら確かめ) → 資源を合わせる(DES-004) → サービスの順に: 移行(<code>d1 migrations apply --remote</code>) → 組み立てたもの(DES-007)を、作った設定と <code>--secrets-file</code> で上げる → compose から消えたシークレットを消す(<code>secret delete</code>)</li>
+  <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない</li>
+  <li>移行が失敗したら、その D1 を使う Worker と、それより後のサービスは行わない</li>
+  <li>compose から消えた Worker は、記録と名前(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-</code> で始まるもの)から見つけて示し、<code>--remove-orphans</code> のときだけ消す</li>
 </ul>
 
-<h3 id="des-011"><span class="id">DES-011</span>down <span class="refs">REQ-009</span></h3>
+<h3 id="des-010"><span class="id">DES-010</span>Durable Objects のクラスの足し引き <span class="refs">REQ-002・REQ-015</span></h3>
 <ul>
-  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、続けて資源を消す: D1 は <code>d1 delete</code>、R2 はデータのサービス で空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば、何も消さずに止まる</li>
-  <li>消す前に数える(D1 の表の数・R2 のオブジェクトの数・KV のキーの数)のもデータのサービス と Wrangler で行う。打ち直しの確かめは 0.1 系のものを引き継ぐ</li>
-  <li>手元: <code>down</code> は動いている <code>up</code> を止める(0.1 系の止め方を引き継ぐ)。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す</li>
+  <li>前回展開したクラスと compose ファイルの <code>durable_objects</code> を比べ、足されたクラスは <code>new_sqlite_classes</code>、消えたクラスは <code>deleted_classes</code> の移行として、通し番号のタグ(<code>wc-1</code>・<code>wc-2</code> …)で道具が足す</li>
+  <li>消すクラスがあれば中身も消えるので、消すものとして示し、環境名の打ち直しで確かめる</li>
 </ul>
 
-<h3 id="des-012"><span class="id">DES-012</span>ps・logs <span class="refs">REQ-010・REQ-011</span></h3>
+<h3 id="des-011"><span class="id">DES-011</span>道具のサービス <span class="refs">REQ-017・REQ-013・REQ-016・REQ-006</span></h3>
 <ul>
-  <li><code>ps</code>(リモート): Worker は <code>deployments list</code>(無ければ無い)、資源は DES-004 の一覧、未適用の移行は移行の履歴の表を <code>SELECT</code> で読む(<code>d1 migrations list</code> は履歴の表を作ってしまうので使わない。0.1 系の DES-016)</li>
-  <li><code>ps</code>(手元): 動いている記録と錠、手元の URL</li>
-  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、1 行ずつ読んで、<code>サービス名 | </code> を頭に付けて出す(名前の桁をそろえる)</li>
-  <li><code>logs</code>(手元): <code>.wrangler/compose/local/logs/</code> を読む(<code>-f</code> なら追う)。<code>wrangler dev</code> のログに Worker の名前が付いていなければ、入口と各 Worker のログを見分ける手立てが要る(<a href="#unverified">確かめていないこと</a>)</li>
+  <li><strong>データのサービス</strong>(すべての環境): その環境のすべての R2・KV への、ふつうのバインディングを持つ Worker。HTTP で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける。<code>up</code> が利用者のサービスと一緒に建て(リモートは Cloudflare に、手元は同じ <code>wrangler dev</code> の中に)、<code>down</code> が一緒に下ろす。<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う。これで R2 の API キーが要らない(REQ-016)</li>
+  <li><strong>入口のサービス</strong>(手元だけ): DES-008</li>
+  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚え、覚えていない PC では入れ直してから使う。リモートはルートを持たず <code>workers.dev</code> の URL だけ、手元は <code>127.0.0.1</code> だけで受ける</li>
+  <li>名前は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>(手元は <code>wc-data</code>・<code>wc-gateway</code>)</li>
 </ul>
 
-<h3 id="des-013"><span class="id">DES-013</span>backup・restore <span class="refs">REQ-012</span></h3>
+<h3 id="des-012"><span class="id">DES-012</span>down <span class="refs">REQ-011</span></h3>
 <ul>
-  <li>控えの形は 0.1 系の目録(書きかけの見分け・SHA-256 の照合)を引き継ぎ、<code>format: 2</code> にする: <code>project</code>・<code>environment</code>・サービスごとに <code>d1</code>(SQL)・<code>r2</code>(オブジェクトと見出し)・<code>kv</code>(キー・値・メタデータ・期限)</li>
-  <li>戻すときは、目録のサービスの名前と型で、いまの compose ファイルのサービスに照らす。型が違う・無いサービスは止まる</li>
-  <li>KV の期限は、戻す時刻で切れているものは戻さない(数を示す)</li>
+  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる</li>
+  <li>消す前の数え(表・オブジェクト・キーの数)もデータのサービスと Wrangler で行う。打ち直しは 0.1 系のものを引き継ぐ</li>
+  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す</li>
 </ul>
 
-<h3 id="des-014"><span class="id">DES-014</span>dry-run と確かめ <span class="refs">REQ-013・REQ-016</span></h3>
+<h3 id="des-013"><span class="id">DES-013</span>ps・logs <span class="refs">REQ-012</span></h3>
 <ul>
-  <li>どの操作も、確かめ → 何をするかの一覧を作る → 変える、の 3 段に分ける。<code>--dry-run</code> は 2 段目で一覧を示して終わる(止まる条件を本番と別に書かない。0.1 系の DES-016 と同じ考え方)</li>
-  <li>一覧の項目: 資源の作成・Worker のデプロイ(飛ばすものも)・移行・シークレットの足し・消し(名前だけ)・Durable Object のクラスの足し・消し・消す資源と中身の数</li>
+  <li><code>ps</code>(リモート): Worker は <code>deployments list</code>、資源は DES-004 の一覧、未適用の移行は履歴の表を <code>SELECT</code> で読む。手元: 動いている記録と URL</li>
+  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す。手元: <code>.wrangler/compose/local/logs/</code> を読む</li>
+</ul>
+
+<h3 id="des-014"><span class="id">DES-014</span>backup・restore <span class="refs">REQ-013</span></h3>
+<ul>
+  <li>D1 は Wrangler の管理の操作(<code>d1 export</code>・<code>d1 execute --file</code>)、R2・KV はデータのサービスで、その環境の中から書き出し・読み込む。道具は控えのファイルとの受け渡しだけを行う</li>
+  <li>控えの目録は 0.1 系のもの(書きかけの見分け・SHA-256 の照合)を引き継いで <code>format: 2</code> にする: <code>project</code>・<code>environment</code>・サービスごとの <code>d1</code>・<code>r2</code>・<code>kv</code>。戻すときはサービスの名前と型で照らす</li>
+</ul>
+
+<h3 id="des-015"><span class="id">DES-015</span>dry-run と確かめ <span class="refs">REQ-014・REQ-015</span></h3>
+<ul>
+  <li>どの操作も「確かめ → することの一覧を作る → 変える」の 3 段にし、<code>--dry-run</code> は 2 段目で一覧を示して終わる(止まる条件を本番と別に書かない)</li>
   <li>消すものを含む一覧は、変える前に環境名の打ち直しで確かめる(端末でなければ止まる)</li>
 </ul>
 
-<h3 id="des-015"><span class="id">DES-015</span>前の版から引き継ぐもの</h3>
+<h3 id="des-016"><span class="id">DES-016</span>0.1 系から引き継ぐもの</h3>
 <ul>
-  <li>引き継ぐ: <code>dotenv.rs</code>・<code>git.rs</code>・<code>confirm.rs</code>・<code>interrupt.rs</code>・<code>i18n.rs</code>・<code>d1.rs</code> の書き出しと戻しと履歴の表の読み・<code>backup.rs</code> の目録と書きかけの扱い</li>
-  <li>作り直す: <code>project.rs</code>(Wrangler の設定を読む → compose ファイルを読んで設定を作る)・<code>up.rs</code>・<code>down.rs</code>・<code>restore.rs</code>・<code>main.rs</code>(コマンド)</li>
-  <li>捨てる: <code>r2.rs</code>(S3 互換の API。DES-010 でデータのサービス に置き換える)</li>
-  <li>0.1 系の使い方(Wrangler の設定を正とする)との互換は持たない。compose ファイルが無いプロジェクトでは、書き始め方を示して止まる(REQ-001)。版は 0.2.0 にする</li>
+  <li>引き継ぐ: <code>.env</code> の読み・git の確かめ・打ち直しの確かめ・止め方・表示の言語・D1 の書き出しと戻しと履歴の表の読み・控えの目録と書きかけの扱い</li>
+  <li>作り直す: 設定の読み方(compose ファイルから作る)・<code>up</code>・<code>down</code>・<code>restore</code>・コマンド</li>
+  <li>捨てる: S3 互換の API で R2 を扱う部分(データのサービスに置き換える)</li>
+  <li>0.1 系の使い方との互換は持たない。版は 0.2.0</li>
 </ul>
 
-<h3 id="des-016"><span class="id">DES-016</span>試験</h3>
+<h3 id="des-017"><span class="id">DES-017</span>試験</h3>
 <ul>
-  <li>単体: compose ファイルの確かめ(知らないキー・型・輪)、変数の展開の決まり、サービスの順、作る Wrangler の設定(compose ファイルから期待する JSON)、組み立てのキーの選り分け、Durable Objects の移行のタグ、控えの目録</li>
-  <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトを <code>tests/fixtures/</code> に置き、<code>--env local up</code> を裏で動かして、AC-003・AC-004・AC-014(同時の書き込みと S3 の口を含む)・AC-012 の手元の分を確かめる</li>
-  <li>リモート: 受け入れ条件のとおり、試験用のアカウントで、利用者の許可を得てから行う。まず <code>--dry-run</code> で全操作を通す</li>
+  <li>単体: compose ファイルの確かめ・値の展開・サービスの順・作る設定・Worker のフォルダの確かめ・Durable Objects のタグ・控えの目録</li>
+  <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
+  <li>リモート: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
 </ul>
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
-  <li><strong>リモートのデータのサービス</strong>: アカウントに <code>workers.dev</code> の名前(サブドメイン)がまだ無いときに、人の段取りなしにデプロイして呼べるか(REQ-015)。大きなオブジェクト(Worker の要求の本体の上限を超えるもの)を、分けて受け渡せるか(試験用のアカウントが要る)</li>
-  <li><strong>手元の入口の Worker</strong>: WebSocket・大きな本体・Server-Sent Events が、中継と入口を通っても本物と同じに届くこと</li>
-  <li><strong>手元のログの見分け</strong>: <code>wrangler dev -c … -c …</code> のログから、どの Worker の行かを見分けられること</li>
-  <li><strong>作った設定でのコードの見張り</strong>: 設定ファイルを <code>.wrangler/</code> の下に置いても、<code>wrangler dev</code> が Worker のフォルダのコードの変化を見て作り直すこと</li>
-  <li><strong>Durable Objects</strong>: クラスの名前の変更の扱い。前回デプロイしたクラスの一覧を Cloudflare から読めること</li>
-  <li><strong>組み立てたものをそのまま使うこと</strong>: <code>deploy --dry-run --outdir</code> で作ったバンドルを、環境ごとの設定と <code>--no-bundle</code> で上げられること。<code>wrangler dev</code> が、組み直さずに同じバンドルで動き、コードの変化のときだけ組み直せること(手元の開発の見張りとの兼ね合い)</li>
-  <li><strong>Windows</strong>: 中継・錠・止め方が同じに動くこと</li>
+  <li>組み立てたものを組み直さずに使えること(<code>deploy --no-bundle</code> でのリモートの展開、<code>wrangler dev</code> での手元の実行と、コードが変わったときの組み直し)</li>
+  <li>入口と中継を通しても、WebSocket・大きな本体・Server-Sent Events が届くこと</li>
+  <li>手元のログから、どの Worker の行かを見分けられること</li>
+  <li>リモートのデータのサービス: <code>workers.dev</code> の名前がまだ無いアカウントで、人の段取りなしに建てて呼べること。大きなオブジェクトを分けて受け渡せること(試験用のアカウントが要る)</li>
+  <li>前回展開した Durable Object のクラスの一覧を Cloudflare から読めること</li>
+  <li>Windows で、中継・錠・止め方が同じに動くこと</li>
 </ul>
 
 <footer>docs/wrangler-compose/design.html</footer>
