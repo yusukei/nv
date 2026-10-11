@@ -17,6 +17,7 @@
     <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
     <li><a class="current" href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
     <li><a href="design.html">wrangler-compose 設計</a></li>
+    <li><a href="local-support.html">手元で使えないもの</a></li>
   </ul>
   <ul>
     <li><a href="#ac-001">AC-001 環境の指定</a></li>
@@ -36,6 +37,10 @@
     <li><a href="#ac-015">AC-015 手元の S3 の口</a></li>
     <li><a href="#ac-016">AC-016 local の down</a></li>
     <li><a href="#ac-017">AC-017 local の backup・restore</a></li>
+    <li><a href="#ac-018">AC-018 compose ファイル</a></li>
+    <li><a href="#ac-019">AC-019 複数の Worker と Cloudflare</a></li>
+    <li><a href="#ac-020">AC-020 複数の Worker と local</a></li>
+    <li><a href="#ac-021">AC-021 手元で使えないものの知らせ</a></li>
   </ul>
 </nav>
 <main>
@@ -205,6 +210,56 @@
   <li>手元に中身があるときに <code>--drop</code> を付けずに <code>restore</code> すると、何も変わらずに止まる。<code>--drop</code> で <code>local</code> を打ち直すと入れ替わる。入力を流し込むと何も変わらない</li>
   <li>手元の控えを試験用の Cloudflare の環境へ <code>restore --drop</code> すると、その環境の D1 と R2 が手元の控えと一致する</li>
   <li><code>--dry-run</code> を付けた <code>--env local</code> の <code>backup</code>・<code>restore</code>・<code>down --purge</code> のあと、手元のデータと書き出し先が変わっていない</li>
+</ul>
+
+<h2 id="multi">複数の Worker(compose ファイル)</h2>
+<p>AC-018〜AC-021 は、<code>web</code>(<code>api</code> へのサービスバインディングと、<code>api</code> の Durable Object への <code>script_name</code> を持つ)と <code>api</code>(D1 <code>DB</code> と R2 <code>FILES</code> を持つ)の 2 つのサービスを持つ試験用のプロジェクトで行う。<code>web</code> も同じバケットを <code>FILES</code> で使う。Cloudflare に触れるもの(AC-019)は、試験用のアカウントで、利用者の許可を得てから行う。</p>
+
+<h3 id="ac-018"><span class="id">AC-018</span>compose ファイル <span class="refs">REQ-018</span></h3>
+<ul>
+  <li>要求仕様の例と同じ <code>wrangler-compose.yaml</code> を、compose の根でも <code>web/</code> の中でも、<code>--env local up</code> で読める(上へたどる)。<code>-f</code> は受けず、渡すと止まる</li>
+  <li>どの操作も <code>wrangler-compose --env &lt;環境名&gt; [--dry-run] &lt;操作&gt; [サービス…]</code> の形で打てる(<code>wrangler-compose --env staging up</code>・<code>wrangler-compose --env local up web</code> など)。環境の指定が無ければ、compose ファイルがあっても AC-001 と同じに止まる</li>
+  <li><code>build</code> の文字列の形と、<code>context</code>・<code>config</code> の形の両方で、同じサービスになる。<code>config</code> を省くと <code>wrangler.jsonc</code>・<code>wrangler.json</code>・<code>wrangler.toml</code> の順に探す</li>
+  <li><code>name</code> を省くと、compose の根のフォルダ名がプロジェクトの名前として出る</li>
+  <li><code>depends_on</code> の短い書き方(一覧)と、長い書き方(<code>condition: service_started</code>)の両方を受ける。<code>condition: service_healthy</code> は止まる</li>
+  <li><code>x-</code> で始まるキー(一番上・サービスの中)を書いても動く</li>
+  <li><code>image</code>・<code>environment</code>・<code>volumes</code> などのキーを書くと、何もせずに止まり、そのキーと理由が出る</li>
+  <li><code>depends_on</code> の輪、無いサービスへの <code>depends_on</code>、同じ設定ファイルを指す 2 つのサービス、<code>wrangler-compose.yaml</code> と <code>.yml</code> の両方があること、<code>"8787:8788"</code> のような違う 2 つのポートは、どれも何もせずに止まり、理由が出る</li>
+  <li>compose ファイルの無いプロジェクトでは、これまでの AC-001〜AC-017 がそのまま通る</li>
+</ul>
+
+<h3 id="ac-019"><span class="id">AC-019</span>複数の Worker と Cloudflare <span class="refs">REQ-019</span></h3>
+<ul>
+  <li>何も無い環境に <code>--env testing up</code> を打つと、<code>api</code> が先に、<code>web</code> が後にデプロイされ、<code>web</code> の URL が <code>api</code> を通した応答を返す</li>
+  <li><code>--env testing up web</code> は <code>api</code> も建てる。<code>--env testing down web</code> は <code>web</code> だけを下ろし、<code>api</code> は応え続ける</li>
+  <li><code>api</code> の設定にだけ <code>env.testing</code> が無いと、何も起きずに止まり、<code>api</code> の名前が出る</li>
+  <li><code>web</code> に <code>api</code> へのサービスバインディングがあるのに <code>depends_on</code> から <code>api</code> を外すと、知らせが出る</li>
+  <li>2 つのサービスが共有する D1 に、移行が 1 度だけ当たる(<code>d1_migrations</code> の行が 1 組)。2 つのサービスで移行のフォルダを違えると、何も起きずに止まる</li>
+  <li><code>down --purge web</code> は、<code>api</code> も使うバケットを消さずに止まり、そのことが出る</li>
+  <li><code>backup</code> の控えに、共有するバケットのオブジェクトが 1 組だけ入り、目録にそれを使う 2 つのサービスが書かれている。その控えを別の環境へ <code>restore --drop</code> すると、2 つのサービスから同じ中身が見える</li>
+  <li><code>web</code> のフォルダの <code>.env.testing</code> のシークレットは <code>web</code> の Worker にだけ入る</li>
+</ul>
+
+<h3 id="ac-020"><span class="id">AC-020</span>複数の Worker と local <span class="refs">REQ-020</span></h3>
+<ul>
+  <li><code>--env local up</code> で、<code>web</code> は <code>ports</code> の 8787、<code>api</code> は 8788 で応える。<code>web</code> からのサービスバインディングの呼び出しと、<code>api</code> の Durable Object の呼び出し(<code>script_name</code>)が通る</li>
+  <li><code>api</code> が <code>FILES</code> に置いたオブジェクトが、<code>web</code> の <code>FILES</code> と、どちらのポートの手元の S3 の口からも見える</li>
+  <li><code>api</code> の <code>console.log</code> の行の頭に <code>api</code> が付いて出る</li>
+  <li><code>ports</code> を書かないサービスは、ほかと重ならない番号で応え、その URL が出る。2 つのサービスが同じポートを書くと、何も起きずに止まる</li>
+  <li>1 回の Ctrl+C で、すべてのサービスが止まり、手元のプロセスが残らない。ほかの端末からの <code>--env local down</code> でも同じ</li>
+  <li><code>--env local up web</code> で <code>api</code> も動く</li>
+  <li>Queues の送り手と受け手を別のサービスにしたとき、送ったメッセージを受け手が受け取る</li>
+</ul>
+
+<h3 id="ac-021"><span class="id">AC-021</span>手元で使えないものの知らせ <span class="refs">REQ-021</span></h3>
+<ul>
+  <li>Vectorize と Workers AI のバインディングと、<code>routes</code>・<code>triggers.crons</code> を足したサービスで <code>--env local up</code> を打つと、動かす前に、それぞれが手元でどうなるか(Vectorize は動かない、AI は料金がかかる、ルートは効かない、Cron の試し方)がサービスの名前と一緒に出て、そのあと動き出す</li>
+  <li><code>--env local --dry-run up</code> でも同じものが出る</li>
+  <li>D1 に <code>remote: true</code> を書くと、本物の D1 につながることと、その ID が出る</li>
+  <li>Durable Objects に <code>remote: true</code> を書くと、Wrangler を動かす前に止まり、理由が出る</li>
+  <li>Hyperdrive の手元の接続文字列が無いと、要る環境変数の名前が出る</li>
+  <li>表に無い種類のバインディングを持つ設定では、「分からない」と出る</li>
+  <li>手元で使えないものが無い設定では、何も出ない</li>
 </ul>
 
 <footer>docs/wrangler-compose/acceptance.html</footer>

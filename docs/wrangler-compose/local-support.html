@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手元で使えないもの</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="../nv/requirements.html">nv 要求仕様</a></li>
+    <li><a href="../nv/acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="../nv/design.html">nv 設計</a></li>
+    <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
+    <li><a href="design.html">wrangler-compose 設計</a></li>
+    <li><a class="current" href="local-support.html">手元で使えないもの</a></li>
+  </ul>
+  <ul>
+    <li><a href="#basis">根拠の見方</a></li>
+    <li><a href="#bindings">バインディング</a></li>
+    <li><a href="#prepare">追加の用意が要るもの</a></li>
+    <li><a href="#config">手元では効かない設定</a></li>
+    <li><a href="#platform">設定に出ない違い</a></li>
+    <li><a href="#covered">wrangler-compose が補うもの</a></li>
+  </ul>
+</nav>
+<main>
+<h1>手元で使えないもの</h1>
+<p class="lead"><code>wrangler-compose --env local up</code>(中身は Wrangler の手元の開発。miniflare と workerd)で開発するときに、使えない・本番と振る舞いが違う Cloudflare の機能の一覧。要求仕様の <a href="requirements.html#req-021">REQ-021</a> の元になる。Wrangler の版が上がれば変わるので、確かめた版と日付を書く: Wrangler 4.149.0、2026-10-11。</p>
+
+<h2 id="basis">根拠の見方</h2>
+<table>
+  <tr><th style="width:22%">根拠</th><th>意味</th></tr>
+  <tr><td>実装</td><td>Wrangler 4.149.0 の <code>wrangler-dist/cli.js</code> の決まり(バインディングは <code>BINDING_LOCAL_SUPPORT</code> の表)</td></tr>
+  <tr><td>資料</td><td>Cloudflare の資料(<code>cloudflare/cloudflare-docs</code> の 2026-10-11 の版)。「Supported bindings per development mode」と各製品の Local development の頁</td></tr>
+  <tr><td>実測</td><td>手元の Wrangler 4.149.0 で動かして確かめた</td></tr>
+  <tr><td>推測</td><td>確かめていない。仕組みから見込んだもの。受け入れの前に確かめる</td></tr>
+</table>
+
+<h2 id="bindings">バインディング</h2>
+<p>Wrangler はバインディングの種類ごとに、手元で動くか・<code>remote: true</code> で Cloudflare の本物につなげるかを決めている。wrangler-compose はこの表に合わせて知らせる(REQ-021)。種類の名前は Wrangler の内側の名前。</p>
+
+<h3>手元では動かない(<code>remote: true</code> で本物につなぐ)</h3>
+<table>
+  <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
+  <tr><td>Vectorize(<code>vectorize</code>)</td><td><code>remote</code> を書かなければ、Wrangler が警告し、その部分が動かない。<code>remote: false</code> なら Wrangler が止まる</td><td>実装・資料</td></tr>
+  <tr><td>mTLS 証明書(<code>mtls_certificate</code>)</td><td>同上</td><td>実装・資料</td></tr>
+  <tr><td>ディスパッチ名前空間(<code>dispatch_namespace</code>。Workers for Platforms)</td><td>同上</td><td>実装</td></tr>
+</table>
+
+<h3>手元でも常に Cloudflare につながる(料金がかかる)</h3>
+<p>Wrangler が「手元の代わりを作る予定は無い」としているもの。手元で動かしても Cloudflare の本物を使い、料金がかかり、本物のデータに触れる。</p>
+<table>
+  <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
+  <tr><td>Workers AI(<code>ai</code>)</td><td>常に Cloudflare で動く。<code>remote: false</code> なら Wrangler が止まる</td><td>実装・資料</td></tr>
+  <tr><td>AI Search(<code>ai_search</code>・<code>ai_search_namespace</code>)</td><td>同上</td><td>実装</td></tr>
+  <tr><td>Media Transformations(<code>media</code>)</td><td>同上</td><td>実装・資料</td></tr>
+  <tr><td>VPC(<code>vpc_service</code>・<code>vpc_network</code>)</td><td>同上</td><td>実装</td></tr>
+  <tr><td>Artifacts・Agent Memory・Analytics・K2(<code>artifacts</code>・<code>agent_memory</code>・<code>analytics</code>・<code>k2</code>)</td><td>同上</td><td>実装</td></tr>
+</table>
+
+<h3>手元だけで動く(<code>remote: true</code> にできない)</h3>
+<table>
+  <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
+  <tr><td>Durable Objects</td><td>手元で動き、データは手元の置き場。本物の Durable Objects を使いたければ、それを持つ Worker をデプロイし、手元からサービスバインディング(<code>remote: true</code>)で呼ぶ</td><td>実装・資料</td></tr>
+  <tr><td>Workflows</td><td>手元の模擬の Workflows で動く(Cloudflare のものと同じ実装ではない)</td><td>実装・資料</td></tr>
+  <tr><td>Hyperdrive</td><td>手元では Hyperdrive を通らず、データベースへ直につなぐ(接続の使い回しと問い合わせのキャッシュは効かない)。<a href="#prepare">追加の用意</a>が要る</td><td>実装・資料</td></tr>
+  <tr><td>Analytics Engine</td><td>書いたデータは本番の Analytics Engine に入らず、SQL API で読めない</td><td>実装・資料</td></tr>
+  <tr><td>Rate Limiting</td><td>手元の模擬。本番の上限とは数えが別</td><td>実装・資料</td></tr>
+  <tr><td>Secrets Store</td><td>手元の値を使う(本番の Secrets Store は読まない)</td><td>実装</td></tr>
+  <tr><td>静的なファイル(<code>assets</code>)</td><td>手元のディスクから配る</td><td>実装・資料</td></tr>
+  <tr><td>Version Metadata</td><td>デプロイした版の ID・タグは手元には無い(本物の値にならない)</td><td>実装・資料</td></tr>
+  <tr><td>変数(<code>vars</code>)・シークレット</td><td><code>.env.local</code>・<code>.dev.vars</code>・設定の <code>vars</code> の値。Cloudflare に入れたシークレットは手元に来ない</td><td>実装・資料・実測</td></tr>
+  <tr><td>Worker Loader・ログ転送(<code>logfwdr</code>)</td><td>手元だけ</td><td>実装</td></tr>
+</table>
+
+<h3>手元でも本物でも使える</h3>
+<table>
+  <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
+  <tr><td>D1・KV・R2</td><td>既定は手元の模擬(<code>.wrangler/state/</code>)。<code>remote: true</code> で本物につなぐ。R2 の S3 互換 API は wrangler-compose が手元で開く(<a href="requirements.html#req-015">REQ-015</a>)</td><td>実装・資料・実測</td></tr>
+  <tr><td>Queues</td><td>手元の模擬。<strong><code>remote: true</code> を書いても手元の模擬のまま</strong>(miniflare が無視する。workers-sdk #13727)</td><td>実装</td></tr>
+  <tr><td>サービスバインディング</td><td>同じ <code>up</code> で動かしたサービス(<a href="requirements.html#req-020">REQ-020</a>)か、手元の別の dev につながる。<code>remote: true</code> でデプロイ済みの Worker につなぐ</td><td>実装・資料・実測</td></tr>
+  <tr><td>Browser Run・Images・Stream・メールの送信(<code>send_email</code>)・Pipelines・Flagship</td><td>既定は手元の模擬。メールは実際には送られず、内容が画面と手元のファイルに出る</td><td>実装・資料</td></tr>
+</table>
+
+<h2 id="prepare">手元で動かすのに追加の用意が要るもの</h2>
+<table>
+  <tr><th style="width:22%">機能</th><th>要るもの・手元での使い方</th><th style="width:14%">根拠</th></tr>
+  <tr><td>Hyperdrive</td><td>手元の接続文字列。設定の <code>localConnectionString</code> か、環境変数 <code>CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_&lt;バインディング名&gt;</code>(手元のデータベースでも、Cloudflare の外のデータベースでもよい)</td><td>資料</td></tr>
+  <tr><td>Containers</td><td>手元で Docker が動いていること。FUSE は Docker が VM の中で動くとき(macOS・WSL など)に使える。Linux の rootful な Docker では既定で使えない</td><td>資料</td></tr>
+  <tr><td>Cron Triggers</td><td>手元では時刻が来ても動かない。<code>curl "http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/scheduled?cron=*+*+*+*+*"</code> で呼ぶ</td><td>資料</td></tr>
+  <tr><td>メールの受信(Email Routing)</td><td>届いたメールの代わりに、<code>POST http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/email</code> へメールの中身を送る</td><td>資料</td></tr>
+</table>
+
+<h2 id="config">設定にあっても手元では効かないもの</h2>
+<table>
+  <tr><th style="width:30%">設定</th><th>手元で起きること・代わり</th><th style="width:14%">根拠</th></tr>
+  <tr><td>ルート・カスタムドメイン(<code>routes</code>)・<code>workers_dev</code>・プレビューの URL</td><td>手元の URL(<code>http://127.0.0.1:&lt;ポート&gt;</code>)だけで応える。ホスト名で振り分ける作りは、要求の <code>Host</code> を手で付けて試す</td><td>推測</td></tr>
+  <tr><td>Cron(<code>triggers.crons</code>)</td><td>自動では動かない(<a href="#prepare">上</a>)</td><td>資料</td></tr>
+  <tr><td>Smart Placement(<code>placement</code>)</td><td>手元では意味が無い(Worker は手元で動く)</td><td>推測</td></tr>
+  <tr><td>CPU 時間などの上限(<code>limits</code>)</td><td>手元で本番と同じに打ち切られるかは確かめていない</td><td>推測</td></tr>
+  <tr><td>ログ(<code>observability</code>・Logpush・<code>tail_consumers</code>)</td><td>手元のログ(<code>console</code> と要求ごとの記録)は画面に出る。Tail Worker は同じ <code>up</code> で動かせば手元でつながる。Workers Logs・Logpush には送られない</td><td>資料・実測</td></tr>
+  <tr><td><code>remote: true</code> のバインディング</td><td>手元の開発でも Cloudflare の本物の資源につながる。<code>local</code> は設定の一番上の階層を使うので、一番上に本番の ID を書いていれば本番のデータに触れる</td><td>資料</td></tr>
+</table>
+
+<h2 id="platform">設定に出ないが本番と違うもの</h2>
+<table>
+  <tr><th style="width:30%">機能</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
+  <tr><td><code>request.cf</code>(国・都市・ASN など)</td><td>Cloudflare から取れればその値(使う人の場所ではなく自分の回線のもの)、取れなければ決まった代わりの値</td><td>実測(取れないときの警告)</td></tr>
+  <tr><td>ゾーンの機能(WAF・キャッシュのルール・リダイレクト・Access・Bot 対策など)</td><td>要求が Cloudflare の網を通らないので、どれも効かない。Access の JWT のような付け足されるヘッダも来ない</td><td>推測</td></tr>
+  <tr><td>R2 の公開の URL(<code>r2.dev</code>・独自ドメイン)</td><td>無い。Worker を通して配るか、手元の S3 の口の署名付き URL を使う(範囲外。workers-sdk #3687 で要望が出ている)</td><td>資料(要望の issue)</td></tr>
+  <tr><td>R2 のバケットの設定(CORS・ライフサイクル・イベント通知)</td><td>手元のバケットには当たらない見込み。ブラウザから署名付き URL を使うときの CORS の振る舞いは本番と違いうる</td><td>推測</td></tr>
+  <tr><td>D1 の Time Travel・読み取りの複製</td><td>手元の D1 には無い</td><td>推測</td></tr>
+  <tr><td>KV の結果整合性</td><td>手元では書いた値がすぐ読める。本番の「しばらく古い値が見える」は再現されない</td><td>推測</td></tr>
+  <tr><td>キャッシュ(Cache API・<code>fetch</code> のキャッシュ)</td><td>手元のキャッシュで、本番の拠点ごとのキャッシュとは振る舞いが違う</td><td>推測</td></tr>
+</table>
+
+<h2 id="covered">wrangler-compose が補うもの</h2>
+<table>
+  <tr><th style="width:30%">足りないもの</th><th>wrangler-compose での扱い</th></tr>
+  <tr><td>R2 の S3 互換 API・署名付き URL</td><td><code>--env local up</code> が手元の S3 の口を開く(<a href="requirements.html#req-015">REQ-015</a>)</td></tr>
+  <tr><td>本番に近いデータでの手元の開発</td><td>Cloudflare の環境の控えを手元へ <code>restore</code> できる(<a href="requirements.html#req-017">REQ-017</a>)</td></tr>
+  <tr><td>手元の D1 の移行</td><td><code>--env local up</code> が動かす前に当てる(<a href="requirements.html#req-014">REQ-014</a>)</td></tr>
+  <tr><td>複数の Worker をまとめて手元で動かすこと</td><td>compose ファイルのサービスをまとめて動かす(<a href="requirements.html#req-020">REQ-020</a>)</td></tr>
+  <tr><td>手元で使えないものに気づくこと</td><td><code>--env local up</code> が動かす前に、この頁の項目のうち設定にあるものを示す(<a href="requirements.html#req-021">REQ-021</a>)</td></tr>
+</table>
+
+<footer>docs/wrangler-compose/local-support.html</footer>
+</main>
+</div>
+</body>
+</html>

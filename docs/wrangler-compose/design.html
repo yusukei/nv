@@ -17,6 +17,7 @@
     <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
     <li><a href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
     <li><a class="current" href="design.html">wrangler-compose 設計</a></li>
+    <li><a href="local-support.html">手元で使えないもの</a></li>
   </ul>
   <ul>
     <li><a href="#facts">確かめた事実</a></li>
@@ -43,6 +44,11 @@
     <li><a href="#des-021">DES-021 local の down</a></li>
     <li><a href="#des-022">DES-022 手元の S3 の口と鍵</a></li>
     <li><a href="#des-023">DES-023 local の backup・restore</a></li>
+    <li><a href="#des-024">DES-024 compose ファイルの読み方</a></li>
+    <li><a href="#des-025">DES-025 サービスの順と絞り込み</a></li>
+    <li><a href="#des-026">DES-026 共有する資源と控えの形</a></li>
+    <li><a href="#des-027">DES-027 手元でまとめて動かす</a></li>
+    <li><a href="#des-028">DES-028 手元で使えないものの見分け</a></li>
     <li><a href="#unverified">確かめていないこと</a></li>
   </ul>
 </nav>
@@ -79,6 +85,11 @@
   <tr><td><code>unstable_startWorker</code> の <code>dev.watch: true</code> で、コードを変えると作り直される。<code>console.log</code> と要求ごとの記録(<code>[wrangler:info] GET /a 200 OK</code>)が標準出力に出る。<code>.env.local</code> の値が Worker の <code>env</code> に入る</td><td>実測</td></tr>
   <tr><td>手元のデータは <code>.wrangler/state/v3/</code>(<code>d1</code>・<code>r2</code>・<code>kv</code> など)。<code>wrangler d1 migrations apply &lt;DB&gt; --local</code>・<code>d1 export &lt;DB&gt; --local</code> は、<code>unstable_startWorker</code> と同じ置き場を読み書きする。書き出しの SQL は <code>d1_migrations</code> を含む</td><td>実測</td></tr>
   <tr><td>手元の Worker を同じポートで 2 つ動かすと、2 つ目は <code>bind(): Address already in use</code> で落ちる</td><td>実測</td></tr>
+  <tr><td><code>unstable_startWorker</code> を 2 つ、同じ <code>dev.registry</code>(dev registry のフォルダ)と同じ <code>dev.persist</code> で、別のポートに動かすと: サービスバインディング(<code>services</code>)と、ほかの Worker の Durable Object(<code>script_name</code>)の呼び出しが通る(Wrangler の表示は <code>local [connected]</code>)。同じ <code>bucket_name</code> の R2 は 2 つの Worker から同じ中身が見え、どちらのポートの S3 の口からも見える。<code>dev.persist</code> に渡したフォルダの下に <code>v3/</code> が作られる(<code>wrangler dev</code> の既定と同じ形)</td><td>実測</td></tr>
+  <tr><td><code>wrangler dev -c a -c b</code>(1 つの dev に複数の設定)は、最初の設定の Worker だけを外に見せ、ほかはサービスバインディングからだけ届く。複数の dev を別々に動かすと、どの Worker にも手元の URL がある。資料は、送り手と受け手を別の Worker にした Queues と、<code>script_name</code> で使う Durable Objects・Workflows には 1 つの dev を勧めている</td><td>資料(Developing with multiple Workers)</td></tr>
+  <tr><td><code>wrangler dev -c a -c b</code> の中身(<code>MultiworkerRuntimeController</code>)は Wrangler から外に出ていない。外に出ている <code>createTestHarness</code> は複数の Worker を 1 つにまとめるが、試験用(データを残さず、作り直しもしない)</td><td>実装(<code>require("wrangler")</code> の公開の名前)</td></tr>
+  <tr><td>バインディングの種類ごとの手元の扱いは、Wrangler の <code>BINDING_LOCAL_SUPPORT</code> が決める: <code>local-only</code>(<code>remote: true</code> なら止まる)・<code>local-and-remote</code>・<code>remote</code>(手元に無い。<code>remote: false</code> なら止まり、書かなければ警告)・常に Cloudflare(<code>remote: false</code> なら止まり、書かなければ料金の警告)。表に無い種類は <code>local-only</code> 扱い。表は Wrangler から外に出ていない</td><td>実装(<code>getBindingLocalSupport</code>・<code>validateBindingRemoteSetting</code>)</td></tr>
+  <tr><td>Queues は表では <code>local-and-remote</code> だが、miniflare は <code>remote: true</code> を無視する(workers-sdk #13727)</td><td>実装(表の注記)</td></tr>
 </table>
 
 <h2>設計</h2>
@@ -219,7 +230,7 @@
 <ul>
   <li>単体: <code>.env</code> の読み、環境の選び方、目録の読み書き、S3 の口の組み立て、空かの判定に使う表の名前の選り分け</li>
   <li>手元の結合: 実行ファイルを動かし、Cloudflare に触れない範囲(環境の指定の誤り、nv が無い、<code>.env</code> が git に入っている、端末でない <code>down</code>、書きかけの控え、<code>build</code>)を確かめる</li>
-  <li>手元の環境の受け入れ条件(AC-013〜AC-017)は Cloudflare に触れないので、CI(Windows・macOS・Linux)で毎回動かす: 試験用のプロジェクトで <code>--env local up</code> を裏で動かし、Worker と S3 の口(署名付き URL を含む)を確かめ、<code>backup</code> → <code>down --purge</code> → <code>restore</code> を通して中身が一致することを見る</li>
+  <li>手元の環境の受け入れ条件(AC-013〜AC-017、AC-018・AC-020・AC-021)は Cloudflare に触れないので、CI(Windows・macOS・Linux)で毎回動かす: 試験用のプロジェクトで <code>--env local up</code> を裏で動かし、Worker と S3 の口(署名付き URL を含む)を確かめ、<code>backup</code> → <code>down --purge</code> → <code>restore</code> を通して中身が一致することを見る</li>
   <li>Cloudflare を相手にする受け入れ条件は、試験用のアカウントで、利用者の許可を得てから行う。まず全操作を <code>--dry-run</code> で通し、次に使い捨ての環境で <code>up</code> → <code>backup</code> → <code>restore --drop</code> → <code>down</code> → <code>down --purge</code> を実際に動かす</li>
 </ul>
 
@@ -296,6 +307,55 @@
   <li>D1 の書き出しは <code>d1 export &lt;DB&gt; --local</code>、戻しは <code>d1 execute &lt;DB&gt; --local --yes --file</code>、移行は <code>d1 migrations apply &lt;DB&gt; --local</code></li>
 </ul>
 
+<h3 id="des-024"><span class="id">DES-024</span>compose ファイルの読み方 <span class="refs">REQ-018</span></h3>
+<ul>
+  <li>YAML を読むクレートを 1 つ足す。候補は <code>serde-saphyr</code>(YAML 1.2、純 Rust)と <code>serde_yaml_ng</code>(<code>serde_yaml</code> の後継)。作る時点で手入れが続いている方を選ぶ。<code>serde_yaml</code> は手入れが止まっているので使わない</li>
+  <li>いったん <code>serde_json::Value</code> の木に読み、自前で確かめる(<code>serde</code> の <code>deny_unknown_fields</code> では、<code>x-</code> を許しつつ知らないキーで止まる、という docker と同じ決まりを書けない)。知らないキーは、どこ(<code>services.web.environment</code> など)にあるかを示して止まる</li>
+  <li>探し方: いまのフォルダから上へ、各フォルダで <code>wrangler-compose.yaml</code>・<code>wrangler-compose.yml</code> を見る。同じフォルダに両方あれば止まる。compose ファイルより先に Wrangler の設定ファイルが見つかっても、上へたどるのをやめない(サービスのフォルダの中で打っても、まとめた全体を使う。docker と同じ)。見つからなければ DES-003 の探し方に戻る</li>
+  <li>compose ファイルが無いときは、Wrangler の設定ファイルのフォルダを compose の根とし、その Worker の名前(無ければフォルダ名)のサービス 1 つを持つものとして扱う。以下の作りは、サービスが 1 つの場合もいつも同じ道を通る(分かれ道を作らない)</li>
+  <li><code>ports</code> の短い書き方は <code>"ポート:ポート"</code>・<code>"アドレス:ポート:ポート"</code>。IPv6 のアドレスは <code>"[::1]:8787:8787"</code></li>
+  <li>設定はサービスごとに DES-003 のスクリプトで読む。スクリプトは compose の根で動かし、<code>unstable_readConfig</code> に設定ファイルのパスを渡す(Wrangler は compose の根の <code>node_modules</code> のもの)</li>
+  <li>サービスのフォルダに <code>package.json</code> があり、compose の根と違うフォルダなら、組む前にそのフォルダで <code>nv sync</code> を動かす(Wrangler の組み立ては、各サービスのフォルダから <code>node_modules</code> を探す)</li>
+</ul>
+
+<h3 id="des-025"><span class="id">DES-025</span>サービスの順と絞り込み <span class="refs">REQ-019・REQ-020</span></h3>
+<ul>
+  <li>順は <code>depends_on</code> だけで決める。トポロジカルソートで、決まらないところは compose ファイルに書いた順。輪があれば、輪になっているサービスを示して止まる</li>
+  <li><code>build</code>・<code>up</code> に名前を渡せば、その名前から <code>depends_on</code> をたどって閉じた集まりを作る。<code>down</code> に名前を渡せば、その名前だけ。どちらも、知らない名前なら止まる</li>
+  <li>依存の知らせ(REQ-019): 環境を当てはめた設定の <code>services[].service</code> と、Durable Objects の <code>script_name</code> を、ほかのサービスの Worker の名前(同じ環境を当てはめたもの)と照らし、<code>depends_on</code> をたどった先に無ければ知らせる</li>
+  <li><code>up</code> の途中で止まったら、済んだサービス・止まったサービス・行っていないサービスを並べて示す(DES-014)</li>
+</ul>
+
+<h3 id="des-026"><span class="id">DES-026</span>共有する資源と控えの形 <span class="refs">REQ-019</span></h3>
+<ul>
+  <li>資源の見分け: D1 は <code>database_id</code>、無ければ <code>database_name</code>。R2 はバケット名と管轄。環境を当てはめた値で比べる(手元ではバケット名・D1 の名前で比べる。miniflare の置き場の分け方と同じ)</li>
+  <li>移行: 同じ D1 を使うサービスの移行のフォルダを、実際のパス(<code>canonicalize</code>)と履歴の表の名前で比べ、違えば止まる。同じなら最初のサービスの段で 1 度だけ当てる</li>
+  <li>控えの目録を <code>format: 2</code> にする: <code>name</code>・<code>services</code>(サービス名と Worker 名)・<code>d1</code> と <code>r2</code> は資源ごとに 1 つで、<code>users</code> にそれを使う <code>[サービス, バインディング]</code> の組を並べる。<code>restore</code> は、目録の <code>users</code> の組が、いまの compose のどの資源に当たるかで照らす(1 つの資源に当たらなければ止まる)</li>
+  <li><code>format: 1</code> の控え(compose 以前)は、サービスが 1 つのときだけ、そのサービスの控えとして読む</li>
+  <li><code>down --purge</code> は、消す資源ごとに、下ろさないサービスの <code>users</code> が無いかを先に見て、あれば何も消さずに止まる</li>
+</ul>
+
+<h3 id="des-027"><span class="id">DES-027</span>手元でまとめて動かす <span class="refs">REQ-020</span></h3>
+<ul>
+  <li>サービスごとに、DES-018 のスクリプトを別の子プロセス(<code>nv run node -e …</code>)として、依存の順に動かす。前のサービスの目印の行(READY)を待ってから次を動かす</li>
+  <li>すべての子に、同じ <code>dev.registry</code>(compose の根の <code>.wrangler/compose/registry/</code>)と同じ <code>dev.persist</code>(compose の根の <code>.wrangler/state/</code>)を渡す。サービスの間のつながりは dev registry が受け持つ(確かめた事実)</li>
+  <li>子の標準出力・標準エラーは wrangler-compose が 1 行ずつ読み、<code>サービス名 | </code> を頭に付けて出す(docker compose と同じ形。名前は桁をそろえる)。子を分けるのはこのため(1 つの Node の中に複数の Worker を置くと、Wrangler のログが混ざって見分けられない)</li>
+  <li>ポート: <code>ports</code> → 設定の <code>dev.port</code> → 8787 から順に空いている番号。決めたすべてのポートを、動かす前に Rust で待ち受けられるか確かめる(DES-020)</li>
+  <li>DES-019 の記録(<code>local.json</code>)は、子の PID と URL の一覧にする。錠は compose の根に 1 つ。止めるときは依存の逆の順に止める。1 つの子が落ちたら、残りも止めて、どのサービスが落ちたかを示す(docker compose の <code>--abort-on-container-exit</code> の振る舞いを既定にする。手元で一部だけが動いている状態を作らない)</li>
+  <li>却下: <code>wrangler dev -c a -c b</code> を動かす(S3 の口の鍵を差し込めない(DES-018)。最初の Worker にしか手元の URL が無い)</li>
+  <li>却下: <code>createTestHarness</code> を使う(試験用で、データを残さず、作り直しもしない)</li>
+  <li>成り立たない場合: 送り手と受け手を別のサービスにした Queues が、別々の dev のあいだで届かないかもしれない(資料は 1 つの dev を勧めている)。届かなければ <a href="local-support.html">手元で使えないもの</a>に書き、REQ-021 の知らせに足す</li>
+</ul>
+
+<h3 id="des-028"><span class="id">DES-028</span>手元で使えないものの見分け <span class="refs">REQ-021</span></h3>
+<ul>
+  <li>DES-003 のスクリプトで、設定のバインディングを <code>unstable_convertConfigBindingsToStartWorkerBindings</code> で種類つきの一覧にし、種類・バインディング名・<code>remote</code> の値を JSON で返す。ほかに <code>routes</code>・<code>triggers.crons</code>・<code>placement</code>・<code>limits</code>・<code>tail_consumers</code>・<code>logpush</code>・<code>containers</code>・Hyperdrive の <code>localConnectionString</code> の有無を返す</li>
+  <li>種類ごとの扱いは、Wrangler の <code>BINDING_LOCAL_SUPPORT</code>(確かめた事実)を写した表を wrangler-compose の中に持つ。表は Wrangler から外に出ていないため。表を写した Wrangler の版(4.149.0)を持ち、それより新しい Wrangler では、表に無い種類を「分からない」と示す</li>
+  <li>止まるのは、Wrangler が止まるのと同じ組み合わせだけ(<code>local-only</code> に <code>remote: true</code>、<code>remote</code> と常に Cloudflare のものに <code>remote: false</code>)。Wrangler を動かす前に、サービス名とバインディング名をつけて示す</li>
+  <li>Hyperdrive は、設定の <code>localConnectionString</code> も、環境変数 <code>CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_&lt;バインディング名&gt;</code> も無ければ知らせる。Containers は、<code>docker</code> が PATH に無いか <code>docker info</code> が失敗すれば知らせる</li>
+  <li>文言と項目は <a href="local-support.html">手元で使えないもの</a>の頁と 1 対 1 にする(頁の項目を足したら、知らせの表も足す)</li>
+</ul>
+
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
   <li>Cloudflare の側の D1 で、外部キーのある表を <code>defer_foreign_keys</code> を付けて消せること</li>
@@ -304,6 +364,10 @@
   <li>手元: <code>up</code> が動いている間に <code>d1 export</code>・<code>d1 execute --local</code> を別のプロセスから動かしても、SQLite の錠で失敗しないこと</li>
   <li>手元: rusty-s3 が、パスの付いた口の URL(<code>/cdn-cgi/local/r2/s3</code>)にバケット名を正しく継ぎ足して署名すること</li>
   <li>手元: Wrangler 5 での <code>unstable_startWorker</code> の <code>bindings</code> の形</li>
+  <li>手元の複数の Worker: 送り手と受け手を別のサービスにした Queues と、<code>script_name</code> で使う Workflows が、別々の dev のあいだで通ること(DES-027)</li>
+  <li>手元の複数の Worker: 同じ D1 を 2 つの workerd が同時に書いても壊れないこと(R2 の共有は確かめた)</li>
+  <li>Cloudflare: サービスバインディングの先の Worker がまだ無いときに、<code>wrangler deploy</code> が止まるか(<code>depends_on</code> の順が要る理由。止まらないなら、知らせは弱めてよい)</li>
+  <li>手元で使えないものの頁の「推測」の項目(ルート・Smart Placement・上限・ゾーンの機能・R2 のバケットの設定・D1 の Time Travel・KV の整合性・キャッシュ)</li>
 </ul>
 
 <footer>docs/wrangler-compose/design.html</footer>
