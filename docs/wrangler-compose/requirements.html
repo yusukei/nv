@@ -45,7 +45,6 @@
     <li><a href="#req-017">REQ-017 手元と本番の違いの知らせ</a></li>
     <li><a href="#req-018">REQ-018 Wrangler と nv</a></li>
     <li><a href="#req-019">REQ-019 配り方・表示の言語</a></li>
-    <li><a href="#open">決めること</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
@@ -53,9 +52,6 @@
 <h1>wrangler-compose 要求仕様</h1>
 <p class="lead">Cloudflare Workers のアプリを、docker compose と同じく「1 つのファイルに書き、コマンド 1 つで建てる」ための道具。Worker も D1・R2・KV・Queue も、compose ファイルの<strong>サービス</strong>として並べる。同じファイルが、手元(<code>local</code>)でも Cloudflare の環境(<code>staging</code>・<code>production</code> など)でも同じ形で建つ。</p>
 
-<div class="box open">
-<p>この版は、Wrangler の設定ファイルを正とした前の版(0.1 系の REQ-001〜021)を置き換える。正は compose ファイルになり、Wrangler の設定は wrangler-compose が作る。前の版は git の履歴に残る。受け入れ条件と設計は、この要求に合わせて書き直す(それまでは前の版のまま)。</p>
-</div>
 
 <h2 id="goals">目的</h2>
 <ol>
@@ -152,6 +148,11 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li><code>down</code> は作り直せるものだけを消し、データは <code>--purge</code> のときだけ消す</li>
   <li>Node・npm の扱いは nv が受け持つ。wrangler-compose は Node のことを何も知らない</li>
   <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く。更新とエージェント用のスキルは nv に寄せる</li>
+  <li>シークレットは Worker のシークレットとして入れる(Secrets Store は使わない)</li>
+  <li>資源の実際の名前は、既定では道具が決め、サービスの <code>name</code> に書けばそれを使う(既存の資源をそのまま使える)</li>
+  <li>手元の <code>down --purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
+  <li>Queue の受け手の細かい設定は今は持たず、Cloudflare の既定に任せる</li>
+  <li>リモートの環境の Worker の名前は、資源と同じく <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code></li>
 </ul>
 </div>
 
@@ -185,14 +186,15 @@ STRIPE_KEY=sk_test_...</code></pre>
 <table>
   <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:30%">建つもの</th></tr>
   <tr><td><code>worker</code></td><td>
-    <code>build</code>(必須。コードのフォルダ)・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td>
+    <code>build</code>(必須。コードのフォルダ)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td>
     <td>Worker 1 つ</td></tr>
-  <tr><td><code>d1</code></td><td><code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
-  <tr><td><code>r2</code></td><td>(今は無し)</td><td>R2 バケット 1 つ</td></tr>
-  <tr><td><code>kv</code></td><td>(今は無し)</td><td>KV 名前空間 1 つ</td></tr>
-  <tr><td><code>queue</code></td><td>(今は無し。受け手の細かい設定は <a href="#open">決めること</a>)</td><td>Queue 1 つ</td></tr>
+  <tr><td><code>d1</code></td><td><code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
+  <tr><td><code>r2</code></td><td><code>name</code></td><td>R2 バケット 1 つ</td></tr>
+  <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
+  <tr><td><code>queue</code></td><td><code>name</code>(受け手の細かい設定は持たず、Cloudflare の既定に任せる)</td><td>Queue 1 つ</td></tr>
 </table>
 <ul>
+  <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
   <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は Cron の式。どれも環境ごとに違うなら変数で書く</li>
   <li><code>assets</code> は静的なファイルのフォルダ(Workers の静的なファイル)</li>
   <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧。Durable Objects は Worker の中のものなので、型にはしない</li>
@@ -213,10 +215,9 @@ STRIPE_KEY=sk_test_...</code></pre>
 <ul>
   <li>一番上の <code>secrets</code> に、docker compose と同じ形で宣言する: <code>&lt;名前&gt;: { environment: &lt;変数名&gt; }</code>。値はその変数(<a href="#req-005">REQ-005</a> と同じ探し方)から読む</li>
   <li>Worker の <code>secrets</code> に並べたシークレットだけが、その Worker から見える(<code>env.&lt;変数名&gt;</code>)</li>
-  <li>リモートの環境では、<code>up</code> が値を Cloudflare に入れる(足す・変える)。compose ファイルから消したシークレットは、<code>up</code> が Cloudflare からも消す(宣言した状態に合わせる)</li>
+  <li>リモートの環境では、<code>up</code> が値をその Worker のシークレットとして入れる(足す・変える)。compose ファイルから消したシークレットは、<code>up</code> が Worker からも消す(宣言した状態に合わせる)。Secrets Store は使わない(決定)</li>
   <li>手元では、<code>up</code> が同じ値を手元に入れる(手で入れる段取りは無い)</li>
   <li>値が無ければ、何もせずに止まり、無い変数の名前を示す</li>
-  <li>Cloudflare 側の置き場(Worker のシークレットか Secrets Store か)は <a href="#open">決めること</a></li>
 </ul>
 
 <h3 id="req-005"><span class="id">REQ-005</span>変数の展開(環境の違い)</h3>
@@ -233,7 +234,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>環境の名前は自由(<code>staging</code>・<code>production</code>・<code>pr-123</code> など)。<code>local</code> だけは手元を指す決まった名前</li>
   <li>リモートの環境の Worker と資源の Cloudflare での名前は、道具が <code>&lt;プロジェクト名&gt;-&lt;環境&gt;-&lt;サービス名&gt;</code> で決める(例: <code>shop-staging-db</code>)。同じ compose ファイルから、名前の違う環境をいくつでも並べて建てられ、互いに混ざらない</li>
   <li>資源の ID(D1 の ID・KV の ID など)は道具が覚えておき、利用者は書かない。覚えたものを失っても、名前から見つけ直せる</li>
-  <li>名前の決め方を変えたいとき(既存の資源を使う、本番の名前を短くするなど)は <a href="#open">決めること</a></li>
+  <li>サービスに <code>name</code> を書けば、決め方より優先してその名前を使う(既存の資源をそのまま使う、本番の名前を短くするなど)。環境ごとに変えるなら変数で書く(<code>name: ${DB_NAME}</code>)。同じ名前の資源がすでにあれば、作らずにそれを使う</li>
 </ul>
 
 <h3 id="req-007"><span class="id">REQ-007</span>Wrangler の設定ファイル</h3>
@@ -261,7 +262,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>Worker と一緒に消えるもの(ルート・Cron・Durable Objects とその中身)を、消す前に示す</li>
   <li><code>down --purge [サービス…]</code> は、加えて資源を中身ごと消す。下ろさないサービスがつながっている資源は消さずに止まる</li>
   <li>リモートの環境での <code>down</code>・<code>down --purge</code> は、消す前に、消すもの(Worker の名前、資源の名前と中身の数)を示し、環境名を打ち直して確かめる。打ち直しを受けられない場(端末でない)では止まる</li>
-  <li>手元での <code>down</code> は、動いている <code>up</code> を止めるだけで、確かめを求めない。手元での <code>down --purge</code> の確かめは <a href="#open">決めること</a></li>
+  <li>手元での <code>down</code> は、動いている <code>up</code> を止めるだけで、確かめを求めない。手元での <code>down --purge</code> は、リモートと同じく <code>local</code> を打ち直して確かめる(決定)</li>
 </ul>
 
 <h3 id="req-010"><span class="id">REQ-010</span>ps(状態を見る)</h3>
@@ -341,17 +342,6 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>OS ごとの単体の実行ファイルで、nv と同じリポジトリ・同じ版のタグ・同じ Release で配る。nv と同じフォルダに置いて使う。更新とスキルは nv が受け持つ</li>
   <li>wrangler-compose が自分で出すメッセージと <code>--help</code> は、nv と同じ決め方で日本語か英語で出す(<code>NV_LANG</code> も効く)。打ち直しの確かめで打つのは、言語によらず環境名そのもの</li>
 </ul>
-
-<h2 id="open">決めること(利用者)</h2>
-<div class="box open">
-<ol>
-  <li><strong>シークレットの Cloudflare 側の置き場</strong>。案 A(推奨): Worker のシークレット(Worker ごと。<code>up</code> で入れて消すのが Worker の中で完結する)。案 B: Secrets Store(アカウントで共有。複数の Worker・環境で同じ値を使い回せる)</li>
-  <li><strong>資源の名前の決め方を変えたいとき</strong>。案 A(推奨): サービスに <code>name: ${DB_NAME}</code> のように実際の名前を書けるようにする(書けば決め方より優先。既存の資源をそのまま使える)。案 B: 決め方だけ(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>)</li>
-  <li><strong>手元での <code>down --purge</code> の確かめ</strong>。案 A(推奨): リモートと同じく打ち直す(端末でない場では止まる)。案 B: 手元だけは確かめない</li>
-  <li><strong>Queue の受け手の細かい設定</strong>(1 回にまとめる数・待つ時間・やり直しの回数・行き先の無いメッセージの Queue)。案 A(推奨): 今は持たず、Cloudflare の既定に任せる。要るときに <code>consumes</code> の長い書き方として足す</li>
-  <li><strong>リモートの環境の Worker の名前</strong>。案 A(推奨): 資源と同じ <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>(既定の <code>*.workers.dev</code> の URL もこの名前になる)</li>
-</ol>
-</div>
 
 <h2 id="out-of-scope">範囲外</h2>
 <ul>

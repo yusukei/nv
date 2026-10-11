@@ -30,7 +30,7 @@
 </nav>
 <main>
 <h1>手元で使えないもの</h1>
-<p class="lead"><code>wrangler-compose --env local up</code>(中身は Wrangler の手元の開発。miniflare と workerd)で開発するときに、使えない・本番と振る舞いが違う Cloudflare の機能の一覧。要求仕様の <a href="requirements.html#req-021">REQ-021</a> の元になる。Wrangler の版が上がれば変わるので、確かめた版と日付を書く: Wrangler 4.149.0、2026-10-11。</p>
+<p class="lead"><code>wrangler-compose --env local up</code>(中身は Wrangler の手元の開発。miniflare と workerd)で開発するときに、使えない・本番と振る舞いが違う Cloudflare の機能の一覧。要求仕様の <a href="requirements.html#req-017">REQ-017</a> の元になる。主に使う型(Workers・D1・R2・KV・Queues・Durable Objects・シークレット)のものが対象で、ほかの製品の行は参考として残す。Wrangler の版が上がれば変わるので、確かめた版と日付を書く: Wrangler 4.149.0、2026-10-11。</p>
 
 <h2 id="basis">根拠の見方</h2>
 <table>
@@ -81,9 +81,9 @@
 <h3>手元でも本物でも使える</h3>
 <table>
   <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
-  <tr><td>D1・KV・R2</td><td>既定は手元の模擬(<code>.wrangler/state/</code>)。<code>remote: true</code> で本物につなぐ。R2 の S3 互換 API は wrangler-compose が手元で開く(<a href="requirements.html#req-015">REQ-015</a>)</td><td>実装・資料・実測</td></tr>
+  <tr><td>D1・KV・R2</td><td>既定は手元の模擬(<code>.wrangler/compose/local/state/</code>)。<code>remote: true</code> で本物につなぐ。R2 の S3 互換 API は wrangler-compose が手元で開く(<a href="requirements.html#req-014">REQ-014</a>)</td><td>実装・資料・実測</td></tr>
   <tr><td>Queues</td><td>手元の模擬。<strong><code>remote: true</code> を書いても手元の模擬のまま</strong>(miniflare が無視する。workers-sdk #13727)</td><td>実装</td></tr>
-  <tr><td>サービスバインディング</td><td>同じ <code>up</code> で動かしたサービス(<a href="requirements.html#req-020">REQ-020</a>)か、手元の別の dev につながる。<code>remote: true</code> でデプロイ済みの Worker につなぐ</td><td>実装・資料・実測</td></tr>
+  <tr><td>サービスバインディング</td><td>同じ <code>up</code> で動かしたサービス(<a href="requirements.html#req-014">REQ-014</a>)か、手元の別の dev につながる。<code>remote: true</code> でデプロイ済みの Worker につなぐ</td><td>実装・資料・実測</td></tr>
   <tr><td>Browser Run・Images・Stream・メールの送信(<code>send_email</code>)・Pipelines・Flagship</td><td>既定は手元の模擬。メールは実際には送られず、内容が画面と手元のファイルに出る</td><td>実装・資料</td></tr>
 </table>
 
@@ -122,11 +122,11 @@
 <h2 id="covered">wrangler-compose が補うもの</h2>
 <table>
   <tr><th style="width:30%">足りないもの</th><th>wrangler-compose での扱い</th></tr>
-  <tr><td>R2 の S3 互換 API・署名付き URL</td><td><code>--env local up</code> が手元の S3 の口を開く(<a href="requirements.html#req-015">REQ-015</a>)</td></tr>
-  <tr><td>本番に近いデータでの手元の開発</td><td>Cloudflare の環境の控えを手元へ <code>restore</code> できる(<a href="requirements.html#req-017">REQ-017</a>)</td></tr>
-  <tr><td>手元の D1 の移行</td><td><code>--env local up</code> が動かす前に当てる(<a href="requirements.html#req-014">REQ-014</a>)</td></tr>
-  <tr><td>複数の Worker をまとめて手元で動かすこと</td><td>compose ファイルのサービスをまとめて動かす(<a href="requirements.html#req-020">REQ-020</a>)</td></tr>
-  <tr><td>手元で使えないものに気づくこと</td><td><code>--env local up</code> が動かす前に、この頁の項目のうち設定にあるものを示す(<a href="requirements.html#req-021">REQ-021</a>)</td></tr>
+  <tr><td>R2 の S3 互換 API・署名付き URL</td><td><code>--env local up</code> が手元の S3 の口を開く(<a href="requirements.html#req-014">REQ-014</a>)</td></tr>
+  <tr><td>本番に近いデータでの手元の開発</td><td>Cloudflare の環境の控えを手元へ <code>restore</code> できる(<a href="requirements.html#req-012">REQ-012</a>)</td></tr>
+  <tr><td>手元の D1 の移行</td><td><code>--env local up</code> が動かす前に当てる(<a href="requirements.html#req-008">REQ-008</a>)</td></tr>
+  <tr><td>複数の Worker をまとめて手元で動かすこと</td><td>compose ファイルのサービスをまとめて動かす(<a href="requirements.html#req-014">REQ-014</a>)</td></tr>
+  <tr><td>手元で使えないものに気づくこと</td><td><code>--env local up</code> が動かす前に、この頁の項目のうち設定にあるものを示す(<a href="requirements.html#req-017">REQ-017</a>)</td></tr>
 </table>
 
 <footer>docs/wrangler-compose/local-support.html</footer>
