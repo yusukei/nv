@@ -63,8 +63,8 @@ pub fn update(check_only: bool) -> Result<()> {
         for (tool, dest) in &targets {
             let asset = format!("{tool}-{TARGET}{EXE_SUFFIX}");
             let new = dir.join(format!(".{tool}{EXE_SUFFIX}.new"));
-            let actual = http::download(&format!("{base}/{asset}"), &new)
-                .with_context(|| format!("cannot write into {}", dir.display()))?;
+            // http::download names the failing step (download vs. writing the file).
+            let actual = http::download(&format!("{base}/{asset}"), &new)?;
             staged.push((new.clone(), dest.clone()));
             http::verify(http::checksum_for(&sums, &asset), &actual, &asset)?;
             make_executable(&new)?;
@@ -78,8 +78,25 @@ pub fn update(check_only: bool) -> Result<()> {
         return Err(e.context("nothing was replaced"));
     }
 
-    for (new, dest) in &staged {
-        swap(new, dest)?;
+    // Replace all or none, so nv and wrangler-compose stay on one version.
+    let mut swapped: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (i, (new, dest)) in staged.iter().enumerate() {
+        match swap(new, dest) {
+            Ok(old) => swapped.push((old, dest.clone())),
+            Err(e) => {
+                for (old, d) in swapped.iter().rev() {
+                    let _ = remove_any(d);
+                    let _ = fs::rename(old, d);
+                }
+                for (n, _) in &staged[i..] {
+                    let _ = remove_any(n);
+                }
+                return Err(e.context("nothing was replaced"));
+            }
+        }
+    }
+    for (old, dest) in &swapped {
+        let _ = fs::remove_file(old); // fails on Windows while running; cleaned up next start
         eprintln!("nv: updated {} {now} -> {latest}", dest.display());
     }
 
@@ -93,27 +110,21 @@ pub fn update(check_only: bool) -> Result<()> {
     Ok(())
 }
 
-/// Move `dest` aside and put `new` in its place. Renaming a running
-/// executable works on Windows, overwriting it does not.
-fn swap(new: &Path, dest: &Path) -> Result<()> {
+/// Move `dest` aside and put `new` in its place; returns where the old file
+/// went. Renaming a running executable works on Windows, overwriting it does not.
+fn swap(new: &Path, dest: &Path) -> Result<PathBuf> {
     let old = dest.with_file_name(format!(
         "{}.{}.old",
         dest.file_name().unwrap().to_string_lossy(),
         std::process::id()
     ));
-    let had_old = dest.exists();
-    if had_old {
-        fs::rename(dest, &old).with_context(|| format!("cannot replace {}", dest.display()))?;
-    }
+    fs::rename(dest, &old).with_context(|| format!("cannot replace {}", dest.display()))?;
     if let Err(e) = fs::rename(new, dest) {
-        if had_old {
-            let _ = fs::rename(&old, dest);
-        }
+        let _ = fs::rename(&old, dest);
         let _ = remove_any(new);
         bail!("cannot replace {}: {e}", dest.display());
     }
-    let _ = fs::remove_file(&old); // fails on Windows while running; cleaned up next start
-    Ok(())
+    Ok(old)
 }
 
 /// Delete `<tool>.<pid>.old` files left by a previous update.

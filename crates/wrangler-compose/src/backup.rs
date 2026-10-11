@@ -42,8 +42,17 @@ pub fn backup(project: &Project, dest: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    let dir = base.join(&env).join(timestamp());
-    fs::create_dir_all(dir.join("d1"))?;
+    // A new folder every time: never write into an existing backup.
+    fs::create_dir_all(base.join(&env))?;
+    let created = timestamp();
+    let dir = base.join(&env).join(&created);
+    fs::create_dir(&dir).with_context(|| {
+        format!(
+            "{} already exists; wait a second and run backup again",
+            dir.display()
+        )
+    })?;
+    fs::create_dir(dir.join("d1"))?;
     eprintln!("wrangler-compose: backing up {env} into {}", dir.display());
 
     let mut d1_entries = Vec::new();
@@ -80,6 +89,8 @@ pub fn backup(project: &Project, dest: Option<PathBuf>) -> Result<()> {
         );
         let mut list = Vec::new();
         for (i, o) in objects.iter().enumerate() {
+            crate::interrupt::check()
+                .with_context(|| format!("the backup in {} is incomplete", dir.display()))?;
             let rel = format!("{folder}/{i}");
             let got = s
                 .download(&o.key, &dir.join(&rel))
@@ -97,7 +108,8 @@ pub fn backup(project: &Project, dest: Option<PathBuf>) -> Result<()> {
         "format": 1,
         "environment": env,
         "worker": project.config.worker,
-        "created": timestamp(),
+        "created": created,
+        "wrangler": project.wrangler_version,
         "d1": d1_entries,
         "r2": r2_entries,
     });

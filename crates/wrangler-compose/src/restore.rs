@@ -66,10 +66,20 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         let target = project.config.r2.iter().find(|b| b.binding == binding).ok_or_else(|| {
             anyhow!("the backup has R2 {binding}, but environment {env} has no such binding; nothing was changed")
         })?;
+        // Check every backed-up object now, before anything is deleted.
         for o in entry["objects"].as_array().into_iter().flatten() {
+            crate::interrupt::check()?;
             if o["size"].as_u64().unwrap_or(0) > MAX_SINGLE_PUT {
                 bail!(
                     "object {} is larger than 5 GiB, which restore cannot upload yet; nothing was changed",
+                    o["key"]
+                );
+            }
+            let file = from.join(o["file"].as_str().unwrap_or_default());
+            if !file.is_file() || o["sha256"].as_str() != Some(sha256_file(&file)?.as_str()) {
+                bail!(
+                    "{} (object {}) is missing or does not match the backup manifest; nothing was changed",
+                    file.display(),
                     o["key"]
                 );
             }
@@ -121,9 +131,11 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         if busy.is_empty() {
             eprintln!("  (the target is already empty)");
         }
-        eprintln!(
-            "  The Worker keeps serving while this runs, so users may see missing data until it finishes."
-        );
+    }
+    eprintln!(
+        "wrangler-compose: the Worker keeps serving while restore runs, so users may see missing data until it finishes"
+    );
+    if drop {
         confirm::retype_env(&env, "replace its data")?;
     }
 
@@ -142,22 +154,31 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         }
         for (s, entry) in &r2_plan {
             if drop {
-                let n = s.delete_all()?;
-                done.push(format!("emptied R2 {} ({n} objects)", s.bucket_name));
+                let mut n = 0;
+                let emptied = s.delete_all(&mut n);
+                done.push(format!("deleted {n} objects in R2 {}", s.bucket_name));
+                emptied?;
             }
             let objects = entry["objects"].as_array().cloned().unwrap_or_default();
-            for o in &objects {
+            for (i, o) in objects.iter().enumerate() {
                 let key = o["key"].as_str().unwrap_or_default();
                 let file = from.join(o["file"].as_str().unwrap_or_default());
-                if o["sha256"].as_str() != Some(sha256_file(&file)?.as_str()) {
-                    bail!("{} does not match the backup manifest", file.display());
+                let put = crate::interrupt::check().and_then(|_| {
+                    s.upload(
+                        key,
+                        &file,
+                        &unpairs(&o["headers"]),
+                        &unpairs(&o["metadata"]),
+                    )
+                });
+                if let Err(e) = put {
+                    done.push(format!(
+                        "uploaded {i} of {} objects to R2 {}",
+                        objects.len(),
+                        s.bucket_name
+                    ));
+                    return Err(e);
                 }
-                s.upload(
-                    key,
-                    &file,
-                    &unpairs(&o["headers"]),
-                    &unpairs(&o["metadata"]),
-                )?;
             }
             done.push(format!(
                 "restored R2 {} ({} objects)",

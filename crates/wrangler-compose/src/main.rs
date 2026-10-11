@@ -7,6 +7,7 @@ mod dotenv;
 mod down;
 mod files;
 mod git;
+mod interrupt;
 mod project;
 mod r2;
 mod restore;
@@ -57,6 +58,7 @@ enum Cmd {
 
 fn main() {
     let cli = Cli::parse();
+    interrupt::install();
     if let Err(e) = dispatch(cli) {
         eprintln!("wrangler-compose: error: {e:#}");
         std::process::exit(2);

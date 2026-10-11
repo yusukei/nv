@@ -13,23 +13,43 @@
 - nv は Wrangler を使わないプロジェクトでも単独で使える
 - 更新(`nv self update`)とエージェント用のスキル(`nv install skill`)は nv が 2 つ分まとめて受け持つ
 
-## nv の導入
+## 導入
 
-Release から OS に合う実行ファイルを取り、1 つのフォルダに置く(インストーラも PATH の書き換えも要らない。PATH に入れるかは自分で決める)。`<owner>/<repo>` はこのリポジトリ。
+Release から OS に合う `nv` と `wrangler-compose` を取り、同じフォルダ(下の例では `~/.local/bin`)に置く。インストーラも PATH の書き換えも要らない(PATH に入れるかは自分で決める)。wrangler-compose を使わないなら `nv` だけでよい。`<owner>/<repo>` はこのリポジトリ。
 
-macOS(Apple Silicon)。ブラウザで取ると隔離の印が付いて止められるので、`curl` で取る:
+macOS はブラウザで取ると隔離の印が付いて止められるので、どの OS もコマンドで取る。
+
+### macOS(Apple Silicon)
 
 ```bash
-mkdir -p ~/.local/bin && curl -fL -o ~/.local/bin/nv https://github.com/<owner>/<repo>/releases/latest/download/nv-aarch64-apple-darwin && chmod +x ~/.local/bin/nv
+R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-aarch64-apple-darwin" && chmod +x ~/.local/bin/$b; done
 ```
 
-Windows(PowerShell):
+### macOS(Intel)
+
+```bash
+R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-apple-darwin" && chmod +x ~/.local/bin/$b; done
+```
+
+### Linux(x64)
+
+```bash
+R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-unknown-linux-musl" && chmod +x ~/.local/bin/$b; done
+```
+
+### Windows(x64、PowerShell)
 
 ```powershell
-New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Invoke-WebRequest -OutFile "$HOME\.local\bin\nv.exe" https://github.com/<owner>/<repo>/releases/latest/download/nv-x86_64-pc-windows-msvc.exe
+$R = "https://github.com/<owner>/<repo>/releases/latest/download"; $D = "$HOME\.local\bin"; New-Item -ItemType Directory -Force $D | Out-Null; foreach ($b in "nv", "wrangler-compose") { Invoke-WebRequest -OutFile "$D\$b.exe" "$R/$b-x86_64-pc-windows-msvc.exe" }
 ```
 
-ほかの OS は `nv-x86_64-apple-darwin`・`nv-x86_64-unknown-linux-musl`。以後の更新は `nv self update`。
+### 入ったかを確かめる
+
+```bash
+~/.local/bin/nv --version
+```
+
+Windows は `& "$HOME\.local\bin\nv.exe" --version`。以後の更新は `nv self update`(同じフォルダの wrangler-compose も同じ版になる)。
 
 ## nv の使い方
 
@@ -47,7 +67,7 @@ nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ�
 
 ## wrangler-compose の使い方
 
-nv と同じフォルダに置く(Release の `wrangler-compose-<ターゲット>`)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`)。
+nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`)。
 
 ```bash
 wrangler-compose --env staging build      # 組むだけ(何も上げない)

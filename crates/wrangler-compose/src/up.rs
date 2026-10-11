@@ -65,8 +65,11 @@ pub fn up(project: &Project) -> Result<()> {
             .context("the Worker is deployed, but its D1 migrations are not applied; fix the migration and run `up` again")?;
     }
 
-    if let Some(secrets) = &secrets {
-        report_leftover_secrets(project, secrets)?;
+    // The deploy is done; a failed listing must not hide that.
+    if let Some(secrets) = &secrets
+        && let Err(e) = report_leftover_secrets(project, secrets)
+    {
+        eprintln!("wrangler-compose: warning: could not list the Worker's secrets: {e:#}");
     }
     if project.config_file_bytes()? != before {
         bail!(

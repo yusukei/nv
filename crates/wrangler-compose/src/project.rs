@@ -42,6 +42,7 @@ pub struct Project {
     nv: PathBuf,
     pub env: Option<String>,
     pub config: Config,
+    pub wrangler_version: String,
 }
 
 /// Prints the parts of the resolved Wrangler config that wrangler-compose
@@ -161,6 +162,7 @@ impl Project {
             nv,
             env,
             config,
+            wrangler_version: version.to_string(),
         })
     }
 
@@ -191,6 +193,27 @@ impl Project {
         S: AsRef<OsStr>,
     {
         let mut cmd = self.wrangler_cmd(args);
+        let shown = describe(&cmd);
+        let status = cmd
+            .status()
+            .with_context(|| format!("cannot start {shown}"))?;
+        if !status.success() {
+            bail!("`{shown}` failed ({status})");
+        }
+        Ok(())
+    }
+
+    /// Run Wrangler attached to the user's terminal so it can ask its own
+    /// questions. Only for `delete`: run non-interactively, Wrangler answers
+    /// "yes" to "other Workers depend on this one, delete anyway?" by itself
+    /// (DES-009). Deploys never use this (config write-back, DES-002).
+    pub fn wrangler_interactive<I, S>(&self, args: I) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut cmd = self.wrangler_cmd(args);
+        cmd.stdin(Stdio::inherit());
         let shown = describe(&cmd);
         let status = cmd
             .status()

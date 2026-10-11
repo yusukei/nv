@@ -132,7 +132,7 @@
 <ol>
   <li>消えるものを示す: Worker 名、シークレットの名前(<code>wrangler secret list</code>)、設定のルート・カスタムドメイン・Cron・Durable Objects</li>
   <li>打ち直しの確かめ(DES-008)</li>
-  <li><code>wrangler delete</code>(標準入力が空なので Wrangler の確かめは「はい」で進む。<code>--force</code> は付けない: ほかの Worker が頼っているときは Wrangler が止める)</li>
+  <li><code>wrangler delete</code> は、利用者の端末をつないで動かす(<code>delete</code> だけは標準入力を空にしない)。ほかの Worker が頼っているとき、Wrangler は頼っている先を並べて強制で消すかを尋ねるが、標準入力が空だと既定の「はい」で強制削除まで進んでしまう(4.128.0 の <code>checkAndConfirmForceDeleteIfNecessary</code> と <code>confirm2</code> で確認)。端末をつなげば、その問いに利用者が答える。Wrangler 自身の「本当に消すか」の問いにも、もう一度答えることになる。書き戻しはデプロイでしか起きないので、<code>delete</code> を対話で動かしても DES-002 は崩れない</li>
 </ol>
 
 <h3 id="des-010"><span class="id">DES-010</span>R2 の S3 API <span class="refs">REQ-006・REQ-007・REQ-008・REQ-009</span></h3>
@@ -140,7 +140,8 @@
   <li>アカウント ID は、設定の <code>account_id</code>、無ければ <code>wrangler whoami --json</code> のアカウントが 1 つならそれ。複数あって決められなければ、設定に <code>account_id</code> を書くよう示して止まる</li>
   <li>口は管轄が無ければ <code>https://&lt;アカウント ID&gt;.r2.cloudflarestorage.com</code>、あれば <code>https://&lt;アカウント ID&gt;.&lt;管轄&gt;.r2.cloudflarestorage.com</code>。地域は <code>auto</code></li>
   <li>キーが正しいかは、各バケットへの ListObjectsV2(1 件)が通るかで見る。403 などは「キーが無い・正しくない」として、何もせずに止まる</li>
-  <li>オブジェクトの消去は DeleteObjects で 1000 件ずつ</li>
+  <li>オブジェクトの消去は DeleteObjects で 1000 件ずつ。消えた件数は応答の Deleted から数え、途中で失敗しても呼び出し元へ返す(途中経過の報告に使う)</li>
+  <li>時間切れ: 接続 30 秒・要求の送信 60 秒・応答の受け取り 120 秒(ureq の既定はどれも無し)。本体の受け取りには上限を付けない(大きなオブジェクトがあるため)</li>
 </ul>
 
 <h3 id="des-011"><span class="id">DES-011</span>down --purge <span class="refs">REQ-006</span></h3>
@@ -162,7 +163,9 @@
       <li><code>manifest.json</code>: 環境名・作った日時・Wrangler の版・D1 ごとのファイル・R2 ごとのオブジェクト(キー・ファイル・大きさ・SHA-256・内容の種類などの見出し・利用者のメタデータ)</li>
     </ul>
   </li>
-  <li><code>manifest.json</code> を最後に書く。目録の無いフォルダは書きかけ(restore は受けない)</li>
+  <li><code>manifest.json</code> を最後に書く。目録の無いフォルダは書きかけ(restore は受けない)。目録には Wrangler の版も書く</li>
+  <li>日時のフォルダは毎回新しく作る(あれば止まる。同じ秒の 2 回目が前の控えに書き込まない)</li>
+  <li>書き出し先がプロジェクトの git の外なら、git の確かめはしない</li>
   <li>書き出し先がプロジェクトの git の中にあれば、DES-005 と同じ確かめを <code>backups/</code>(または渡された場所)に対して行う</li>
   <li>D1 の書き出しが失敗したら(書き出せない表があるなど)、Wrangler の理由を示して止まる。目録は書かない</li>
 </ul>
@@ -172,7 +175,8 @@
   <li>目録を読む。無ければ書きかけとして止まる。D1 の SQL に <code>d1_migrations</code> の表が無ければ(移行の履歴が無い)止まる</li>
   <li>API キーを確かめる。戻す先の D1(<code>d1 list</code>)とバケット(ListObjectsV2)があるかを見る。無ければ <code>up</code> を求めて止まる</li>
   <li>空かを見る: D1 は <code>wrangler d1 execute … --json</code> で、<code>sqlite_</code>・<code>_cf_</code> で始まらない表があるか。バケットはオブジェクトが 1 つでもあるか</li>
-  <li>空でなく <code>--drop</code> が無ければ止まる。<code>--drop</code> なら消すもの(表の数・オブジェクトの数)と、戻している間に欠けたデータが見えることを示し、打ち直しの確かめ</li>
+  <li>控えの R2 のすべてのファイルがあり、SHA-256 が目録と合うことを、何かを消す前に確かめる(1 つでも合わなければ何も変えずに止まる)</li>
+  <li>空でなく <code>--drop</code> が無ければ止まる。<code>--drop</code> なら消すもの(表の数・オブジェクトの数)を示す。<code>--drop</code> の有無によらず、戻している間に欠けたデータが見えることを示す。<code>--drop</code> なら打ち直しの確かめ</li>
   <li><code>--drop</code>: 表・ビュー・トリガーを <code>DROP</code> し(外部キーの順に左右されないよう <code>PRAGMA defer_foreign_keys=ON</code> を付けて 1 回で流す)、バケットのオブジェクトを消す</li>
   <li><code>wrangler d1 execute &lt;バインディング&gt; --remote --file &lt;SQL&gt;</code> で D1 を戻し、PutObject で各オブジェクトを、目録の見出しとメタデータを付けて戻す(戻す前に SHA-256 を照らす)</li>
   <li>移行の適用(DES-007 の 3 と同じ)で、控えのあとに足された移行を当てる</li>
@@ -182,6 +186,8 @@
 <ul>
   <li>wrangler-compose 自身の出力は英語で標準エラーへ(nv と同じ)。自身が止まったときの終了コードは 2</li>
   <li>シークレットの値と API キーは、どこにも出さない。シークレットは名前だけを示す。目録にも書かない</li>
+  <li>Ctrl+C を受けても wrangler-compose はすぐには終わらない。端末の Ctrl+C は Wrangler にも届いてそちらが止まり、wrangler-compose は後片付け(シークレットの一時ファイルの消去)と、何をして何が残っているかの報告を済ませてから終わる。Wrangler を動かしていない段(R2 のオブジェクトごとの処理)では、1 件ごとに中断を見る</li>
+  <li><code>up</code> で、デプロイのあとのシークレットの一覧に失敗しても、警告にとどめる(デプロイが済んだことを隠さない)</li>
 </ul>
 
 <h3 id="des-015"><span class="id">DES-015</span>試験</h3>
@@ -194,6 +200,7 @@
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
   <li>Cloudflare の側の D1 の書き出し(<code>--remote</code>)が、手元と同じく <code>d1_migrations</code> を含むこと(手元の D1 でだけ確かめた)</li>
+  <li>一度 <code>down</code> した(Worker の無い)環境で <code>down --purge</code> を打ったとき、<code>wrangler delete</code> が失敗してデータの消去へ進めない恐れ(Cloudflare の応答を見て、Worker が無いなら削除を飛ばす形に直す)</li>
   <li>Cloudflare の側の D1 で、外部キーのある表を <code>defer_foreign_keys</code> を付けて消せること</li>
   <li>R2 の PutObject の 1 回の上限を超える大きなオブジェクト(分割アップロードが要るもの)。当面は上限を超えるものがあれば restore の前に止める</li>
 </ul>

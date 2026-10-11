@@ -2,6 +2,7 @@
 
 use crate::confirm;
 use crate::d1;
+use crate::interrupt;
 use crate::project::Project;
 use crate::r2::{self, Store};
 use crate::up::read_env_file;
@@ -45,12 +46,13 @@ pub fn down(project: &Project) -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow!("an environment is required"))?;
     confirm::require_terminal("down")?;
+    interrupt::check()?;
     eprintln!(
         "wrangler-compose: `down` deletes the Worker and everything below. D1 and R2 data are kept."
     );
     show_worker_losses(project);
     confirm::retype_env(&env, "delete the Worker")?;
-    project.wrangler(["delete"])?;
+    project.wrangler_interactive(["delete"])?;
     eprintln!(
         "wrangler-compose: deleted {}; D1 and R2 were kept, `up` brings it back",
         project.config.worker
@@ -106,10 +108,16 @@ pub fn purge(project: &Project) -> Result<()> {
 
     let mut done: Vec<String> = Vec::new();
     let result = (|| -> Result<()> {
-        project.wrangler(["delete"])?;
+        project.wrangler_interactive(["delete"])?;
         done.push(format!("Worker {}", project.config.worker));
         for (s, b) in stores.iter().zip(&project.config.r2) {
-            let n = s.delete_all()?;
+            let mut n = 0;
+            if let Err(e) = s.delete_all(&mut n) {
+                if n > 0 {
+                    done.push(format!("{n} objects in R2 bucket {}", b.bucket));
+                }
+                return Err(e);
+            }
             let mut args = vec![
                 "r2".to_string(),
                 "bucket".into(),
@@ -127,8 +135,10 @@ pub fn purge(project: &Project) -> Result<()> {
         for d in &project.config.d1 {
             if d1::exists(d, &remote) {
                 project.wrangler(["d1", "delete", &d.name, "-y"])?;
+                done.push(format!("D1 {}", d.name));
+            } else {
+                eprintln!("wrangler-compose: D1 {} did not exist", d.name);
             }
-            done.push(format!("D1 {}", d.name));
         }
         Ok(())
     })();

@@ -1189,6 +1189,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ctrlc",
  "rusty-s3",
  "serde_json",
  "sha2",

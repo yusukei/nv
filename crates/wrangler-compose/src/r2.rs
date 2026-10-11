@@ -4,7 +4,7 @@
 use crate::dotenv;
 use crate::project::{Project, R2};
 use anyhow::{Context, Result, anyhow, bail};
-use rusty_s3::actions::{ListObjectsV2, ObjectIdentifier, S3Action};
+use rusty_s3::actions::{DeleteObjectsResponse, ListObjectsV2, ObjectIdentifier, S3Action};
 use rusty_s3::{Bucket, Credentials, UrlStyle};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -30,6 +30,11 @@ fn agent() -> &'static ureq::Agent {
             .user_agent(concat!("wrangler-compose/", env!("CARGO_PKG_VERSION")))
             // We read error bodies ourselves to give useful messages.
             .http_status_as_error(false)
+            // Without these a dropped network hangs forever (ureq's default).
+            // Bodies have no total limit: objects can be large.
+            .timeout_connect(Some(Duration::from_secs(30)))
+            .timeout_send_request(Some(Duration::from_secs(60)))
+            .timeout_recv_response(Some(Duration::from_secs(120)))
             .build()
             .into()
     })
@@ -276,11 +281,12 @@ impl Store {
         Ok(())
     }
 
-    /// Delete every object, 1000 per request. Returns how many were deleted.
-    pub fn delete_all(&self) -> Result<usize> {
+    /// Delete every object, 1000 per request. `deleted` counts what is gone,
+    /// also when this fails part way, so the caller can report it.
+    pub fn delete_all(&self, deleted: &mut usize) -> Result<()> {
         let objects = self.list_all()?;
-        let mut deleted = 0;
         for chunk in objects.chunks(1000) {
+            crate::interrupt::check()?;
             let ids: Vec<ObjectIdentifier> = chunk
                 .iter()
                 .map(|o| ObjectIdentifier::new(o.key.clone()))
@@ -303,16 +309,23 @@ impl Store {
                     snippet(&text)
                 );
             }
-            if text.contains("<Error>") {
-                bail!(
-                    "some objects in {} could not be deleted: {}",
-                    self.bucket_name,
-                    snippet(&text)
-                );
+            match DeleteObjectsResponse::parse(&text) {
+                Ok(r) => {
+                    *deleted += r.deleted.len();
+                    if !r.errors.is_empty() {
+                        bail!(
+                            "{} objects in {} could not be deleted: {}",
+                            r.errors.len(),
+                            self.bucket_name,
+                            snippet(&text)
+                        );
+                    }
+                }
+                // A response without per-key results: the request succeeded.
+                Err(_) => *deleted += chunk.len(),
             }
-            deleted += chunk.len();
         }
-        Ok(deleted)
+        Ok(())
     }
 }
 
