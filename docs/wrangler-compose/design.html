@@ -30,6 +30,7 @@
     <li><a href="#des-007">DES-007 build</a></li>
     <li><a href="#des-008">DES-008 手元の up</a></li>
     <li><a href="#des-009">DES-009 リモートの up</a></li>
+    <li><a href="#des-018">DES-018 R2 のバケットの設定</a></li>
     <li><a href="#des-010">DES-010 Durable Objects のクラスの足し引き</a></li>
     <li><a href="#des-011">DES-011 道具のサービス</a></li>
     <li><a href="#des-012">DES-012 down</a></li>
@@ -71,6 +72,7 @@
 <ul>
   <li>YAML を読むクレートを 1 つ足す(<code>serde-saphyr</code> か <code>serde_yaml_ng</code>。作る時点で手入れが続いている方)。手入れの止まった <code>serde_yaml</code> は使わない</li>
   <li>値の木に読み、自前で確かめてから型のある形へ移す(<code>x-</code> を許しつつ知らないキーで止まるため)。止まるときは場所と理由を示す</li>
+  <li>省略形と複数形は、読んだ直後に複数形へそろえる(省略形は、サービスの名前を資源の名前とする 1 つの資源)。以降の作りは複数形だけを扱う</li>
   <li>サービスの順: <code>bindings</code>・<code>consumes</code> の相手と <code>depends_on</code> を依存として並べる(決まらないところはファイルの順。輪は止まる)。<code>up</code> に名前を渡せば依存をたどった集まり、<code>down</code> は渡した名前だけ</li>
 </ul>
 
@@ -83,7 +85,7 @@
 
 <h3 id="des-004"><span class="id">DES-004</span>実際の名前と見つけ直し <span class="refs">REQ-006</span></h3>
 <ul>
-  <li>実際の名前は、サービスの <code>name</code>、無ければ <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>。Cloudflare の名前の決まりに合わなければ止まる</li>
+  <li>実際の名前は、<code>name</code>、無ければ Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>。手元では資源の名前のまま。Cloudflare の名前の決まりに合わなければ止まる</li>
   <li>ID の記録(<code>.wrangler/compose/&lt;環境&gt;/resources.json</code>)は写しにすぎない。<code>up</code> のたびに名前で Cloudflare を引き直す(<code>d1 list</code>・<code>kv namespace list</code>・<code>r2 bucket list</code>・<code>queues list</code>)ので、記録を失っても別の PC からでも同じものにつながる。無ければ作り、あれば使う</li>
   <li>初めての環境かは、その環境の名前の Worker か資源が Cloudflare にあるかで見る(REQ-015)</li>
 </ul>
@@ -126,6 +128,13 @@
   <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない</li>
   <li>移行が失敗したら、その D1 を使う Worker と、それより後のサービスは行わない</li>
   <li>compose から消えた Worker は、記録と名前(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-</code> で始まるもの)から見つけて示し、<code>--remove-orphans</code> のときだけ消す</li>
+</ul>
+
+<h3 id="des-018"><span class="id">DES-018</span>R2 のバケットの設定 <span class="refs">REQ-002・REQ-009</span></h3>
+<ul>
+  <li><strong>リモート</strong>: <code>up</code> が、バケットごとに compose ファイルの設定と Cloudflare の設定を比べ、違えば合わせる。作るときの <code>storage_class</code>・<code>jurisdiction</code> は <code>r2 bucket create</code> の引数、ほかは <code>r2 bucket dev-url</code>(<code>public</code>)・<code>r2 bucket cors</code>・<code>r2 bucket lifecycle</code>・<code>r2 bucket notification</code>・<code>r2 bucket lock</code> で入れる。compose ファイルから消した設定は消す</li>
+  <li><strong>手元</strong>: Wrangler の手元の模擬に無いもの(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は、道具のサービス(DES-011)で効かせる。公開は入口のサービスがバケットの公開の URL を配り、CORS は S3 互換の口と公開の URL の応答に付け、ライフサイクルは決まった時刻にデータのサービスが行い、通知はオブジェクトの変化を手元の Queue へ送り、ロックと保管の種類は書き込み・消去の前に確かめる</li>
+  <li>手元で、バインディングからの書き込み・消去(Worker のコードの <code>env.FILES.put</code> など)を道具のサービスが見る手立て(通知・ロックのため)は、作る前に確かめる(<a href="#unverified">確かめていないこと</a>)</li>
 </ul>
 
 <h3 id="des-010"><span class="id">DES-010</span>Durable Objects のクラスの足し引き <span class="refs">REQ-002・REQ-015</span></h3>
@@ -190,6 +199,7 @@
   <li>リモートのデータのサービス: <code>workers.dev</code> の名前がまだ無いアカウントで、人の段取りなしに建てて呼べること。大きなオブジェクトを分けて受け渡せること(試験用のアカウントが要る)</li>
   <li>前回展開した Durable Object のクラスの一覧を Cloudflare から読めること</li>
   <li>Windows で、中継・錠・止め方が同じに動くこと</li>
+  <li>R2 の手元の機能: Worker のバインディングからの書き込み・消去を道具のサービスが見られるか(イベント通知とロックのため)。Wrangler の手元の模擬に公開・CORS・ライフサイクル・通知・ロック・保管の種類が本当に無いか(あればそれを使う)</li>
 </ul>
 
 <footer>docs/wrangler-compose/design.html</footer>

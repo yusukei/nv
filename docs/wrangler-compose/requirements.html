@@ -93,16 +93,17 @@ services:
     depends_on: [api]
     bindings:
       API: api                      # 相手が worker なら、その Worker を呼べる
-      FILES: files
+      FILES: storage.files          # &lt;サービス&gt;.&lt;バケット&gt;
 
   api:
     type: worker
     build: ./api
     ports: ["8788:8788"]
-    depends_on: [db, files, cache, jobs]
+    depends_on: [db, storage, cache, jobs]
     bindings:
       DB: db                        # 相手の型で、つながり方が決まる
-      FILES: files
+      FILES: storage.files
+      UPLOADS: storage.uploads
       CACHE: cache
       JOBS: jobs                    # queue へ送る
     consumes: [jobs]                # queue から受け取る
@@ -113,11 +114,24 @@ services:
     type: d1
     migrations: ./api/migrations
 
-  files:
+  storage:
     type: r2
+    buckets:                        # 複数のバケット。1 つなら省略形でもよい(REQ-002)
+      files:
+        public: true                # 公開の URL で配る
+        cors:
+          - origins: ["${WEB_ORIGIN}"]
+            methods: [GET, PUT]
+      uploads:
+        lifecycle:
+          - prefix: tmp/
+            expire_after_days: 7
+        notifications:
+          - queue: jobs
+            events: [object-create]
 
   cache:
-    type: kv
+    type: kv                        # 省略形: このサービスが KV 名前空間 1 つ
 
   jobs:
     type: queue
@@ -127,6 +141,7 @@ secrets:                            # docker compose の secrets と同じ形
     environment: STRIPE_KEY         # 値は .env.&lt;環境&gt; の STRIPE_KEY</code></pre>
 <pre><code># .env.staging(git の外)
 WEB_DOMAIN=staging.shop.example.com
+WEB_ORIGIN=https://staging.shop.example.com
 STRIPE_KEY=sk_test_...</code></pre>
 
 <h2 id="commands">コマンド</h2>
@@ -157,7 +172,9 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
-  <li>実際の名前は既定では道具が決め、サービスの <code>name</code> に書けばそれを使う</li>
+  <li>実際の名前は既定では道具が環境の名前を付けて決め(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;名前&gt;</code>)、<code>name</code> に書けばそれを使う</li>
+  <li>D1・R2・KV・Queue は、1 つのサービスに複数を名前つきで定義できる。1 つなら省略形で書いてよい</li>
+  <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルにバケットごとに書き、手元にもリモートにも同じに入れる</li>
   <li><code>down</code> はデータを残し、データは <code>--purge</code> のときだけ消す。手元の <code>--purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
   <li>Queue の受け手の細かい設定は今は持たず、Cloudflare の既定に任せる</li>
   <li>Node・npm の扱いは nv が受け持つ。GitHub の Release で nv と一緒に配り、更新とエージェント用のスキルは nv に寄せる</li>
@@ -190,15 +207,18 @@ STRIPE_KEY=sk_test_...</code></pre>
 
 <h3 id="req-002"><span class="id">REQ-002</span>サービスの型</h3>
 <table>
-  <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:28%">建つもの</th></tr>
+  <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:26%">建つもの</th></tr>
   <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
-  <tr><td><code>d1</code></td><td><code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
-  <tr><td><code>r2</code></td><td><code>name</code></td><td>R2 バケット 1 つ</td></tr>
-  <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
-  <tr><td><code>queue</code></td><td><code>name</code></td><td>Queue 1 つ</td></tr>
+  <tr><td><code>d1</code></td><td>省略形: <code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)。複数形: <code>databases.&lt;名前&gt;</code> の下に同じキー</td><td>D1 データベース 1 つ以上</td></tr>
+  <tr><td><code>r2</code></td><td>省略形: バケットのキー。複数形: <code>buckets.&lt;名前&gt;</code> の下にバケットのキー。バケットのキーは <code>name</code>・<code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ以上</td></tr>
+  <tr><td><code>kv</code></td><td>省略形: <code>name</code>。複数形: <code>namespaces.&lt;名前&gt;</code> の下に <code>name</code></td><td>KV 名前空間 1 つ以上</td></tr>
+  <tr><td><code>queue</code></td><td>省略形: <code>name</code>。複数形: <code>queues.&lt;名前&gt;</code> の下に <code>name</code></td><td>Queue 1 つ以上</td></tr>
 </table>
 <ul>
+  <li><strong>省略形と複数形</strong>: <code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code> は、1 つのサービスに資源を複数定義できる(複数形。<code>buckets</code>・<code>databases</code>・<code>namespaces</code>・<code>queues</code> の下に名前を付けて並べる)。1 つだけなら、サービスそのものを 1 つの資源として書いてよい(省略形。資源の名前はサービスの名前)。1 つのサービスで両方は書けない</li>
+  <li>資源の名前(省略形ならサービスの名前、複数形なら並べた名前)は、同じ型の中でプロジェクト全体で重ならない。英小文字・数字・<code>-</code> だけ</li>
   <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
+  <li>R2 のバケットのキーは、本物の R2 のバケットの設定と同じ意味を持つ: <code>public</code>(公開の URL で配る)・<code>cors</code>(CORS の決まり)・<code>lifecycle</code>(期限で消す・保管の種類を変える)・<code>notifications</code>(変化を同じプロジェクトの Queue へ送る)・<code>lock</code>(消せない期間)・<code>storage_class</code>(保管の種類)・<code>jurisdiction</code>(置き場の管轄)。どれも手元でも同じに効く(REQ-009)</li>
   <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_date</code>・<code>compatibility_flags</code> は Workers の互換の指定</li>
   <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧(Durable Objects は Worker の中のものなので、型にはしない)</li>
   <li>型は使うものから足す。足すときは、手元で本物と互換に動く手立てを同時に決める</li>
@@ -207,8 +227,9 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-003"><span class="id">REQ-003</span>つながり</h3>
 <ul>
   <li>Worker の <code>bindings</code> は「名前: 相手」。Worker のコードからは <code>env.&lt;名前&gt;</code> で見える</li>
-  <li>相手の型でつながり方が決まる: <code>worker</code> → その Worker を呼べる、<code>d1</code>・<code>r2</code>・<code>kv</code> → その資源を読み書きできる、<code>queue</code> → その Queue へ送れる。<code>&lt;worker&gt;.&lt;クラス&gt;</code> → その Worker の Durable Object を使える</li>
-  <li><code>consumes</code> は、その Worker が受け取る Queue の一覧</li>
+  <li>相手の書き方: 省略形のサービスはサービスの名前(<code>cache</code>)、複数形のサービスの資源は <code>&lt;サービス&gt;.&lt;資源の名前&gt;</code>(<code>storage.files</code>)、Worker の Durable Object は <code>&lt;worker&gt;.&lt;クラス&gt;</code>(<code>api.Counter</code>)。複数形のサービスを名前だけで指すと止まる</li>
+  <li>相手の型でつながり方が決まる: <code>worker</code> → その Worker を呼べる、<code>d1</code>・<code>r2</code>・<code>kv</code> → その資源を読み書きできる、<code>queue</code> → その Queue へ送れる、Durable Object → それを使える</li>
+  <li><code>consumes</code> は、その Worker が受け取る Queue の一覧(書き方は上と同じ)</li>
   <li>つながる相手は、<code>depends_on</code> に書かなくても先に建てる。<code>depends_on</code> はそれに足す順</li>
   <li>つながりは、手元でもリモートでも同じに働く</li>
 </ul>
@@ -232,7 +253,9 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-006"><span class="id">REQ-006</span>環境</h3>
 <ul>
   <li>環境は <code>--env</code> で選ぶ。<code>local</code> は手元、それ以外はリモート(名前は自由。<code>pr-123</code> のように並べて建てられる)</li>
-  <li>リモートの Worker と資源の Cloudflare での名前は、道具が <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code> で決める。サービスに <code>name</code> を書けばそれを使い、同じ名前のものがすでにあればそれを使う(作り直さない)</li>
+  <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>(例: <code>shop-staging-files</code>)。同じアカウントに環境を並べても名前がぶつからない(利用者の決定)</li>
+  <li><code>name</code> を書けば、その名前を使う(既存のものを使う、環境ごとに <code>${VAR}</code> で変えるなど)。同じ名前のものがすでにあれば、それを使う(作り直さない)</li>
+  <li>手元では、資源の名前(<code>files</code> など)をそのまま使う</li>
   <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
   <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
 </ul>
