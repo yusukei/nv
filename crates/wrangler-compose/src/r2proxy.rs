@@ -1,0 +1,344 @@
+//! The local R2 port of an r2 service (REQ-009): the S3-compatible API with
+//! the bucket's own CORS rules (the local simulator allows every origin,
+//! which would hide CORS mistakes until production), and public URLs at
+//! `http://<bucket>.localhost:<port>/<key>` for `public: true` buckets.
+//!
+//! Every request gets `Connection: close`, so each connection carries one
+//! request and only the request and response heads need to be read.
+
+use crate::compose::Cors;
+use std::io::{Read, Write};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::time::Duration;
+
+const S3_PREFIX: &str = "/cdn-cgi/local/r2/s3/";
+
+#[derive(Clone, Debug)]
+pub struct Site {
+    /// The bucket's local name (its resource key).
+    pub key: String,
+    pub public: bool,
+    pub cors: Vec<Cors>,
+}
+
+pub struct Shared {
+    pub sites: Vec<Site>,
+    /// The gateway's internal port: the simulator's S3 API and the data service.
+    pub gateway: SocketAddr,
+    pub token: String,
+}
+
+pub fn serve(listener: TcpListener, shared: Arc<Shared>) {
+    for conn in listener.incoming() {
+        let Ok(client) = conn else { continue };
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let _ = client.set_read_timeout(Some(Duration::from_secs(300)));
+            let _ = handle(client, &shared);
+        });
+    }
+}
+
+struct Head {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    raw_len: usize,
+}
+
+impl Head {
+    fn get(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// Read until the end of the head; returns it and every byte read.
+fn read_head(stream: &mut TcpStream) -> std::io::Result<Option<(Vec<u8>, usize)>> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if let Some(i) = find(&buf, b"\r\n\r\n") {
+            return Ok(Some((buf, i + 4)));
+        }
+        if buf.len() > 64 * 1024 {
+            return Ok(None);
+        }
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn parse(buf: &[u8], len: usize, request: bool) -> Option<Head> {
+    let text = std::str::from_utf8(&buf[..len]).ok()?;
+    let mut lines = text.split("\r\n");
+    let first = lines.next()?;
+    let mut parts = first.splitn(3, ' ');
+    let (a, b) = (parts.next()?.to_string(), parts.next()?.to_string());
+    let headers = lines
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+        .collect();
+    // For a response, `method` holds the protocol and `path` the status.
+    let _ = request;
+    Some(Head { method: a, path: b, headers, raw_len: len })
+}
+
+fn handle(mut client: TcpStream, shared: &Shared) -> std::io::Result<()> {
+    let Some((buf, len)) = read_head(&mut client)? else {
+        return respond(&mut client, 400, &[], b"bad request");
+    };
+    let Some(head) = parse(&buf, len, true) else {
+        return respond(&mut client, 400, &[], b"bad request");
+    };
+    let origin = head.get("origin").map(str::to_string);
+    if let Some(rest) = head.path.strip_prefix(S3_PREFIX) {
+        let bucket = rest.split(['/', '?']).next().unwrap_or_default();
+        let Some(site) = shared.sites.iter().find(|s| s.key == bucket) else {
+            return respond(&mut client, 404, &[("content-type", "application/xml".into())], b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist.</Message></Error>");
+        };
+        if head.method == "OPTIONS" && head.get("access-control-request-method").is_some() {
+            return preflight(&mut client, site, &head);
+        }
+        return proxy_s3(client, shared, site, &head, &buf, origin.as_deref());
+    }
+    // Public URL: <bucket>.localhost
+    let host = head.get("host").unwrap_or_default().to_ascii_lowercase();
+    let host = host.rsplit_once(':').map(|(h, _)| h.to_string()).unwrap_or(host);
+    let Some(bucket) = host.strip_suffix(".localhost") else {
+        let names: Vec<String> = shared.sites.iter().filter(|s| s.public).map(|s| format!("{}.localhost", s.key)).collect();
+        let msg = format!(
+            "wrangler-compose: use {S3_PREFIX}<bucket> for the S3-compatible API, or a public bucket's host ({})",
+            if names.is_empty() { "none".into() } else { names.join(", ") }
+        );
+        return respond(&mut client, 404, &[], msg.as_bytes());
+    };
+    let Some(site) = shared.sites.iter().find(|s| s.key == bucket && s.public) else {
+        return respond(&mut client, 404, &[], b"wrangler-compose: no public bucket by that name");
+    };
+    if head.method == "OPTIONS" && head.get("access-control-request-method").is_some() {
+        return preflight(&mut client, site, &head);
+    }
+    public_get(client, shared, site, &head, origin.as_deref())
+}
+
+/// R2's CORS: a rule matches when the origin and method are listed (an
+/// origin may contain one `*`).
+fn rule_for<'a>(site: &'a Site, origin: &str, method: &str) -> Option<&'a Cors> {
+    site.cors.iter().find(|r| {
+        r.origins.iter().any(|o| origin_matches(o, origin))
+            && r.methods.iter().any(|m| m.eq_ignore_ascii_case(method))
+    })
+}
+
+fn origin_matches(pattern: &str, origin: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == origin,
+        Some((a, b)) => origin.len() >= a.len() + b.len() && origin.starts_with(a) && origin.ends_with(b),
+    }
+}
+
+fn preflight(client: &mut TcpStream, site: &Site, head: &Head) -> std::io::Result<()> {
+    let origin = head.get("origin").unwrap_or_default();
+    let method = head.get("access-control-request-method").unwrap_or_default();
+    let wanted: Vec<String> = head
+        .get("access-control-request-headers")
+        .unwrap_or_default()
+        .split(',')
+        .map(|h| h.trim().to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect();
+    let rule = rule_for(site, origin, method).filter(|r| {
+        wanted.iter().all(|w| {
+            r.allowed_headers.iter().any(|a| a == "*" || a.eq_ignore_ascii_case(w))
+        })
+    });
+    let Some(rule) = rule else {
+        return respond(client, 403, &[], b"CORS preflight did not match the bucket's cors rules");
+    };
+    let mut h = vec![
+        ("access-control-allow-origin", origin.to_string()),
+        ("access-control-allow-methods", rule.methods.join(", ")),
+        ("vary", "Origin".to_string()),
+    ];
+    if !wanted.is_empty() {
+        h.push(("access-control-allow-headers", wanted.join(", ")));
+    }
+    if let Some(age) = rule.max_age {
+        h.push(("access-control-max-age", age.to_string()));
+    }
+    respond(client, 204, &h, b"")
+}
+
+fn cors_headers(site: &Site, origin: Option<&str>, method: &str) -> Vec<(&'static str, String)> {
+    let Some(origin) = origin else { return Vec::new() };
+    let Some(rule) = rule_for(site, origin, method) else { return Vec::new() };
+    let mut h = vec![("access-control-allow-origin", origin.to_string()), ("vary", "Origin".to_string())];
+    if !rule.expose_headers.is_empty() {
+        h.push(("access-control-expose-headers", rule.expose_headers.join(", ")));
+    }
+    h
+}
+
+fn proxy_s3(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, buf: &[u8], origin: Option<&str>) -> std::io::Result<()> {
+    let mut up = TcpStream::connect(shared.gateway)?;
+    // The request head goes as it came (the signature covers it), except
+    // that the connection closes after one response.
+    let mut out = format!("{} {} HTTP/1.1\r\n", head.method, head.path);
+    for (k, v) in &head.headers {
+        if !k.eq_ignore_ascii_case("connection") && !k.eq_ignore_ascii_case("keep-alive") {
+            out.push_str(&format!("{k}: {v}\r\n"));
+        }
+    }
+    out.push_str("connection: close\r\n\r\n");
+    up.write_all(out.as_bytes())?;
+    up.write_all(&buf[head.raw_len..])?;
+    let (mut c_read, mut u_write) = (client.try_clone()?, up.try_clone()?);
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut c_read, &mut u_write);
+    });
+    let Some((rbuf, rlen)) = read_head(&mut up)? else {
+        return respond(&mut client, 502, &[], b"no answer from the local R2");
+    };
+    let Some(rhead) = parse(&rbuf, rlen, false) else {
+        return respond(&mut client, 502, &[], b"bad answer from the local R2");
+    };
+    let mut out = format!("HTTP/1.1 {}\r\n", status_line(&rbuf));
+    for (k, v) in &rhead.headers {
+        let lk = k.to_ascii_lowercase();
+        if lk.starts_with("access-control-") || lk == "connection" || lk == "keep-alive" || lk == "vary" {
+            continue;
+        }
+        out.push_str(&format!("{k}: {v}\r\n"));
+    }
+    for (k, v) in cors_headers(site, origin, &head.method) {
+        out.push_str(&format!("{k}: {v}\r\n"));
+    }
+    out.push_str("connection: close\r\n\r\n");
+    client.write_all(out.as_bytes())?;
+    client.write_all(&rbuf[rlen..])?;
+    std::io::copy(&mut up, &mut client)?;
+    let _ = client.shutdown(Shutdown::Both);
+    let _ = up.shutdown(Shutdown::Both);
+    Ok(())
+}
+
+fn status_line(buf: &[u8]) -> String {
+    let end = find(buf, b"\r\n").unwrap_or(0);
+    let line = String::from_utf8_lossy(&buf[..end]);
+    line.split_once(' ').map(|(_, s)| s.to_string()).unwrap_or_else(|| "502 Bad Gateway".into())
+}
+
+/// Serve an object of a public bucket from the data service.
+fn public_get(mut client: TcpStream, shared: &Shared, site: &Site, head: &Head, origin: Option<&str>) -> std::io::Result<()> {
+    if head.method != "GET" && head.method != "HEAD" {
+        return respond(&mut client, 405, &[("allow", "GET, HEAD".into())], b"");
+    }
+    let path = head.path.split('?').next().unwrap_or("/");
+    let key = path.trim_start_matches('/');
+    if key.is_empty() {
+        return respond(&mut client, 404, &[], b"not found");
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).proxy(None).build().into();
+    let url = format!("http://{}/__wc/r2/{}/object/{key}", shared.gateway, site.key);
+    let res = match agent.get(&url).header("authorization", format!("Bearer {}", shared.token)).call() {
+        Ok(r) => r,
+        Err(_) => return respond(&mut client, 502, &[], b"no answer from the data service"),
+    };
+    if res.status().as_u16() != 200 {
+        return respond(&mut client, 404, &cors_headers(site, origin, &head.method), b"not found");
+    }
+    let meta: serde_json::Value = res
+        .headers()
+        .get("x-wc-meta")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    let mut h = cors_headers(site, origin, &head.method);
+    for (field, name) in [
+        ("contentType", "content-type"),
+        ("cacheControl", "cache-control"),
+        ("contentDisposition", "content-disposition"),
+        ("contentEncoding", "content-encoding"),
+        ("contentLanguage", "content-language"),
+    ] {
+        if let Some(v) = meta["http"][field].as_str() {
+            h.push((name, v.to_string()));
+        }
+    }
+    let mut body = Vec::new();
+    res.into_body().into_reader().read_to_end(&mut body)?;
+    h.push(("content-length", body.len().to_string()));
+    if head.method == "HEAD" {
+        body.clear();
+    }
+    respond_raw(&mut client, 200, &h, &body)
+}
+
+fn respond(client: &mut TcpStream, status: u16, headers: &[(&str, String)], body: &[u8]) -> std::io::Result<()> {
+    let mut h: Vec<(&str, String)> = headers.to_vec();
+    h.push(("content-length", body.len().to_string()));
+    respond_raw(client, status, &h, body)
+}
+
+fn respond_raw(client: &mut TcpStream, status: u16, headers: &[(&str, String)], body: &[u8]) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Bad Gateway",
+    };
+    let mut out = format!("HTTP/1.1 {status} {reason}\r\n");
+    for (k, v) in headers {
+        out.push_str(&format!("{k}: {v}\r\n"));
+    }
+    out.push_str("connection: close\r\n\r\n");
+    client.write_all(out.as_bytes())?;
+    client.write_all(body)?;
+    let _ = client.shutdown(Shutdown::Both);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn site() -> Site {
+        Site {
+            key: "storage-files".into(),
+            public: true,
+            cors: vec![Cors {
+                origins: vec!["http://localhost:8787".into(), "https://*.example.com".into()],
+                methods: vec!["GET".into(), "PUT".into()],
+                allowed_headers: vec!["content-type".into()],
+                expose_headers: vec!["etag".into()],
+                max_age: Some(600),
+            }],
+        }
+    }
+
+    #[test]
+    fn matches_rules_like_r2() {
+        let s = site();
+        assert!(rule_for(&s, "http://localhost:8787", "PUT").is_some());
+        assert!(rule_for(&s, "https://app.example.com", "get").is_some());
+        assert!(rule_for(&s, "http://localhost:3000", "PUT").is_none());
+        assert!(rule_for(&s, "http://localhost:8787", "DELETE").is_none());
+        let h = cors_headers(&s, Some("http://localhost:8787"), "GET");
+        assert!(h.iter().any(|(k, v)| *k == "access-control-allow-origin" && v == "http://localhost:8787"));
+        assert!(cors_headers(&s, Some("http://evil.test"), "GET").is_empty());
+    }
+}

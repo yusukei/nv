@@ -181,6 +181,28 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             port_map.push((port.port, s.name.clone()));
         }
     }
+    // r2 services with ports: the S3-compatible API with the bucket's CORS
+    // rules, and public URLs (REQ-009).
+    let mut r2_sites = Vec::new();
+    for s in services.iter() {
+        let Kind::R2(buckets) = &s.kind else { continue };
+        let Some(port) = s.ports.first() else { continue };
+        let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
+            .parse()
+            .map_err(|_| anyhow!(crate::tr!("アドレス {} が読めません", "cannot parse address {}", port.ip)))?;
+        let l = TcpListener::bind(addr).map_err(|e| {
+            anyhow!(crate::tr!(
+                "{} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
+                "cannot listen on {addr} for {} ({e}); is something else using it? change ports",
+                s.name
+            ))
+        })?;
+        let sites: Vec<crate::r2proxy::Site> = buckets
+            .iter()
+            .map(|b| crate::r2proxy::Site { key: b.key.clone(), public: b.spec.public, cors: b.spec.cors.clone() })
+            .collect();
+        r2_sites.push((s.name.clone(), port.clone(), l, sites));
+    }
     let gateway_port = free_port()?;
 
     // 3. Configs (DES-005): gateway first, then the Workers and their log
@@ -241,6 +263,22 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         let target: SocketAddr = format!("127.0.0.1:{gateway_port}").parse()?;
         std::thread::spawn(move || forward(l, target));
     }
+    let mut r2_urls = Vec::new();
+    for (svc, port, l, sites) in r2_sites {
+        let base = format!("http://{}:{}", url_host(&port.ip), port.port);
+        let public: Vec<String> = sites
+            .iter()
+            .filter(|x| x.public)
+            .map(|x| format!("http://{}.localhost:{}/", x.key, port.port))
+            .collect();
+        r2_urls.push((svc, base, sites.iter().map(|x| x.key.clone()).collect::<Vec<_>>(), public));
+        let shared = std::sync::Arc::new(crate::r2proxy::Shared {
+            sites,
+            gateway: format!("127.0.0.1:{gateway_port}").parse()?,
+            token: token.clone(),
+        });
+        std::thread::spawn(move || crate::r2proxy::serve(l, shared));
+    }
     let mut urls = Vec::new();
     for (s, w) in &workers {
         let url = w.ports.first().map(|pt| format!("http://{}:{}", url_host(&pt.ip), pt.port));
@@ -250,7 +288,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         &p.record(),
         &serde_json::to_string_pretty(&record(std::process::id(), gateway_port, &token, &urls))?,
     )?;
-    announce(ctx, &urls, &port_map);
+    announce(ctx, &urls, &port_map, &r2_urls);
 
     // 7. Watch: rebuild a Worker when its code changes (Wrangler reloads
     //    the bundle); restart when the compose file or .env.local changes.
@@ -313,7 +351,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     Ok(result)
 }
 
-fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)]) {
+type R2Url = (String, String, Vec<String>, Vec<String>);
+
+fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)], r2: &[R2Url]) {
     say(crate::tr!("手元で動いています(Ctrl+C で止まります)", "running locally (Ctrl+C stops it)"));
     for (s, u) in urls {
         match u {
@@ -321,27 +361,37 @@ fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)
             None => eprintln!("  {s:<16} {}", crate::tr!("(ports 無し。ほかのサービスから呼ぶ)", "(no ports; reached from other services)")),
         }
     }
-    let buckets: Vec<String> = ctx
-        .compose
-        .services
-        .iter()
-        .filter_map(|s| match &s.kind {
-            Kind::R2(b) => Some(b.iter().map(|r| r.key.clone()).collect::<Vec<_>>()),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    if let (false, Some((port, _))) = (buckets.is_empty(), ports.first()) {
+    for (svc, base, buckets, public) in r2 {
         eprintln!(
             "{}",
             crate::tr!(
-                "  R2 の S3 互換の口: http://127.0.0.1:{port}/cdn-cgi/local/r2/s3(パス形式・地域 auto)\n  鍵: {} / {}\n  バケット: {}",
-                "  R2 S3-compatible API: http://127.0.0.1:{port}/cdn-cgi/local/r2/s3 (path style, region auto)\n  keys: {} / {}\n  buckets: {}",
+                "  {svc:<16} R2 の S3 互換の口: {base}/cdn-cgi/local/r2/s3(パス形式・地域 auto・鍵 {} / {})\n  {:<16} バケット: {}",
+                "  {svc:<16} R2 S3-compatible API: {base}/cdn-cgi/local/r2/s3 (path style, region auto, keys {} / {})\n  {:<16} buckets: {}",
                 configs::LOCAL_S3_KEY,
                 configs::LOCAL_S3_SECRET,
+                "",
                 buckets.join(", ")
             )
         );
+        for p in public {
+            eprintln!("  {:<16} {}", "", crate::tr!("公開の URL: {p}<キー>", "public URL: {p}<key>"));
+        }
+    }
+    // r2 services without ports: reachable through a Worker's port, but
+    // without their CORS rules and public URLs.
+    let without: Vec<&str> = ctx
+        .compose
+        .services
+        .iter()
+        .filter(|s| matches!(s.kind, Kind::R2(_)) && s.ports.is_empty())
+        .map(|s| s.name.as_str())
+        .collect();
+    if let (false, Some((port, _))) = (without.is_empty(), ports.first()) {
+        say(crate::tr!(
+            "{} には ports が無いので、S3 互換の口は http://127.0.0.1:{port}/cdn-cgi/local/r2/s3 で、CORS はバケットの設定によらずすべて許され、公開の URL もありません。本番と同じにするには ports を書いてください",
+            "{} has no ports: its S3-compatible API is at http://127.0.0.1:{port}/cdn-cgi/local/r2/s3, allows every CORS origin regardless of the bucket's rules, and has no public URLs. Add ports to behave like production",
+            without.join(", ")
+        ));
     }
 }
 

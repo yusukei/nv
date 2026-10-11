@@ -32,6 +32,9 @@ pub struct Secret {
 pub struct Service {
     pub name: String,
     pub kind: Kind,
+    /// Local ports of an r2 service: its S3-compatible API and public URLs
+    /// (REQ-009). Workers keep theirs in `Worker::ports`.
+    pub ports: Vec<Port>,
 }
 
 #[derive(Debug)]
@@ -425,17 +428,30 @@ impl Checker {
             let Some((t, _, _)) = types.get(sname).cloned() else { continue };
             let kind = match t.as_str() {
                 "worker" => self.worker(&at, o, root, &types, &secrets).map(Kind::Worker),
-                "d1" => Some(Kind::D1(self.resources(&at, sname, o, "databases", D1_KEYS, |c, at, m| c.d1(at, m, root)))),
-                "r2" => Some(Kind::R2(self.resources(&at, sname, o, "buckets", BUCKET_KEYS, |c, at, m| c.bucket(at, m, &types)))),
-                "kv" => Some(Kind::Kv(self.resources(&at, sname, o, "namespaces", NAME_ONLY, |_, _, _| ()))),
-                "queue" => Some(Kind::Queue(self.resources(&at, sname, o, "queues", NAME_ONLY, |_, _, _| ()))),
+                "d1" => Some(Kind::D1(self.resources(&at, sname, o, "databases", D1_KEYS, &[], |c, at, m| c.d1(at, m, root)))),
+                "r2" => Some(Kind::R2(self.resources(&at, sname, o, "buckets", BUCKET_KEYS, &["ports"], |c, at, m| c.bucket(at, m, &types)))),
+                "kv" => Some(Kind::Kv(self.resources(&at, sname, o, "namespaces", NAME_ONLY, &[], |_, _, _| ()))),
+                "queue" => Some(Kind::Queue(self.resources(&at, sname, o, "queues", NAME_ONLY, &[], |_, _, _| ()))),
                 other => {
                     self.err(&format!("{at}.type"), crate::tr!("知らない型「{other}」です(worker・d1・r2・kv・queue のどれか)", "unknown type \"{other}\" (use worker, d1, r2, kv or queue)"));
                     None
                 }
             };
             if let Some(kind) = kind {
-                services.push(Service { name: sname.clone(), kind });
+                let ports = if t == "r2" { self.ports(&format!("{at}.ports"), o.get("ports")) } else { Vec::new() };
+                services.push(Service { name: sname.clone(), kind, ports });
+            }
+        }
+        let mut used: BTreeMap<u16, String> = BTreeMap::new();
+        for s in &services {
+            let ports = match &s.kind {
+                Kind::Worker(w) => &w.ports,
+                _ => &s.ports,
+            };
+            for p in ports {
+                if let Some(other) = used.insert(p.port, s.name.clone()) {
+                    self.err(&format!("services.{}.ports", s.name), crate::tr!("ポート {} は {other} も使っています", "port {} is also used by {other}", p.port));
+                }
             }
         }
         let services = self.order(services);
@@ -514,13 +530,14 @@ impl Checker {
         o: &Map<String, Value>,
         plural: &str,
         keys: &[&str],
+        service_keys: &[&str],
         mut spec: impl FnMut(&mut Self, &str, &Map<String, Value>) -> T,
     ) -> Vec<Resource<T>> {
         let mut out = Vec::new();
         match o.get(plural) {
             Some(Value::Object(items)) => {
                 let mut allowed = vec!["type", plural];
-                allowed.extend_from_slice(&[]);
+                allowed.extend_from_slice(service_keys);
                 self.unknown_keys(at, o, &allowed);
                 if items.is_empty() {
                     self.err(&format!("{at}.{plural}"), crate::tr!("1 つ以上書いてください", "define at least one"));
@@ -554,6 +571,7 @@ impl Checker {
             None => {
                 let mut allowed = vec!["type"];
                 allowed.extend_from_slice(keys);
+                allowed.extend_from_slice(service_keys);
                 self.unknown_keys(at, o, &allowed);
                 let name = self.opt_string(&format!("{at}.name"), o.get("name"));
                 let spec = spec(self, at, o);
@@ -682,15 +700,7 @@ impl Checker {
             _ => self.err(&format!("{at}.build"), crate::tr!("Worker のコードのフォルダを書いてください", "set the folder with the Worker's code")),
         }
         w.name = self.opt_string(&format!("{at}.name"), o.get("name"));
-        for p in self.strings(&format!("{at}.ports"), o.get("ports")) {
-            match parse_port(&p) {
-                Ok(port) => w.ports.push(port),
-                Err(e) => self.err(&format!("{at}.ports"), e),
-            }
-        }
-        if w.ports.len() > 1 {
-            self.err(&format!("{at}.ports"), crate::tr!("1 つのサービスに書けるポートは 1 つです", "a service takes one port"));
-        }
+        w.ports = self.ports(&format!("{at}.ports"), o.get("ports"));
         w.depends_on = match o.get("depends_on") {
             Some(Value::Object(m)) => {
                 for (dep, cond) in m {
@@ -765,6 +775,20 @@ impl Checker {
             self.err(&format!("{at}.assets"), crate::tr!("フォルダ {} がありません", "folder {} does not exist", dir.display()));
         }
         Some(w)
+    }
+
+    fn ports(&mut self, at: &str, v: Option<&Value>) -> Vec<Port> {
+        let mut out = Vec::new();
+        for p in self.strings(at, v) {
+            match parse_port(&p) {
+                Ok(port) => out.push(port),
+                Err(e) => self.err(at, e),
+            }
+        }
+        if out.len() > 1 {
+            self.err(at, crate::tr!("1 つのサービスに書けるポートは 1 つです", "a service takes one port"));
+        }
+        out
     }
 
     fn opt_string(&mut self, at: &str, v: Option<&Value>) -> Option<String> {

@@ -14,6 +14,7 @@ mod git;
 mod interp;
 mod interrupt;
 mod local;
+mod r2proxy;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
