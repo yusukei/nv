@@ -34,6 +34,7 @@
     <li><a href="#req-005">REQ-005 変数の展開</a></li>
     <li><a href="#req-006">REQ-006 環境と資源の名前</a></li>
     <li><a href="#req-007">REQ-007 Wrangler の設定ファイル</a></li>
+    <li><a href="#req-022">REQ-022 build</a></li>
     <li><a href="#req-008">REQ-008 up</a></li>
     <li><a href="#req-009">REQ-009 down</a></li>
     <li><a href="#req-010">REQ-010 ps</a></li>
@@ -137,7 +138,8 @@ STRIPE_KEY=sk_test_...</code></pre>
 <p>形はどの場合も <code>wrangler-compose --env &lt;環境&gt; [--dry-run] &lt;操作&gt; [&lt;操作の引数&gt;…] [サービス…]</code>。<code>--env</code>(短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code>)はどの操作にも要る。docker compose で組み合わせを切り替える <code>-f</code> に当たるのが <code>--env</code> で、<code>-f</code> は持たない。</p>
 <table>
   <tr><th style="width:30%">操作</th><th>local</th><th>リモートの環境</th><th style="width:10%">条項</th></tr>
-  <tr><td><code>up [サービス…]</code></td><td>手元で資源を用意し、移行を当て、Worker を動かす(前面で動き、Ctrl+C で止まる)</td><td>資源を作り、移行を当て、シークレットを入れ、Worker をデプロイする</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>build [サービス…]</code></td><td colspan="2">Worker を組み立てるだけ(何も建てない)。組み立てたものは環境によらず同じで、どの環境の <code>up</code> もそれを使う</td><td><a href="#req-022">REQ-022</a></td></tr>
+  <tr><td><code>up [--build] [サービス…]</code></td><td>手元で資源を用意し、移行を当て、Worker を動かす(前面で動き、Ctrl+C で止まる)</td><td>資源を作り、移行を当て、シークレットを入れ、Worker をデプロイする</td><td><a href="#req-008">REQ-008</a></td></tr>
   <tr><td><code>down [サービス…]</code></td><td>動いているものを止める</td><td>Worker を消す。データは残す</td><td><a href="#req-009">REQ-009</a></td></tr>
   <tr><td><code>down --purge [サービス…]</code></td><td>手元のデータも消す</td><td>D1・R2・KV・Queue も中身ごと消す</td><td><a href="#req-009">REQ-009</a></td></tr>
   <tr><td><code>ps</code></td><td colspan="2">サービスごとの状態(あるか・動いているか・URL・未適用の移行)を並べる</td><td><a href="#req-010">REQ-010</a></td></tr>
@@ -145,6 +147,19 @@ STRIPE_KEY=sk_test_...</code></pre>
   <tr><td><code>backup [&lt;書き出し先&gt;]</code></td><td colspan="2">D1・R2・KV の中身を手元のフォルダへ控える</td><td><a href="#req-012">REQ-012</a></td></tr>
   <tr><td><code>restore [--drop] &lt;控え&gt;</code></td><td colspan="2">控えを戻す。どの環境の控えでも、どの環境へでも戻せる</td><td><a href="#req-012">REQ-012</a></td></tr>
   <tr><td><code>--dry-run &lt;操作&gt;</code></td><td colspan="2">何も変えずに、何が変わるかを示す</td><td><a href="#req-013">REQ-013</a></td></tr>
+</table>
+
+<h3 id="compose-map">docker compose との対応</h3>
+<p>コマンドは docker compose に合わせる(利用者の決定)。この表に無い操作・引数は、利用者の決定なしに足さない。表にある操作の意味も、docker compose と変えない。</p>
+<table>
+  <tr><th style="width:30%">docker compose</th><th style="width:30%">wrangler-compose</th><th>違い</th></tr>
+  <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>組み合わせの切り替えは <code>--env</code> が受け持つ(利用者の決定)</td></tr>
+  <tr><td><code>build</code></td><td><code>build</code></td><td>イメージの代わりに Worker を組み立てる</td></tr>
+  <tr><td><code>up</code>・<code>up --build</code>・<code>up --remove-orphans</code></td><td>同じ</td><td>コンテナを動かす代わりに、手元では Worker を動かし、リモートではデプロイする</td></tr>
+  <tr><td><code>down</code>・<code>down -v</code></td><td><code>down</code>・<code>down --purge</code></td><td>データを消す引数の名前は <code>--purge</code>(0.1 系からの利用者の決定)</td></tr>
+  <tr><td><code>ps</code>・<code>logs [-f]</code></td><td>同じ</td><td></td></tr>
+  <tr><td><code>--dry-run</code></td><td>同じ</td><td></td></tr>
+  <tr><td>(無し)</td><td><code>backup</code>・<code>restore</code></td><td>データ(D1・R2・KV)の控えと戻し(0.1 系からの利用者の決定)</td></tr>
 </table>
 
 <h2 id="decisions">決定(利用者)</h2>
@@ -262,8 +277,16 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>wrangler-compose が作った設定は、プロジェクトの git の外(<code>.wrangler/</code> の下など)に置き、プロジェクトのファイルを書き換えない</li>
 </ul>
 
+<h3 id="req-022"><span class="id">REQ-022</span>build(組み立てる)</h3>
+<ul>
+  <li><code>build [サービス…]</code> は、docker compose の <code>build</code> と同じく、Worker のサービスを組み立てるだけで、何も建てない・動かさない。何も指定しなければすべての Worker</li>
+  <li>組み立てたものは、docker のイメージと同じく環境によらず同じで、手元に置く。環境ごとの値(変数・シークレット・資源)は組み立てたものに入れず、<code>up</code> が環境に合わせて渡す</li>
+  <li>組み立てられなければ、どのサービスがなぜかを示して止まる</li>
+</ul>
+
 <h3 id="req-008"><span class="id">REQ-008</span>up(建てる・合わせる)</h3>
 <ul>
+  <li><code>up</code> は、docker compose と同じく、組み立てたもの(REQ-022)を使う。組み立てたものが無ければ組み立ててから使い、<code>--build</code> を付ければ組み立て直してから使う</li>
   <li><code>up [サービス…]</code> は、指定したサービスと、そのつながり・<code>depends_on</code> をたどった先を、依存の順に、compose ファイルの状態に合わせる。何も指定しなければすべて</li>
   <li>サービスごとに行うこと: 資源が無ければ作る → D1 は未適用の移行を当てる → Worker はシークレットを入れてデプロイする(手元では動かす)</li>
   <li>何度打っても同じ結果になる。変わっていないものは変えない(変わっていない Worker を上げ直さない、など)</li>

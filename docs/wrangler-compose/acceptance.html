@@ -28,6 +28,7 @@
     <li><a href="#ac-005">AC-005 変数の展開</a></li>
     <li><a href="#ac-006">AC-006 環境と資源の名前</a></li>
     <li><a href="#ac-007">AC-007 Wrangler の設定ファイル</a></li>
+    <li><a href="#ac-022">AC-022 build</a></li>
     <li><a href="#ac-008">AC-008 up</a></li>
     <li><a href="#ac-009">AC-009 down</a></li>
     <li><a href="#ac-010">AC-010 ps</a></li>
@@ -46,7 +47,7 @@
 </nav>
 <main>
 <h1>wrangler-compose 受け入れ条件</h1>
-<p class="lead"><a href="requirements.html">要求仕様</a>の REQ-001〜021 を満たしたと言える条件。<code>--env local</code> の条件は Cloudflare に触れずに確かめ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-&lt;日時&gt;</code>)で、利用者の許可を得てから確かめる。本番の環境では行わない。</p>
+<p class="lead"><a href="requirements.html">要求仕様</a>の REQ-001〜022 を満たしたと言える条件。<code>--env local</code> の条件は Cloudflare に触れずに確かめ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-&lt;日時&gt;</code>)で、利用者の許可を得てから確かめる。本番の環境では行わない。</p>
 
 <h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形のプロジェクト(<code>web</code>・<code>api</code> の 2 つの Worker、<code>db</code>(D1)・<code>files</code>(R2)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>)。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object を数え、受け手として Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
@@ -104,6 +105,14 @@
   <li>組み立てのためのキー(<code>main</code>・<code>build</code>・<code>rules</code> など)だけを書いた設定ファイルを置くと、その組み立て方で組まれる</li>
   <li><code>vars</code>・<code>d1_databases</code>・<code>routes</code>・<code>env</code>・<code>compatibility_date</code> などを書くと、何もせずに止まり、そのキーと compose ファイルのどこに書くかが出る</li>
   <li>どの操作のあとも、プロジェクトのファイルが変わっていない(<code>git status</code> に差分が出ない。<code>.wrangler/</code> と <code>backups/</code> は <code>.gitignore</code> で外してある前提)</li>
+</ul>
+
+<h3 id="ac-022"><span class="id">AC-022</span>build <span class="refs">REQ-022</span></h3>
+<ul>
+  <li><code>build</code> のあと、Cloudflare にも手元の実行環境にも何も建っていない</li>
+  <li><code>build</code> のあとに <code>--env local up</code> と <code>--env ac-1 up</code> を打つと、どちらも組み立て直さずに、同じ組み立てたもの(同じ要約)を使う</li>
+  <li>組み立てたものが無いときの <code>up</code> は、組み立ててから使う。<code>up --build</code> は組み立て直す</li>
+  <li>組み立てられないコードでは、どのサービスがなぜかが出て止まる</li>
 </ul>
 
 <h3 id="ac-008"><span class="id">AC-008</span>up <span class="refs">REQ-008</span></h3>

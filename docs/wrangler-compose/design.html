@@ -27,6 +27,7 @@
     <li><a href="#des-004">DES-004 資源の記録と見つけ直し</a></li>
     <li><a href="#des-005">DES-005 Wrangler の設定を作る</a></li>
     <li><a href="#des-006">DES-006 組み立てのキーの一覧</a></li>
+    <li><a href="#des-017">DES-017 build</a></li>
     <li><a href="#des-007">DES-007 リモートの up</a></li>
     <li><a href="#des-008">DES-008 Durable Objects の移行</a></li>
     <li><a href="#des-009">DES-009 手元の up</a></li>
@@ -113,9 +114,16 @@
   <li>設定ファイルは Wrangler の読み方(<code>experimental_readRawConfig</code>)で読む(JSONC・TOML を自前で読まない)</li>
 </ul>
 
+<h3 id="des-017"><span class="id">DES-017</span>build <span class="refs">REQ-022</span></h3>
+<ul>
+  <li>Worker のサービスごとに、環境によらない組み立て用の設定(バインディングを持たない)で <code>wrangler deploy --dry-run --outdir .wrangler/compose/build/&lt;サービス&gt;/</code> を動かし、組み立てたもの(バンドル)を置く。docker のイメージに当たる</li>
+  <li>組み立てたものには、コードと Wrangler の設定ファイルの組み立てのキーと compose ファイルの要約(SHA-256)を添える。<code>up</code> は、いまのコードの要約と比べ、違えば組み立てたものが古いと示す(<code>--build</code> で組み直す。docker と同じく勝手には組み直さない)</li>
+  <li><code>up</code> は環境ごとの設定(名前・バインディング・変数・ルート・Cron)を DES-005 で作り、組み立てたものを組み直さずに上げる(手元の <code>wrangler dev</code> も、リモートの <code>deploy</code> も同じバンドルを使う)</li>
+</ul>
+
 <h3 id="des-007"><span class="id">DES-007</span>リモートの up <span class="refs">REQ-008・REQ-004・REQ-016</span></h3>
 <ul>
-  <li>段: 確かめ(変数・<code>.env</code> と git・初めての環境なら確かめ) → 資源を合わせる(DES-004) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>) → Worker を組む(<code>deploy --dry-run --outdir</code>)→ 前回と同じなら飛ばす → デプロイ(<code>deploy --secrets-file</code>) → compose から消えたシークレットを消す(<code>secret delete</code>)</li>
+  <li>段: 確かめ(変数・<code>.env</code> と git・初めての環境なら確かめ) → 資源を合わせる(DES-004) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>) → 組み立てたもの(DES-017)を使う(無ければ組み立てる。<code>--build</code> なら組み立て直す)→ 前回と同じなら飛ばす → 組み立てたものをそのままデプロイ(組み直さない。<code>deploy --no-bundle --secrets-file</code>) → compose から消えたシークレットを消す(<code>secret delete</code>)</li>
   <li>「前回と同じ」は、組んだもの・作った設定・シークレットの値の要約(SHA-256)を記録と比べて決める。Cloudflare 側の版も見て、記録と違えば上げ直す</li>
   <li>移行が失敗したら、その D1 をつなぐ Worker と、それより後のサービスは行わない</li>
   <li>compose から消えた Worker は、記録と、名前の決め方(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-</code> で始まる Worker)から見つける。<code>--remove-orphans</code> のときだけ <code>delete</code> する</li>
@@ -204,6 +212,7 @@
   <li><strong>手元のログの見分け</strong>: <code>wrangler dev -c … -c …</code> のログから、どの Worker の行かを見分けられること</li>
   <li><strong>作った設定でのコードの見張り</strong>: 設定ファイルを <code>.wrangler/</code> の下に置いても、<code>wrangler dev</code> が Worker のフォルダのコードの変化を見て作り直すこと</li>
   <li><strong>Durable Objects</strong>: クラスの名前の変更の扱い。前回デプロイしたクラスの一覧を Cloudflare から読めること</li>
+  <li><strong>組み立てたものをそのまま使うこと</strong>: <code>deploy --dry-run --outdir</code> で作ったバンドルを、環境ごとの設定と <code>--no-bundle</code> で上げられること。<code>wrangler dev</code> が、組み直さずに同じバンドルで動き、コードの変化のときだけ組み直せること(手元の開発の見張りとの兼ね合い)</li>
   <li><strong>Windows</strong>: 中継・錠・止め方が同じに動くこと</li>
 </ul>
 
