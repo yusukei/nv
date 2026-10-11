@@ -133,7 +133,7 @@
 <h3 id="des-018"><span class="id">DES-018</span>R2 のバケットの設定 <span class="refs">REQ-002・REQ-009</span></h3>
 <ul>
   <li><strong>リモート</strong>: <code>up</code> が、バケットごとに compose ファイルの設定と Cloudflare の設定を比べ、違えば合わせる。作るときの <code>storage_class</code>・<code>jurisdiction</code> は <code>r2 bucket create</code> の引数、ほかは <code>r2 bucket dev-url</code>(<code>public</code>)・<code>r2 bucket cors</code>・<code>r2 bucket lifecycle</code>・<code>r2 bucket notification</code>・<code>r2 bucket lock</code> で入れる。compose ファイルから消した設定は消す</li>
-  <li><strong>手元</strong>: Wrangler の手元の模擬に無いもの(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は、道具のサービス(DES-011)で効かせる。公開は入口のサービスがバケットの公開の URL を配り、CORS は S3 互換の口と公開の URL の応答に付け、ライフサイクルは決まった時刻にデータのサービスが行い、通知はオブジェクトの変化を手元の Queue へ送り、ロックと保管の種類は書き込み・消去の前に確かめる</li>
+  <li><strong>手元</strong>: Wrangler の手元の模擬に無いもののうち、再現すると決めたもの(CORS・公開の URL・イベント通知)を道具のサービス(DES-011)で効かせる。公開は入口のサービスがバケットの公開の URL を配り、CORS は S3 互換の口と公開の URL の応答に付け、通知はオブジェクトの変化を手元の Queue へ送る。ライフサイクル・ロック・保管の種類は手元では効かせない(REQ-009)</li>
   <li>手元で、バインディングからの書き込み・消去(Worker のコードの <code>env.FILES.put</code> など)を道具のサービスが見る手立て(通知・ロックのため)は、作る前に確かめる(<a href="#unverified">確かめていないこと</a>)</li>
 </ul>
 

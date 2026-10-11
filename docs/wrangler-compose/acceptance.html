@@ -116,7 +116,7 @@
   <li>Cloudflare にログインしていない、網を切った PC で、<code>--env local up</code> がすべてを動かす。<code>web</code> は 8787、<code>api</code> は 8788 で応える</li>
   <li><code>web</code> と <code>api</code> から同時に同じ D1 へ 100 回ずつ書いても、200 行すべてが入る</li>
   <li>同じ試験(R2・D1・KV・Queue・Durable Objects の機能を一つずつ使うもの)を、手元と試験用のリモートの環境の両方に流し、結果が同じになる。違う項目は、<a href="local-support.html">手元で使えないもの</a>に理由とともに書かれているものだけ</li>
-  <li>R2 の試験は、バインディングの API(分割アップロード・条件つき・範囲指定・メタデータを含む)、S3 互換の API(AWS SDK での一覧・書き込み・読み出し・署名付き URL の PUT と GET・署名を変えると拒まれること)、公開の URL、CORS、ライフサイクル、イベント通知、オブジェクトのロック、保管の種類を含む</li>
+  <li>R2 の試験は、バインディングの API(分割アップロード・条件つき・範囲指定・メタデータを含む)、S3 互換の API(AWS SDK での一覧・書き込み・読み出し・署名付き URL の PUT と GET・署名を変えると拒まれること)、CORS(ブラウザからの署名付き URL での PUT を含む)、公開の URL、イベント通知を含む。ライフサイクル・ロック・保管の種類は、リモートのバケットに設定が入っていることだけを確かめる</li>
   <li>コードを変えると、打ち直さずに新しいコードが応える。移行を足して <code>up</code> を打ち直すと、足した移行が当たる</li>
   <li>Ctrl+C のあと何も残らない。<code>down</code> のあとの <code>up</code> で前のデータが見え、<code>down --purge</code> のあとは空</li>
   <li>2 つ目の <code>--env local up</code> は止まる。ほかの端末からの <code>--env local down</code> で止まる</li>
