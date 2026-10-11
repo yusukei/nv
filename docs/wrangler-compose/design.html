@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wrangler-compose 設計</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <div class="site"><a href="../index.html">仕様書</a></div>
+  <ul>
+    <li><a href="../nv/requirements.html">nv 要求仕様</a></li>
+    <li><a href="../nv/acceptance.html">nv 受け入れ条件</a></li>
+    <li><a href="../nv/design.html">nv 設計</a></li>
+    <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
+    <li><a href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
+    <li><a class="current" href="design.html">wrangler-compose 設計</a></li>
+  </ul>
+  <ul>
+    <li><a href="#facts">確かめた事実</a></li>
+    <li><a href="#des-001">DES-001 作りの全体</a></li>
+    <li><a href="#des-002">DES-002 Wrangler の呼び方</a></li>
+    <li><a href="#des-003">DES-003 設定の読み方</a></li>
+    <li><a href="#des-004">DES-004 環境の指定</a></li>
+    <li><a href="#des-005">DES-005 .env と git</a></li>
+    <li><a href="#des-006">DES-006 build</a></li>
+    <li><a href="#des-007">DES-007 up</a></li>
+    <li><a href="#des-008">DES-008 打ち直しの確かめ</a></li>
+    <li><a href="#des-009">DES-009 down</a></li>
+    <li><a href="#des-010">DES-010 R2 の S3 API</a></li>
+    <li><a href="#des-011">DES-011 down --purge</a></li>
+    <li><a href="#des-012">DES-012 backup</a></li>
+    <li><a href="#des-013">DES-013 restore</a></li>
+    <li><a href="#des-014">DES-014 出力と終了コード</a></li>
+    <li><a href="#des-015">DES-015 試験</a></li>
+    <li><a href="#unverified">確かめていないこと</a></li>
+  </ul>
+</nav>
+<main>
+<h1>wrangler-compose 設計</h1>
+<p class="lead">wrangler-compose の要求仕様(REQ)と受け入れ条件(AC)を満たす作り。Wrangler の振る舞いは、手元の Wrangler 4.128.0(<code>wrangler-dist/cli.js</code>)の実装と、手元の D1(miniflare)での実測で確かめた。Cloudflare には一度も触れていない。</p>
+
+<h2 id="facts">確かめた事実</h2>
+<table>
+  <tr><th>事実</th><th style="width:26%">出典</th></tr>
+  <tr><td>Wrangler の「対話できる」は <code>process.stdin.isTTY &amp;&amp; process.stdout.isTTY</code>。対話できないとき、確かめの問い(<code>confirm</code>)は既定の答え(多くは「はい」)を使い、自動で作った資源の ID を設定ファイルへ書き戻さない</td><td><code>isTtyInteractive</code>・<code>confirm2</code>・<code>provisionBindings</code></td></tr>
+  <tr><td>D1 の移行の適用(<code>d1 migrations apply</code>)の確かめは、対話できないと「はい」で進む。未適用が無ければ何もしない</td><td><code>d1 migrations apply</code> の実装</td></tr>
+  <tr><td><code>deploy --secrets-file</code> は JSON か <code>.env</code> の形を受ける。ファイルに無いシークレットは前の版から残る(消えない)</td><td><code>deploy</code> の引数の説明・<code>parseBulkInputToObject</code></td></tr>
+  <tr><td>設定は <code>require("wrangler").unstable_readConfig({ env })</code> で、環境を当てはめた値(Worker 名・D1・R2・ルート・Cron・Durable Objects・ビルドのコマンド)が読める。環境の一覧は <code>experimental_readRawConfig</code> の <code>env</code></td><td>marche-ar の <code>workers/delivery/wrangler.jsonc</code> で実測</td></tr>
+  <tr><td>D1 の書き出しは、表の作りと中身と、移行の履歴の表 <code>d1_migrations</code> を含む。D1 の内部の表 <code>_cf_METADATA</code>・<code>sqlite_sequence</code> は表を消しても残る</td><td>手元の D1 で実測(<code>--local</code>)</td></tr>
+  <tr><td>表をすべて消した D1 に書き出しの SQL を流し、移行を適用すると、控えのあとに足した移行だけが当たる</td><td>手元の D1 で実測(<code>--local</code>)</td></tr>
+  <tr><td>D1 の書き出しの間、その D1 は問い合わせに応えない</td><td><code>d1 export</code> の注意文</td></tr>
+  <tr><td>R2 の S3 API の口は <code>https://&lt;アカウント ID&gt;.r2.cloudflarestorage.com</code>、管轄のあるバケットは <code>https://&lt;アカウント ID&gt;.&lt;管轄&gt;.r2.cloudflarestorage.com</code>。署名の地域は <code>auto</code>。ListObjectsV2・DeleteObjects・GetObject・PutObject を受ける</td><td><a href="https://developers.cloudflare.com/r2/api/s3/api/">R2 S3 API</a>・<a href="https://developers.cloudflare.com/r2/reference/data-location/">Data location</a></td></tr>
+  <tr><td><code>wrangler whoami --json</code> はログインしたアカウントを JSON で返し、ログインしていなければ 0 以外で終わる</td><td><code>whoami --help</code></td></tr>
+</table>
+
+<h2>設計</h2>
+
+<h3 id="des-001"><span class="id">DES-001</span>作りの全体 <span class="refs">REQ-002・REQ-010</span></h3>
+<ul>
+  <li>ワークスペースのクレート <code>crates/wrangler-compose</code>。nv のクレートのコードには頼らない(要るものは自前で持つ)</li>
+  <li>頼るクレート: <code>clap</code>・<code>ureq</code> 3・<code>rusty-s3</code>(S3 の署名だけを作る。HTTP は ureq で送る)・<code>serde_json</code>・<code>sha2</code></li>
+  <li>却下: AWS の公式 SDK(非同期の実行環境を抱え、実行ファイルが大きくなる。使う S3 の操作は 4 つだけ)</li>
+  <li>却下: R2 も Wrangler で扱う(Wrangler はオブジェクトの一覧が取れない。要求仕様の決定)</li>
+</ul>
+
+<h3 id="des-002"><span class="id">DES-002</span>Wrangler の呼び方 <span class="refs">REQ-002</span></h3>
+<ul>
+  <li>nv は wrangler-compose の実行ファイルと同じフォルダの <code>nv</code>(Windows は <code>nv.exe</code>)を使う。無ければ止まり、入れ方を示す</li>
+  <li>Wrangler はプロジェクトのフォルダで <code>nv run wrangler &lt;引数&gt; --env &lt;環境名&gt;</code> として動かす</li>
+  <li><strong>標準入力は常に空にする</strong>。Wrangler から見て対話できない状態にし、(1) 自動で作った資源の ID を設定ファイルへ書き戻させない、(2) Wrangler の確かめの問いで止まらせない。人への確かめは wrangler-compose が自分で行う(DES-008)</li>
+  <li>Wrangler の出力は、そのまま利用者の画面へ流す(何が起きているかを見せる)。結果を読む必要があるもの(<code>--json</code>)だけ取り込む</li>
+  <li>要る版は 4.128.0 以上(確かめた版。<code>--secrets-file</code> が入った版は資料で確かめられなかったので、確かめた版を下限にする)。設定を読むときに版も読み、下回れば止まる</li>
+  <li>却下: 環境変数 <code>CI=true</code> で対話を止める(ほかの振る舞いも CI 向けに変わる。標準入力を空にすれば足りる)</li>
+  <li>成り立たない場合: Wrangler が「対話できない」の判定を変えると、書き戻しが起きうる。<code>up</code> の前後で設定ファイルが変わっていないかを確かめ、変わっていれば止まって示す(AC-002 の確かめを毎回行う)</li>
+</ul>
+
+<h3 id="des-003"><span class="id">DES-003</span>設定の読み方 <span class="refs">REQ-001・REQ-002</span></h3>
+<ul>
+  <li>wrangler-compose に埋め込んだ小さな JavaScript を、<code>nv run node -e &lt;スクリプト&gt; &lt;環境名&gt;</code> で動かす。スクリプトはプロジェクトの <code>wrangler</code> を読み、<code>unstable_readConfig</code> の結果から要るものだけを JSON で標準出力に出す: Worker 名・D1(バインディング・名前・ID・移行のフォルダ)・R2(バインディング・バケット名・管轄)・ルート・Cron・Durable Objects・<code>account_id</code>・環境の一覧・Wrangler の版</li>
+  <li>プロジェクトは、いまいるフォルダから上へたどって最初に Wrangler の設定ファイルがあるフォルダ</li>
+  <li>却下: JSONC・TOML を自前で読む(Wrangler の読み方と食い違う。要求仕様の決定)</li>
+  <li>成り立たない場合: <code>unstable_</code> の名のとおり Wrangler の版で形が変わりうる。読めなかった項目があれば止まり、確かめた版を示す</li>
+</ul>
+
+<h3 id="des-004"><span class="id">DES-004</span>環境の指定 <span class="refs">REQ-001</span></h3>
+<ul>
+  <li><code>--env</code>/<code>-e</code> を先に、無ければ <code>CLOUDFLARE_ENV</code> を見る。<code>build</code> 以外で環境が無ければ止まる</li>
+  <li>設定の環境の一覧(DES-003)に無い名前なら止まり、一覧を示す。前方一致などで補わない</li>
+</ul>
+
+<h3 id="des-005"><span class="id">DES-005</span>.env.&lt;環境名&gt; と git <span class="refs">REQ-004・REQ-009・REQ-007</span></h3>
+<ul>
+  <li><code>.env.&lt;環境名&gt;</code> はプロジェクトのフォルダのものを読む。書式は <code>.env</code> の基本(<code>名前=値</code>、<code>#</code> の行、引用符で囲んだ値)</li>
+  <li><code>WRANGLER_COMPOSE_</code> で始まるものを除いた値を、一時のフォルダに JSON で書き(Unix は 0600)、<code>--secrets-file</code> で渡す。デプロイが終われば、失敗しても消す</li>
+  <li>API キーは環境変数を先に、無ければ <code>.env.&lt;環境名&gt;</code> から読む</li>
+  <li>git の確かめは <code>git</code> の読み取りのコマンドで行う: <code>git rev-parse --show-toplevel</code>(git の中か)、<code>git check-ignore -q</code>(外れているか)、<code>git ls-files --error-unmatch</code>(すでに入っているか)。<code>git</code> が無い、または git の中でなければ確かめない。git に書き込む操作はしない</li>
+  <li>却下: <code>.gitignore</code> を自前で読む(否定・入れ子・グローバルの設定まで git と同じに読むのは難しい)</li>
+</ul>
+
+<h3 id="des-006"><span class="id">DES-006</span>build <span class="refs">REQ-003</span></h3>
+<ul>
+  <li><code>wrangler deploy --dry-run --outdir &lt;一時のフォルダ&gt;</code> を動かす(設定のビルドのコマンドも走り、Cloudflare には上げない)</li>
+</ul>
+
+<h3 id="des-007"><span class="id">DES-007</span>up <span class="refs">REQ-004</span></h3>
+<ol>
+  <li>設定を読む(DES-003)。<code>.env</code> と git を確かめる(DES-005)</li>
+  <li><code>wrangler d1 list --json</code> で、アカウントにある D1 の名前と ID を得る。設定の各 D1 が、ID があれば ID で、無ければ名前であるかを見る。ID を書いた D1 が無ければ、名前と ID を示して止まる</li>
+  <li>すべてあれば: 移行のフォルダに <code>.sql</code> がある D1 ごとに <code>wrangler d1 migrations apply &lt;バインディング&gt; --remote</code> → <code>wrangler deploy [--secrets-file]</code></li>
+  <li>無いものがあれば: <code>wrangler deploy [--secrets-file]</code>(Wrangler が D1・R2 を作る) → 移行の適用。移行で止まったら、デプロイは済んでいることを示す</li>
+  <li><code>wrangler secret list --format json</code> で、Worker にあって <code>.env.&lt;環境名&gt;</code> に無いシークレットの名前を示す(<code>.env</code> があるときだけ)</li>
+  <li>設定ファイルが <code>up</code> の前と同じかを確かめる(DES-002)</li>
+</ol>
+<ul>
+  <li>段ごとに「[1/3] D1 の移行」のように示し、止まった段と理由を出す</li>
+</ul>
+
+<h3 id="des-008"><span class="id">DES-008</span>打ち直しの確かめ <span class="refs">REQ-005・REQ-006・REQ-008</span></h3>
+<ul>
+  <li>標準入力と標準エラーの両方が端末のときだけ、環境名を打ってもらう。どちらかが端末でなければ、何も消さずに止まり、端末から打つよう示す</li>
+  <li>打った文字列の前後の空白を除いて、環境名と完全に一致したときだけ進む</li>
+</ul>
+
+<h3 id="des-009"><span class="id">DES-009</span>down <span class="refs">REQ-005</span></h3>
+<ol>
+  <li>消えるものを示す: Worker 名、シークレットの名前(<code>wrangler secret list</code>)、設定のルート・カスタムドメイン・Cron・Durable Objects</li>
+  <li>打ち直しの確かめ(DES-008)</li>
+  <li><code>wrangler delete</code>(標準入力が空なので Wrangler の確かめは「はい」で進む。<code>--force</code> は付けない: ほかの Worker が頼っているときは Wrangler が止める)</li>
+</ol>
+
+<h3 id="des-010"><span class="id">DES-010</span>R2 の S3 API <span class="refs">REQ-006・REQ-007・REQ-008・REQ-009</span></h3>
+<ul>
+  <li>アカウント ID は、設定の <code>account_id</code>、無ければ <code>wrangler whoami --json</code> のアカウントが 1 つならそれ。複数あって決められなければ、設定に <code>account_id</code> を書くよう示して止まる</li>
+  <li>口は管轄が無ければ <code>https://&lt;アカウント ID&gt;.r2.cloudflarestorage.com</code>、あれば <code>https://&lt;アカウント ID&gt;.&lt;管轄&gt;.r2.cloudflarestorage.com</code>。地域は <code>auto</code></li>
+  <li>キーが正しいかは、各バケットへの ListObjectsV2(1 件)が通るかで見る。403 などは「キーが無い・正しくない」として、何もせずに止まる</li>
+  <li>オブジェクトの消去は DeleteObjects で 1000 件ずつ</li>
+</ul>
+
+<h3 id="des-011"><span class="id">DES-011</span>down --purge <span class="refs">REQ-006</span></h3>
+<ol>
+  <li>API キーを確かめ(DES-010)、各バケットのオブジェクトの数を数える</li>
+  <li>消すものを示す(DES-009 の 1 に加えて、D1 の名前、バケットの名前とオブジェクトの数、<code>database_id</code> を書いた D1 は次の <code>up</code> で作られないこと)</li>
+  <li>打ち直しの確かめ</li>
+  <li>Worker を消す → 各バケットのオブジェクトを消してバケットを消す(<code>wrangler r2 bucket delete</code>) → 各 D1 を消す(<code>wrangler d1 delete -y</code>)。Worker を先に消すのは、消している途中のデータを人に見せないため</li>
+  <li>途中で止まったら、消し終えたものと残っているものを並べて示す</li>
+</ol>
+
+<h3 id="des-012"><span class="id">DES-012</span>backup <span class="refs">REQ-007</span></h3>
+<ul>
+  <li>書き出し先: 引数が無ければプロジェクトの <code>backups/</code>。その下の <code>&lt;環境名&gt;/&lt;協定世界時の日時 yyyyMMddTHHmmssZ&gt;/</code></li>
+  <li>中身:
+    <ul>
+      <li><code>d1/&lt;バインディング&gt;.sql</code>: <code>wrangler d1 export &lt;バインディング&gt; --remote --output …</code></li>
+      <li><code>r2/&lt;バインディング&gt;/&lt;通し番号&gt;</code>: 各オブジェクトの中身(キーは目録に持ち、ファイル名には使わない。キーに使えない文字があっても書ける)</li>
+      <li><code>manifest.json</code>: 環境名・作った日時・Wrangler の版・D1 ごとのファイル・R2 ごとのオブジェクト(キー・ファイル・大きさ・SHA-256・内容の種類などの見出し・利用者のメタデータ)</li>
+    </ul>
+  </li>
+  <li><code>manifest.json</code> を最後に書く。目録の無いフォルダは書きかけ(restore は受けない)</li>
+  <li>書き出し先がプロジェクトの git の中にあれば、DES-005 と同じ確かめを <code>backups/</code>(または渡された場所)に対して行う</li>
+  <li>D1 の書き出しが失敗したら(書き出せない表があるなど)、Wrangler の理由を示して止まる。目録は書かない</li>
+</ul>
+
+<h3 id="des-013"><span class="id">DES-013</span>restore <span class="refs">REQ-008</span></h3>
+<ol>
+  <li>目録を読む。無ければ書きかけとして止まる。D1 の SQL に <code>d1_migrations</code> の表が無ければ(移行の履歴が無い)止まる</li>
+  <li>API キーを確かめる。戻す先の D1(<code>d1 list</code>)とバケット(ListObjectsV2)があるかを見る。無ければ <code>up</code> を求めて止まる</li>
+  <li>空かを見る: D1 は <code>wrangler d1 execute … --json</code> で、<code>sqlite_</code>・<code>_cf_</code> で始まらない表があるか。バケットはオブジェクトが 1 つでもあるか</li>
+  <li>空でなく <code>--drop</code> が無ければ止まる。<code>--drop</code> なら消すもの(表の数・オブジェクトの数)と、戻している間に欠けたデータが見えることを示し、打ち直しの確かめ</li>
+  <li><code>--drop</code>: 表・ビュー・トリガーを <code>DROP</code> し(外部キーの順に左右されないよう <code>PRAGMA defer_foreign_keys=ON</code> を付けて 1 回で流す)、バケットのオブジェクトを消す</li>
+  <li><code>wrangler d1 execute &lt;バインディング&gt; --remote --file &lt;SQL&gt;</code> で D1 を戻し、PutObject で各オブジェクトを、目録の見出しとメタデータを付けて戻す(戻す前に SHA-256 を照らす)</li>
+  <li>移行の適用(DES-007 の 3 と同じ)で、控えのあとに足された移行を当てる</li>
+</ol>
+
+<h3 id="des-014"><span class="id">DES-014</span>出力と終了コード <span class="refs">REQ-009</span></h3>
+<ul>
+  <li>wrangler-compose 自身の出力は英語で標準エラーへ(nv と同じ)。自身が止まったときの終了コードは 2</li>
+  <li>シークレットの値と API キーは、どこにも出さない。シークレットは名前だけを示す。目録にも書かない</li>
+</ul>
+
+<h3 id="des-015"><span class="id">DES-015</span>試験</h3>
+<ul>
+  <li>単体: <code>.env</code> の読み、環境の選び方、目録の読み書き、S3 の口の組み立て、空かの判定に使う表の名前の選り分け</li>
+  <li>手元の結合: 実行ファイルを動かし、Cloudflare に触れない範囲(環境の指定の誤り、nv が無い、<code>.env</code> が git に入っている、端末でない <code>down</code>、書きかけの控え、<code>build</code>)を確かめる</li>
+  <li>Cloudflare を相手にする受け入れ条件(<code>up</code>・<code>down</code>・<code>--purge</code>・<code>backup</code>・<code>restore</code>)は、試験用のアカウントの使い捨ての環境で、利用者の許可を得てから行う</li>
+</ul>
+
+<h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
+<ul>
+  <li>Cloudflare の側の D1 の書き出し(<code>--remote</code>)が、手元と同じく <code>d1_migrations</code> を含むこと(手元の D1 でだけ確かめた)</li>
+  <li>Cloudflare の側の D1 で、外部キーのある表を <code>defer_foreign_keys</code> を付けて消せること</li>
+  <li><code>wrangler deploy --dry-run</code> が、資源の自動作成や Cloudflare への問い合わせをしないこと</li>
+  <li>R2 の PutObject の 1 回の上限を超える大きなオブジェクト(分割アップロードが要るもの)。当面は上限を超えるものがあれば restore の前に止める</li>
+  <li><code>wrangler secret list --format json</code> の出力の形(名前の取り出し方)</li>
+</ul>
+
+<footer>docs/wrangler-compose/design.html</footer>
+</main>
+</div>
+</body>
+</html>
