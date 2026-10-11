@@ -17,6 +17,7 @@ export default {
       await env.FILES.put("meta.txt", "m", { customMetadata: { title: "café 日本" }, httpMetadata: { contentType: "text/plain; charset=utf-8" } });
       await env.FILES.put("d/../e", "dot");
       await env.CACHE.put("ü", "v", { metadata: { note: "日本" } });
+      console.log("first line\nsecond line");
       return new Response("seeded");
     }
     if (u.pathname === "/blog") {
@@ -27,6 +28,8 @@ export default {
       const k = await env.CACHE.getWithMetadata("ü");
       return Response.json({ ...r, title: m?.customMetadata?.title, dot: d ? await d.text() : null, e: e ? "present" : null, kv: k.metadata });
     }
+    if (u.pathname === "/secret") { return new Response(env.STRIPE_KEY); }
+    if (u.pathname === "/cron") { return new Response((await env.CACHE.get("cron")) ?? "none"); }
     if (u.pathname === "/count") { const r = await env.DB.prepare("SELECT count(*) n FROM items").first(); return Response.json(r); }
     await env.FILES.put("a.txt", "from-api");
     await env.CACHE.put("k", "v");
@@ -35,5 +38,6 @@ export default {
     console.log("api handled", u.pathname);
     return new Response(`api ${env.GREETING} do=${n} secret=${env.STRIPE_KEY ? "yes" : "no"}`);
   },
+  async scheduled(controller: ScheduledController, env: any) { console.log("cron", controller.cron); await env.CACHE.put("cron", controller.cron); },
   async queue(batch: MessageBatch, env: any) { for (const m of batch.messages) console.log("msg", JSON.stringify(m.body)); await env.CACHE.put("consumed", String(batch.messages.length)); },
 };

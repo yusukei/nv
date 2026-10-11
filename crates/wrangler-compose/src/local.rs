@@ -96,15 +96,15 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
         let c = reopened.as_ref().unwrap_or(ctx);
         let services = c.compose.closure(names)?;
         notices(&services);
+        // Who holds the lock is known from the start, so `down` can stop an
+        // `up` that is still building or applying migrations.
+        write_private(
+            &p.record(),
+            &serde_json::to_string_pretty(&record(std::process::id(), 0, "", &[]))?,
+        )?;
         let next = match run_once(c, &p, &services, rebuild)? {
             Stop::Done => return Ok(()),
-            Stop::Restart => {
-                say(crate::tr!(
-                    "compose ファイルか .env.local が変わったので、動かし直します",
-                    "the compose file or .env.local changed; restarting"
-                ));
-                Ctx::open(&ctx.env, false)?
-            }
+            Stop::Restart => Ctx::open(&ctx.env, false)?,
         };
         reopened = Some(next);
         rebuild = false;
@@ -357,7 +357,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut compose_stamp = stamps(&compose_files);
     let mut seen: BTreeMap<String, Option<SystemTime>> = workers
         .iter()
-        .map(|(s, w)| (s.name.clone(), build::newest_change(&w.build)))
+        .map(|(s, w)| (s.name.clone(), build::newest_change(ctx, &s.name, w)))
         .collect();
     let has_notify = ctx.compose.services.iter().any(|s| {
         matches!(&s.kind, Kind::R2(list) if list.iter().any(|r| !r.spec.notifications.is_empty()))
@@ -383,7 +383,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         if crate::interrupt::check().is_err() {
             break Stop::Done;
         }
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = child.0.try_wait()? {
             let _ = std::fs::remove_file(p.record());
             bail!(crate::tr!(
                 "Wrangler が止まりました({status})",
@@ -396,7 +396,13 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             // keeps the running services as they are.
             compose_stamp = now_stamp;
             match crate::compose::load(&ctx.compose.file, &ctx.env) {
-                Ok(_) => break Stop::Restart,
+                Ok(_) => {
+                    say(crate::tr!(
+                        "compose ファイルか .env.local が変わったので、動かし直します",
+                        "the compose file or .env.local changed; restarting"
+                    ));
+                    break Stop::Restart;
+                }
                 Err(e) => say(crate::tr!(
                     "compose ファイルを読めないので、直るまで今のまま動かします: {e:#}",
                     "cannot load the compose file, so the services keep running as they are until it is fixed: {e:#}"
@@ -407,22 +413,44 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             continue;
         }
         last_watch = Instant::now();
+        let mut restart = false;
+        let mut rebuilt = false;
         for (s, w) in &workers {
-            let now = build::newest_change(&w.build);
+            let now = build::newest_change(ctx, &s.name, w);
             if seen.get(&s.name) != Some(&now) {
                 seen.insert(s.name.clone(), now);
                 match build::build_one(ctx, &s.name, w, false) {
+                    // A new entry file name (main changed) needs new configs.
+                    Ok(b) if Some(&b.entry) != builts.get(&s.name).map(|x| &x.entry) => {
+                        say(crate::tr!(
+                            "{}: 入口のファイルが変わったので、動かし直します",
+                            "{}: the entry file changed; restarting",
+                            s.name
+                        ));
+                        restart = true;
+                    }
                     Ok(b) if Some(&b.hash) != builts.get(&s.name).map(|x| &x.hash) => {
-                        say(crate::tr!("{}: 組み立て直しました", "{}: rebuilt", s.name));
+                        // `wrangler dev` does not pick up a new bundle of a
+                        // Worker that is not its first config (measured with
+                        // 4.149.0), so the runtime starts again with it.
+                        say(crate::tr!(
+                            "{}: 組み立て直したので、動かし直します",
+                            "{}: rebuilt; restarting",
+                            s.name
+                        ));
                         builts.insert(s.name.clone(), b);
+                        rebuilt = true;
                     }
                     Ok(_) => {}
                     Err(e) => say(format!("{e:#}")),
                 }
             }
         }
+        if restart || rebuilt {
+            break Stop::Restart;
+        }
     };
-    stop_child(&mut child);
+    drop(child);
     stop.store(true, Ordering::SeqCst);
     for a in accepters {
         let _ = a.join();
@@ -493,9 +521,45 @@ fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)
 
 /// What `--dry-run up` shows (REQ-014): nothing is built, written or run.
 fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
+    // What a real `up` would stop on, found without changing anything.
+    let mut problems = Vec::new();
+    if try_lock(&Paths::new(ctx))?.is_none() {
+        problems.push(crate::tr!(
+            "--env local up がもう動いています",
+            "--env local up is already running"
+        ));
+    }
+    for s in services {
+        let ports = match &s.kind {
+            Kind::Worker(w) => &w.ports,
+            _ => &s.ports,
+        };
+        for port in ports {
+            let addr = format!("{}:{}", bracket(&port.ip), port.port);
+            if let Err(e) = TcpListener::bind(&addr) {
+                problems.push(crate::tr!(
+                    "{} の {addr} で待ち受けられません({e})",
+                    "{} cannot listen on {addr} ({e})",
+                    s.name
+                ));
+            }
+        }
+    }
     for s in services {
         match &s.kind {
             Kind::Worker(w) => {
+                // Checks the Worker folder (REQ-007) and says whether it
+                // would be built.
+                if let Err(e) = build::build_one(ctx, &s.name, w, true) {
+                    problems.push(format!("{e:#}"));
+                }
+                for (k, v) in &w.vars {
+                    let v = v
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string());
+                    say(format!("{}: vars.{k} = {v}", s.name));
+                }
                 let port = w
                     .ports
                     .first()
@@ -547,6 +611,20 @@ fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
         "dry-run なので何も変えていません",
         "dry run: nothing was changed"
     ));
+    if !problems.is_empty() {
+        bail!(
+            "{}\n{}",
+            crate::tr!(
+                "本当に打つと、次の理由で止まります:",
+                "a real run would stop because:"
+            ),
+            problems
+                .iter()
+                .map(|p| format!("  - {p}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
     Ok(())
 }
 
@@ -565,11 +643,36 @@ fn notices(services: &[&Service]) {
             if !w.crons.is_empty() {
                 let port = w.ports.first().map(|p| p.port).unwrap_or(8787);
                 say(crate::tr!(
-                    "{}: 定期実行({})は手元では時刻が来ても動きません。試すには curl \"http://127.0.0.1:{port}/cdn-cgi/local/scheduled?cron=<式>\"",
-                    "{}: crons ({}) do not fire locally; trigger one with curl \"http://127.0.0.1:{port}/cdn-cgi/local/scheduled?cron=<expr>\"",
+                    "{}: 定期実行({})は手元では時刻が来ても動きません。試すには curl \"http://127.0.0.1:{port}/cdn-cgi/handler/scheduled?cron=<式>\"",
+                    "{}: crons ({}) do not fire locally; trigger one with curl \"http://127.0.0.1:{port}/cdn-cgi/handler/scheduled?cron=<expr>\"",
                     s.name,
                     w.crons.join(", ")
                 ));
+            }
+        }
+        if let Kind::R2(buckets) = &s.kind {
+            for b in buckets {
+                let mut set = Vec::new();
+                if !b.spec.lifecycle.is_empty() {
+                    set.push("lifecycle");
+                }
+                if !b.spec.lock.is_empty() {
+                    set.push("lock");
+                }
+                if b.spec.storage_class.is_some() {
+                    set.push("storage_class");
+                }
+                if b.spec.jurisdiction.is_some() {
+                    set.push("jurisdiction");
+                }
+                if !set.is_empty() {
+                    say(crate::tr!(
+                        "{}: {} は手元では効きません(リモートの環境でだけ設定されます)",
+                        "{}: {} do not apply locally (they are set in remote environments only)",
+                        b.key,
+                        set.join(", ")
+                    ));
+                }
             }
         }
     }
@@ -599,7 +702,7 @@ fn spawn_runtime(
     configs: &[PathBuf],
     port: u16,
     log_file: Option<Arc<Mutex<File>>>,
-) -> Result<Option<Child>> {
+) -> Result<Option<Runtime>> {
     let mut cmd = ctx.wrangler(["dev"]);
     for c in configs {
         cmd.arg("-c").arg(c);
@@ -611,19 +714,21 @@ fn spawn_runtime(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     own_group(&mut cmd);
-    let mut child = cmd.spawn().context(crate::tr!(
+    let mut child = Runtime(cmd.spawn().context(crate::tr!(
         "Wrangler を起動できません",
         "cannot start Wrangler"
-    ))?;
+    ))?);
     let ready = Arc::new(AtomicBool::new(false));
     let show = log_file.is_some();
     let (tx, rx) = mpsc::channel::<()>();
     for stream in [
         child
+            .0
             .stdout
             .take()
             .map(|s| Box::new(s) as Box<dyn Read + Send>),
         child
+            .0
             .stderr
             .take()
             .map(|s| Box::new(s) as Box<dyn Read + Send>),
@@ -664,18 +769,16 @@ fn spawn_runtime(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = child.0.try_wait()? {
             bail!(crate::tr!(
                 "Wrangler が止まりました({status})。上の出力を見てください",
                 "Wrangler stopped ({status}); see the output above"
             ));
         }
         if crate::interrupt::check().is_err() {
-            stop_child(&mut child);
             return Ok(None);
         }
         if started.elapsed() > Duration::from_secs(180) {
-            stop_child(&mut child);
             bail!(crate::tr!(
                 "Wrangler が 3 分たっても動き出しません",
                 "Wrangler did not become ready within 3 minutes"
@@ -684,8 +787,6 @@ fn spawn_runtime(
     }
 }
 
-/// Run `f` against the data service: the running `up`'s, or a temporary
-/// runtime with only the gateway and the data service (DES-011).
 /// Secrets (.dev.vars) and the data service's token are written under the
 /// tool's folder, so it must stay out of git (REQ-007, REQ-015).
 fn tool_dir_ignored(ctx: &Ctx) -> Result<()> {
@@ -697,6 +798,8 @@ fn tool_dir_ignored(ctx: &Ctx) -> Result<()> {
     )
 }
 
+/// Run `f` against the data service: the running `up`'s, or a temporary
+/// runtime with only the gateway and the data service (DES-011).
 fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<T>) -> Result<T> {
     let p = Paths::new(ctx);
     tool_dir_ignored(ctx)?;
@@ -709,6 +812,12 @@ fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<
                 ))
             })?;
             let port = rec["gateway"].as_u64().unwrap_or(0);
+            if port == 0 {
+                bail!(crate::tr!(
+                    "--env local up がまだ動き出していません。動き出してから、もう一度打ってください",
+                    "--env local up is still starting; try again once it is running"
+                ));
+            }
             let token = rec["token"].as_str().unwrap_or_default().to_string();
             f(
                 &crate::data::Client::new(format!("http://127.0.0.1:{port}"), token),
@@ -726,14 +835,14 @@ fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<
                 write_cfg(&gw, &configs::gateway(&gw, &[], port)?)?,
                 data_config(ctx, &run, &token)?,
             ];
-            let Some(mut child) = spawn_runtime(ctx, &p, &cfgs, port, None)? else {
+            let Some(child) = spawn_runtime(ctx, &p, &cfgs, port, None)? else {
                 bail!(crate::tr!("中断しました(Ctrl+C)", "interrupted (Ctrl+C)"));
             };
             let r = f(
                 &crate::data::Client::new(format!("http://127.0.0.1:{port}"), token),
                 false,
             );
-            stop_child(&mut child);
+            drop(child);
             let _ = std::fs::remove_dir_all(&run);
             drop(lock);
             r
@@ -1170,9 +1279,19 @@ impl LogFilter {
             let v: Value = serde_json::from_str(json).ok()?;
             let svc = v["s"].as_str().unwrap_or("?");
             let msg = v["m"].as_str().unwrap_or("");
-            let mut out = format!("{svc:<12} | {msg}");
+            // Every line of a multi-line message carries the service.
+            let tag = |m: &str| {
+                if m.is_empty() {
+                    return format!("{svc:<12} | ");
+                }
+                m.lines()
+                    .map(|l| format!("{svc:<12} | {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let mut out = tag(msg);
             if v["t"] == "exc" {
-                out = format!("{svc:<12} | ✘ {msg}");
+                out = tag(&format!("✘ {msg}"));
                 if let Some(st) = v["st"].as_str().filter(|s| !s.is_empty()) {
                     for l in st.lines().skip(1) {
                         out.push_str(&format!("\n{svc:<12} |   {}", l.trim()));
@@ -1269,6 +1388,8 @@ fn write_cfg(dir: &Path, cfg: &Value) -> Result<PathBuf> {
 
 /// A file only the user can read (secrets).
 fn write_private(path: &Path, text: &str) -> Result<()> {
+    // A new file, so an old one's looser permissions never carry over.
+    let _ = std::fs::remove_file(path);
     let mut opts = OpenOptions::new();
     opts.create(true).write(true).truncate(true);
     #[cfg(unix)]
@@ -1320,6 +1441,16 @@ fn own_group(cmd: &mut Command) {
 fn own_group(_cmd: &mut Command) {}
 
 /// Stop Wrangler and everything under it, and wait until it is gone.
+/// The runtime's process group: stopped when this goes away, on every
+/// path out (errors included), so no workerd is left holding ports or data.
+struct Runtime(Child);
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        stop_child(&mut self.0);
+    }
+}
+
 fn stop_child(child: &mut Child) {
     let pid = child.id();
     #[cfg(unix)]

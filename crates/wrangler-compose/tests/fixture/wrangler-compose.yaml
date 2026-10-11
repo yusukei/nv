@@ -22,6 +22,7 @@ services:
       JOBS: jobs
       COUNTER: api.Counter
     consumes: [jobs]
+    crons: ["*/5 * * * *"]
     durable_objects: [Counter]
     secrets: [stripe-key]
     vars:

@@ -17,6 +17,8 @@ pub struct Ctx {
     pub local: bool,
     pub dry_run: bool,
     pub compose: Compose,
+    /// The project's Wrangler version (part of what decides a bundle).
+    pub wrangler_version: String,
     nv: PathBuf,
 }
 
@@ -36,14 +38,15 @@ impl Ctx {
         let file = compose::find(&cwd)?;
         let compose = compose::load(&file, env)?;
         let nv = nv_path()?;
-        let ctx = Ctx {
+        let mut ctx = Ctx {
             env: env.to_string(),
             local: env == "local",
             dry_run,
             compose,
+            wrangler_version: String::new(),
             nv,
         };
-        ctx.check_wrangler()?;
+        ctx.wrangler_version = ctx.check_wrangler()?;
         Ok(ctx)
     }
 
@@ -117,7 +120,7 @@ impl Ctx {
         Ok(v)
     }
 
-    fn check_wrangler(&self) -> Result<()> {
+    fn check_wrangler(&self) -> Result<String> {
         let v = self.node_json(VERSION_JS, std::iter::empty::<&str>())?;
         let version = v["version"].as_str().unwrap_or("0.0.0");
         if parse_version(version) < MIN_WRANGLER {
@@ -129,7 +132,7 @@ impl Ctx {
                 MIN_WRANGLER.2
             ));
         }
-        Ok(())
+        Ok(version.to_string())
     }
 }
 

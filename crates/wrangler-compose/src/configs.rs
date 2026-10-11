@@ -129,16 +129,25 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
 }
 
 /// `.dev.vars` for a Worker's secrets (REQ-005): dotenv with quoting.
+/// A value as Wrangler's `.dev.vars` reader (dotenv) gives it back exactly:
+/// single quotes take everything literally (newlines too) but a `'`;
+/// backticks likewise but a `` ` ``; double quotes turn `\n` into a newline.
+fn dev_vars_value(v: &str) -> String {
+    if !v.contains('\'') {
+        format!("'{v}'")
+    } else if !v.contains('`') {
+        format!("`{v}`")
+    } else {
+        // Holds both ' and `: double quotes, where only \n and \r change.
+        format!("\"{}\"", v.replace('\n', "\\n").replace('\r', "\\r"))
+    }
+}
+
 pub fn dev_vars(c: &Compose, w: &Worker) -> String {
     let mut out = String::new();
     for s in &w.secrets {
         if let Some(sec) = c.secrets.get(s) {
-            let v = sec
-                .value
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n");
-            out.push_str(&format!("{}=\"{v}\"\n", sec.var));
+            out.push_str(&format!("{}={}\n", sec.var, dev_vars_value(&sec.value)));
         }
     }
     out
@@ -286,13 +295,26 @@ const GATEWAY_JS: &str = r#"// Made by wrangler-compose: routes each local port 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const port = url.port;
-    if (port === env.WC_INTERNAL_PORT && url.pathname.startsWith("/__wc/")) {
-      return env.WC_DATA.fetch(request);
+    // Requests from a service's port carry the port they came in on; the
+    // header is the tool's, so the Worker never sees it.
+    const from = request.headers.get("x-wrangler-compose-port");
+    if (from === null) {
+      if (url.port === env.WC_INTERNAL_PORT && url.pathname.startsWith("/__wc/")) {
+        return env.WC_DATA.fetch(request);
+      }
+      return new Response("wrangler-compose: use a service's port", { status: 404 });
     }
-    const binding = env.WC_PORTS[port];
-    if (!binding) return new Response(`wrangler-compose: no service on port ${port}`, { status: 404 });
-    return env[binding].fetch(request);
+    const binding = env.WC_PORTS[from];
+    if (!binding) return new Response(`wrangler-compose: no service on port ${from}`, { status: 404 });
+    // Crons do not fire by themselves locally; this runs one now.
+    if (request.headers.get("x-wrangler-compose-scheduled") === "1") {
+      const r = await env[binding].scheduled({ cron: url.searchParams.get("cron") || "* * * * *", scheduledTime: new Date() });
+      return Response.json(r);
+    }
+    const headers = new Headers(request.headers);
+    headers.delete("x-wrangler-compose-port");
+    headers.delete("x-wrangler-compose-scheduled");
+    return env[binding].fetch(new Request(request, { headers }));
   },
 };
 "#;

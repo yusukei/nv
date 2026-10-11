@@ -74,17 +74,26 @@ pub fn forward_worker(
     guarded: Arc<Vec<String>>,
     stop: Arc<AtomicBool>,
 ) {
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
     accept_until(listener, stop, move |client| {
         let guarded = guarded.clone();
         std::thread::spawn(move || {
-            let _ = forward_one(client, gateway, &guarded);
+            let _ = forward_one(client, gateway, port, &guarded);
         });
     });
 }
 
+/// The header that tells the gateway which port a request came in on (the
+/// Host header may name another port behind a proxy, or none for port 80).
+/// The gateway removes it before the Worker sees the request.
+pub const PORT_HEADER: &str = "x-wrangler-compose-port";
+/// Marks a request to run the Worker's cron (`/cdn-cgi/handler/scheduled`).
+pub const SCHEDULED_HEADER: &str = "x-wrangler-compose-scheduled";
+
 fn forward_one(
     mut client: TcpStream,
     gateway: SocketAddr,
+    port: u16,
     guarded: &[String],
 ) -> std::io::Result<()> {
     // A connection that never sends a request does not hold a thread for
@@ -110,19 +119,33 @@ fn forward_one(
         }
     }
     let mut up = TcpStream::connect(gateway)?;
-    if head.get("upgrade").is_some() {
-        up.write_all(&buf)?;
-    } else {
-        let mut out = format!("{} {} HTTP/1.1\r\n", head.method, head.path);
-        for (k, v) in &head.headers {
-            if !k.eq_ignore_ascii_case("connection") && !k.eq_ignore_ascii_case("keep-alive") {
-                out.push_str(&format!("{k}: {v}\r\n"));
-            }
+    let upgrade = head.get("upgrade").is_some();
+    // Wrangler answers this path itself, for the entry Worker (the gateway);
+    // marked like this, the gateway runs the cron of this port's Worker.
+    let (path, scheduled) = match head.path.strip_prefix("/cdn-cgi/handler/scheduled") {
+        Some(rest) if rest.is_empty() || rest.starts_with('?') => (format!("/{rest}"), true),
+        _ => (head.path.clone(), false),
+    };
+    let mut out = format!("{} {path} HTTP/1.1\r\n", head.method);
+    for (k, v) in &head.headers {
+        let drop = k.eq_ignore_ascii_case(PORT_HEADER)
+            || k.eq_ignore_ascii_case(SCHEDULED_HEADER)
+            || (!upgrade
+                && (k.eq_ignore_ascii_case("connection") || k.eq_ignore_ascii_case("keep-alive")));
+        if !drop {
+            out.push_str(&format!("{k}: {v}\r\n"));
         }
-        out.push_str("connection: close\r\n\r\n");
-        up.write_all(out.as_bytes())?;
-        up.write_all(&buf[head.raw_len..])?;
     }
+    out.push_str(&format!("{PORT_HEADER}: {port}\r\n"));
+    if scheduled {
+        out.push_str(&format!("{SCHEDULED_HEADER}: 1\r\n"));
+    }
+    if !upgrade {
+        out.push_str("connection: close\r\n");
+    }
+    out.push_str("\r\n");
+    up.write_all(out.as_bytes())?;
+    up.write_all(&buf[head.raw_len..])?;
     let (mut c_read, mut u_write) = (client.try_clone()?, up.try_clone()?);
     let t = std::thread::spawn(move || {
         let _ = std::io::copy(&mut c_read, &mut u_write);

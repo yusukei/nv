@@ -124,7 +124,7 @@
   <li>使う Wrangler は 4.149.0 以上(この設計を確かめた版)</li>
   <li>Queue の受け手は、compose ファイルに設定を持たないので、手元の設定に本物の既定値(<code>max_batch_size: 10</code>・<code>max_batch_timeout: 5</code>・<code>max_retries: 3</code>)を書いて渡す。手元の模擬の既定値(5・1・2)は本物と違うため(実測)</li>
   <li>動いていることの記録と錠・ほかの端末からの止め方は 0.1 系のものを引き継ぐ。ログは画面と <code>.wrangler/compose/local/logs/</code> の両方に出す</li>
-  <li>compose ファイルか <code>.env.local</code> が変われば、設定を作り直して動かし直す。コードが変われば組み立て直して動かし直す</li>
+  <li>compose ファイルか <code>.env.local</code> が変われば、設定を作り直して動かし直す。コードが変われば組み立て直して動かし直す(<code>wrangler dev</code> は最初の設定以外の Worker の新しい束を読み直さない。4.149.0 で実測)。見るのは Worker のフォルダと、前の組み立てで esbuild が読んだフォルダの外のファイル(共有のコードなど)、ロックファイル、Wrangler の版。組み立ては別のフォルダで行い、うまくいったときだけ動いている束を置き換える。読めない compose ファイルに直したときは、直るまで今のまま動かす。同じプロセスのまま動かし直すので、ポートは閉じてから開き直す</li>
 </ul>
 
 <h3 id="des-009"><span class="id">DES-009</span>リモートの up <span class="refs">REQ-010・REQ-005・REQ-015</span></h3>

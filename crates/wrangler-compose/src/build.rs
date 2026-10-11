@@ -86,16 +86,14 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
     let dir = ctx.tool_dir().join("build").join(svc);
     let out_dir = dir.join("out");
     let config = build_config(ctx, svc, w)?;
-    let hash = source_hash(&w.build, &config)?;
     let entry = entry_name(config["main"].as_str().unwrap_or("index.js"));
     let stamp = dir.join("stamp.json");
-    if let Ok(text) = std::fs::read_to_string(&stamp)
-        && serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| v["hash"].as_str().map(str::to_string))
-            == Some(hash.clone())
-        && out_dir.join(&entry).is_file()
-    {
+    let old: Value = std::fs::read_to_string(&stamp)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let hash = source_hash(ctx, w, &config, &inputs_of(&old))?;
+    if old["hash"].as_str() == Some(hash.as_str()) && out_dir.join(&entry).is_file() {
         if report {
             say(crate::tr!(
                 "{svc}: 変わっていないので組み立て直しません",
@@ -121,9 +119,17 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
         .with_context(|| crate::tr!("{} を作れません", "cannot create {}", dir.display()))?;
     let cfg_path = dir.join("wrangler.json");
     std::fs::write(&cfg_path, serde_json::to_vec_pretty(&config)?)?;
-    let _ = std::fs::remove_dir_all(&out_dir);
+    // Build next to the running bundle; it is replaced only by a good build.
+    let next = dir.join("next");
+    let _ = std::fs::remove_dir_all(&next);
+    let meta = dir.join("meta.json");
+    let _ = std::fs::remove_file(&meta);
     let mut cmd = ctx.wrangler(["deploy", "--dry-run", "-c"]);
-    cmd.arg(&cfg_path).arg("--outdir").arg(&out_dir);
+    cmd.arg(&cfg_path)
+        .arg("--outdir")
+        .arg(&next)
+        .arg("--metafile")
+        .arg(&meta);
     let output = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -132,17 +138,23 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
             "Wrangler を起動できません",
             "cannot start Wrangler"
         ))?;
-    if !output.status.success() || !out_dir.join(&entry).is_file() {
+    if !output.status.success() || !next.join(&entry).is_file() {
         eprint!("{}", String::from_utf8_lossy(&output.stdout));
         eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        let _ = std::fs::remove_dir_all(&next);
         bail!(crate::tr!(
             "{svc} を組み立てられません(上の出力を見てください)",
             "{svc} could not be built (see the output above)"
         ));
     }
+    replace_files(&next, &out_dir)?;
+    // Files the bundle came from outside the Worker folder (shared code,
+    // a tsconfig it extends) also decide it from now on.
+    let inputs = outside_inputs(&dir, w, &meta);
+    let hash = source_hash(ctx, w, &config, &inputs)?;
     std::fs::write(
         &stamp,
-        serde_json::to_vec(&json!({ "hash": hash, "entry": entry }))?,
+        serde_json::to_vec(&json!({ "hash": hash, "entry": entry, "inputs": inputs }))?,
     )?;
     if report {
         say(crate::tr!("{svc}: 組み立てました", "{svc}: built"));
@@ -154,9 +166,95 @@ pub fn build_one(ctx: &Ctx, svc: &str, w: &Worker, report: bool) -> Result<Built
     })
 }
 
+/// Copy every file of a finished build over the running bundle, then drop
+/// what the new build no longer has. Overwriting in place (not renaming) is
+/// what `wrangler dev`'s watcher notices; a failed build never gets here, so
+/// the running bundle stays whole.
+fn replace_files(from: &Path, to: &Path) -> Result<()> {
+    let mut new = Vec::new();
+    walk_all(from, from, &mut new)?;
+    for rel in &new {
+        let dest = to.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(from.join(rel), &dest)?;
+    }
+    let mut old = Vec::new();
+    if to.is_dir() {
+        walk_all(to, to, &mut old)?;
+    }
+    for rel in old.iter().filter(|r| !new.contains(r)) {
+        let _ = std::fs::remove_file(to.join(rel));
+    }
+    let _ = std::fs::remove_dir_all(from);
+    Ok(())
+}
+
+fn walk_all(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            walk_all(base, &path, out)?;
+        } else {
+            out.push(path.strip_prefix(base).unwrap_or(&path).to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+fn inputs_of(stamp: &Value) -> Vec<PathBuf> {
+    stamp["inputs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(PathBuf::from))
+        .collect()
+}
+
+/// The bundle's inputs (from esbuild's metafile, relative to the build
+/// config's folder `base`) outside the Worker folder and outside
+/// node_modules, as absolute paths.
+fn outside_inputs(base: &Path, w: &Worker, meta: &Path) -> Vec<PathBuf> {
+    let folder = w.build.canonicalize().unwrap_or_else(|_| w.build.clone());
+    let Some(v) = std::fs::read_to_string(meta)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = v["inputs"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, _)| base.join(k).canonicalize().ok())
+        .filter(|p| {
+            !p.starts_with(&folder)
+                && !p.components().any(|c| c.as_os_str() == "node_modules")
+                && p.is_file()
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The Wrangler config used only for bundling: the Worker folder's build
 /// keys (checked), with paths made absolute.
 fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
+    // Wrangler would read local values from these; here they belong in the
+    // compose file (vars) and .env.<env> (secrets).
+    for entry in std::fs::read_dir(&w.build).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == ".dev.vars" || name.starts_with(".dev.vars.") {
+            bail!(crate::tr!(
+                "{} は使えません。値は wrangler-compose.yaml の services.{svc}.vars に、シークレットは secrets と .env.<環境> に書いてください",
+                "{} is not used; put values in services.{svc}.vars in wrangler-compose.yaml and secrets in secrets plus .env.<env>",
+                entry.path().display()
+            ));
+        }
+    }
     let mut cfg = Map::new();
     if let Some(file) = CONFIG_FILES
         .iter()
@@ -235,22 +333,34 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
 }
 
 /// Where a behavior key goes instead (REQ-007).
-fn where_in_compose(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "name" => "services.<名前>.name",
-        "vars" => "services.<名前>.vars",
-        "routes" | "route" => "services.<名前>.routes",
-        "triggers" => "services.<名前>.crons",
-        "compatibility_date" => "services.<名前>.compatibility_date",
-        "compatibility_flags" => "services.<名前>.compatibility_flags",
-        "assets" => "services.<名前>.assets",
+fn where_in_compose(key: &str) -> Option<String> {
+    let field = match key {
+        "name" => "name",
+        "vars" => "vars",
+        "routes" | "route" => "routes",
+        "triggers" => "crons",
+        "compatibility_date" => "compatibility_date",
+        "compatibility_flags" => "compatibility_flags",
+        "assets" => "assets",
+        "durable_objects" | "migrations" => "durable_objects",
         "d1_databases" | "r2_buckets" | "kv_namespaces" | "queues" | "services" => {
-            "services.<名前>.bindings(相手は d1・r2・kv・queue・worker のサービス)"
+            return Some(crate::tr!(
+                "services.<名前>.bindings(相手は d1・r2・kv・queue・worker のサービス)",
+                "services.<name>.bindings (pointing at d1, r2, kv, queue or worker services)"
+            ));
         }
-        "durable_objects" | "migrations" => "services.<名前>.durable_objects",
-        "env" => "環境ごとの値は ${VAR} と .env.<環境>",
+        "env" => {
+            return Some(crate::tr!(
+                "環境ごとの値は ${{VAR}} と .env.<環境>",
+                "per-environment values come from ${{VAR}} and .env.<env>"
+            ));
+        }
         _ => return None,
-    })
+    };
+    Some(crate::tr!(
+        "services.<名前>.{field}",
+        "services.<name>.{field}"
+    ))
 }
 
 /// `src/index.ts` → `index.js` (what `--outdir` writes).
@@ -285,32 +395,49 @@ fn sync_deps(ctx: &Ctx, folder: &Path) -> Result<()> {
 }
 
 /// What decides the bundle: every source file of the Worker folder (not
-/// node_modules or tool output) and the build config.
-pub fn source_hash(folder: &Path, config: &Value) -> Result<String> {
+/// node_modules or tool output), the files it used from outside the folder,
+/// the lockfiles that pin its dependencies, the Wrangler version and the
+/// build config.
+pub fn source_hash(ctx: &Ctx, w: &Worker, config: &Value, inputs: &[PathBuf]) -> Result<String> {
     let mut h = Sha256::new();
     h.update(serde_json::to_vec(config)?);
+    h.update(ctx.wrangler_version.as_bytes());
     let mut files = Vec::new();
-    walk(folder, folder, &mut files)?;
+    walk(&w.build, &w.build, &mut files)?;
     files.sort();
-    for rel in files {
-        h.update(rel.to_string_lossy().as_bytes());
+    let mut all: Vec<PathBuf> = files.iter().map(|r| w.build.join(r)).collect();
+    all.extend(inputs.iter().cloned());
+    for lock in [
+        ctx.root().join("package-lock.json"),
+        w.build.join("package-lock.json"),
+    ] {
+        if !all.contains(&lock) {
+            all.push(lock);
+        }
+    }
+    for path in all {
+        h.update(path.to_string_lossy().as_bytes());
         h.update([0]);
-        h.update(std::fs::read(folder.join(&rel)).unwrap_or_default());
+        h.update(std::fs::read(&path).unwrap_or_default());
     }
     Ok(crate::files::hex(&h.finalize()))
 }
 
-/// The newest change under a Worker folder, for the watcher in `up`.
-pub fn newest_change(folder: &Path) -> Option<std::time::SystemTime> {
+/// The newest change among what decides a Worker's bundle, for the watcher
+/// in `up`.
+pub fn newest_change(ctx: &Ctx, svc: &str, w: &Worker) -> Option<std::time::SystemTime> {
     let mut files = Vec::new();
-    walk(folder, folder, &mut files).ok()?;
+    walk(&w.build, &w.build, &mut files).ok()?;
+    let stamp: Value =
+        std::fs::read_to_string(ctx.tool_dir().join("build").join(svc).join("stamp.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
     files
         .iter()
-        .filter_map(|r| {
-            std::fs::metadata(folder.join(r))
-                .and_then(|m| m.modified())
-                .ok()
-        })
+        .map(|r| w.build.join(r))
+        .chain(inputs_of(&stamp))
+        .filter_map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
         .max()
 }
 
@@ -329,7 +456,7 @@ fn walk(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let ft = entry.file_type()?;
         if ft.is_dir() {
             walk(base, &path, out)?;
-        } else if ft.is_file() {
+        } else if ft.is_file() || (ft.is_symlink() && path.is_file()) {
             out.push(path.strip_prefix(base).unwrap_or(&path).to_path_buf());
         }
     }

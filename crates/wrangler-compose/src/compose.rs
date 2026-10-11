@@ -296,8 +296,17 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     })?;
     let vars = Vars(file_vars);
     let mut missing = BTreeSet::new();
-    let expanded = expand_tree(raw, &vars, &mut missing);
+    let expanded = expand_tree(strip_extensions(raw), &vars, &mut missing);
     if !missing.is_empty() {
+        // Secrets without a value belong in the same list (AC-004).
+        for var in secret_vars(&expanded) {
+            if vars.get(&var).is_none() {
+                missing.insert(Missing {
+                    name: var,
+                    message: None,
+                });
+            }
+        }
         bail!(missing_message(&missing, env, &env_file));
     }
     let dir_name = root
@@ -339,6 +348,30 @@ fn missing_message(missing: &BTreeSet<Missing>, env: &str, env_file: &Path) -> S
         env_file.display(),
         lines.join("\n")
     )
+}
+
+/// `x-` keys are skipped at every level (REQ-001), as docker compose does.
+fn strip_extensions(v: Value) -> Value {
+    match v {
+        Value::Array(a) => Value::Array(a.into_iter().map(strip_extensions).collect()),
+        Value::Object(o) => Value::Object(
+            o.into_iter()
+                .filter(|(k, _)| !k.starts_with("x-"))
+                .map(|(k, x)| (k, strip_extensions(x)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// The variables the top-level `secrets` read.
+fn secret_vars(v: &Value) -> Vec<String> {
+    v["secrets"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, s)| s["environment"].as_str().map(str::to_string))
+        .collect()
 }
 
 fn expand_tree(v: Value, vars: &dyn Lookup, missing: &mut BTreeSet<Missing>) -> Value {
@@ -459,6 +492,15 @@ impl Checker {
                     ),
                 );
             }
+            if sname.starts_with("wc-") {
+                self.err(
+                    &at,
+                    crate::tr!(
+                        "wc- で始まる名前は道具のサービスが使うので、ほかの名前にしてください",
+                        "names starting with wc- belong to the tool's own services; pick another name"
+                    ),
+                );
+            }
             let Value::Object(o) = sv else {
                 self.err(
                     &at,
@@ -573,6 +615,7 @@ impl Checker {
                 }
             }
         }
+        self.across(&services);
         let services = self.order(services);
         Some(Compose {
             name,
@@ -581,6 +624,57 @@ impl Checker {
             services,
             secrets,
         })
+    }
+
+    /// Checks that need every service: names of resources, Durable Object
+    /// classes, queue consumers.
+    fn across(&mut self, services: &[Service]) {
+        let mut keys: BTreeMap<String, String> = BTreeMap::new();
+        for s in services {
+            for k in resource_keys(s) {
+                if let Some(other) = keys.insert(k.clone(), s.name.clone()) {
+                    self.err(
+                        &format!("services.{}", s.name),
+                        crate::tr!(
+                            "資源の名前「{k}」が {other} の資源と重なります。サービスかバケットなどの名前を変えてください",
+                            "resource name \"{k}\" is also a resource of {other}; rename the service or the bucket (etc.)"
+                        ),
+                    );
+                }
+            }
+        }
+        let mut consumers: BTreeMap<String, String> = BTreeMap::new();
+        for s in services {
+            let Kind::Worker(w) = &s.kind else { continue };
+            for (b, t) in &w.bindings {
+                if let Target::DurableObject { service, class } = t {
+                    let declared = services.iter().any(|x| {
+                        x.name == *service
+                            && matches!(&x.kind, Kind::Worker(o) if o.durable_objects.contains(class))
+                    });
+                    if !declared {
+                        self.err(
+                            &format!("services.{}.bindings.{b}", s.name),
+                            crate::tr!(
+                                "{service} の durable_objects に {class} がありません",
+                                "{service} has no {class} in its durable_objects"
+                            ),
+                        );
+                    }
+                }
+            }
+            for q in &w.consumes {
+                if let Some(other) = consumers.insert(q.clone(), s.name.clone()) {
+                    self.err(
+                        &format!("services.{}.consumes", s.name),
+                        crate::tr!(
+                            "queue {q} は {other} も受け取ります。1 つの queue を受け取れる Worker は 1 つです",
+                            "queue {q} is also consumed by {other}; a queue has one consuming Worker"
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     fn unknown_keys(&mut self, at: &str, o: &Map<String, Value>, allowed: &[&str]) {
@@ -777,17 +871,7 @@ impl Checker {
         types: &BTreeMap<String, (String, bool, Vec<String>)>,
     ) -> Bucket {
         let mut b = Bucket {
-            public: match m.get("public") {
-                None => false,
-                Some(Value::Bool(x)) => *x,
-                Some(_) => {
-                    self.err(
-                        &format!("{at}.public"),
-                        crate::tr!("true か false にしてください", "must be true or false"),
-                    );
-                    false
-                }
-            },
+            public: self.boolean(&format!("{at}.public"), m.get("public")),
             ..Bucket::default()
         };
         for (i, rule) in self
@@ -816,7 +900,7 @@ impl Checker {
                 ),
                 expose_headers: self
                     .strings(&format!("{rat}.expose_headers"), rule.get("expose_headers")),
-                max_age: rule.get("max_age").and_then(Value::as_u64),
+                max_age: self.number(&format!("{rat}.max_age"), rule.get("max_age")),
             };
             if cors.origins.is_empty() || cors.methods.is_empty() {
                 self.err(
@@ -1084,6 +1168,39 @@ impl Checker {
                 ),
             ),
         }
+        // One name space in the Worker's env: bindings, vars and secrets.
+        let mut names: BTreeMap<String, &str> = BTreeMap::new();
+        let secret_names: Vec<String> = w
+            .secrets
+            .iter()
+            .filter_map(|s| secrets.get(s).map(|x| x.var.clone()))
+            .collect();
+        for (name, what) in w
+            .bindings
+            .iter()
+            .map(|(b, _)| (b.clone(), "bindings"))
+            .chain(w.vars.keys().map(|k| (k.clone(), "vars")))
+            .chain(secret_names.into_iter().map(|v| (v, "secrets")))
+        {
+            if name.starts_with("__WC_") {
+                self.err(
+                    &format!("{at}.{what}.{name}"),
+                    crate::tr!(
+                        "__WC_ で始まる名前は道具が使います",
+                        "names starting with __WC_ belong to the tool"
+                    ),
+                );
+            }
+            if let Some(first) = names.insert(name.clone(), what) {
+                self.err(
+                    &format!("{at}.{what}.{name}"),
+                    crate::tr!(
+                        "「{name}」は {first} にもあります。コードからは env.{name} 1 つしか見えないので、名前を分けてください",
+                        "\"{name}\" is also in {first}; the code sees only one env.{name}, so use different names"
+                    ),
+                );
+            }
+        }
         w.routes = self.strings(&format!("{at}.routes"), o.get("routes"));
         w.crons = self.strings(&format!("{at}.crons"), o.get("crons"));
         match o.get("compatibility_date") {
@@ -1130,6 +1247,41 @@ impl Checker {
             );
         }
         out
+    }
+
+    /// true/false, also as the text `${VAR}` leaves ("true", "false").
+    fn boolean(&mut self, at: &str, v: Option<&Value>) -> bool {
+        match v {
+            None => false,
+            Some(Value::Bool(x)) => *x,
+            Some(Value::String(s)) if s == "true" || s == "false" => s == "true",
+            Some(_) => {
+                self.err(
+                    at,
+                    crate::tr!("true か false にしてください", "must be true or false"),
+                );
+                false
+            }
+        }
+    }
+
+    /// A whole number, also as the text `${VAR}` leaves.
+    fn number(&mut self, at: &str, v: Option<&Value>) -> Option<u64> {
+        match v {
+            None => None,
+            Some(Value::Number(n)) if n.as_u64().is_some() => n.as_u64(),
+            Some(Value::String(s)) if s.parse::<u64>().is_ok() => s.parse().ok(),
+            Some(_) => {
+                self.err(
+                    at,
+                    crate::tr!(
+                        "0 以上の整数にしてください",
+                        "must be a whole number (0 or more)"
+                    ),
+                );
+                None
+            }
+        }
     }
 
     fn opt_string(&mut self, at: &str, v: Option<&Value>) -> Option<String> {
@@ -1366,6 +1518,7 @@ fn resolve_resource(t: &str, want: &str, types: &Types) -> std::result::Result<S
 /// `"8787:8787"` or `"127.0.0.1:8787:8787"` (docker's short syntax; a
 /// Worker has no inner port, so both numbers must match).
 fn parse_port(s: &str) -> std::result::Result<Port, String> {
+    let s = s.strip_suffix("/tcp").unwrap_or(s);
     let (ip, rest) = if let Some(r) = s.strip_prefix('[') {
         match r.split_once("]:") {
             Some((ip, rest)) => (ip.to_string(), rest.to_string()),
@@ -1385,6 +1538,9 @@ fn parse_port(s: &str) -> std::result::Result<Port, String> {
     let (Ok(a), Ok(b)) = (a.parse::<u16>(), b.parse::<u16>()) else {
         return Err(bad_port(s));
     };
+    if a == 0 || ip.parse::<std::net::IpAddr>().is_err() {
+        return Err(bad_port(s));
+    }
     if a != b {
         return Err(crate::tr!(
             "「{s}」: Worker には中のポートが無いので、2 つのポートは同じ数にしてください(例: \"{a}:{a}\")",
@@ -1417,12 +1573,14 @@ fn valid_binding(s: &str) -> bool {
 
 fn is_date(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 10
+    let shape = b.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
         && b.iter()
             .enumerate()
-            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+    let num = |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+    shape && (1..=12).contains(&num(5..7)) && (1..=31).contains(&num(8..10))
 }
 
 /// Where a docker compose key's job is done instead (REQ-001).
@@ -1604,6 +1762,111 @@ services:
         ] {
             assert!(err.contains(want), "{want} missing in:\n{err}");
         }
+    }
+
+    #[test]
+    fn stops_on_mistakes_that_would_fail_later() {
+        let yaml = r#"
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-99-01"
+    ports: ["bogus:0:0"]
+    bindings:
+      X: api.Nope
+      DB: cache
+      __WC_DO_Counter: api.Counter
+    vars:
+      DB: "1"
+    consumes: [jobs]
+  api:
+    type: worker
+    build: ./api
+    compatibility_date: "2026-09-01"
+    durable_objects: [Counter]
+    consumes: [jobs]
+  wc-gateway:
+    type: kv
+  storage:
+    type: r2
+    buckets:
+      files: {}
+  storage-files:
+    type: r2
+  cache:
+    type: kv
+  jobs:
+    type: queue
+"#;
+        let err = project(yaml, None).1.unwrap_err().to_string();
+        for want in [
+            "services.web.compatibility_date",
+            "services.web.ports",
+            "services.web.bindings.X",
+            "services.web.vars.DB",
+            "services.web.bindings.__WC_DO_Counter",
+            "services.api.consumes",
+            "services.wc-gateway",
+            "services.storage-files",
+        ] {
+            assert!(err.contains(want), "{want} missing in:\n{err}");
+        }
+    }
+
+    #[test]
+    fn skips_x_keys_and_reads_interpolated_types() {
+        let yaml = r#"
+x-common: &date "2026-09-01"
+services:
+  x-template:
+    anything: [goes]
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: *date
+    x-note: here too
+    bindings:
+      x-later: nothing
+      FILES: storage
+  storage:
+    type: r2
+    public: ${PUB:-true}
+    cors:
+      - origins: ["*"]
+        methods: [GET]
+        max_age: "${AGE:-600}"
+secrets:
+  x-unused: {}
+"#;
+        let c = project(yaml, None).1.unwrap();
+        let Kind::R2(b) = &c.service("storage").unwrap().kind else {
+            panic!()
+        };
+        assert!(b[0].spec.public);
+        assert_eq!(b[0].spec.cors[0].max_age, Some(600));
+        assert!(c.service("x-template").is_none());
+    }
+
+    #[test]
+    fn reports_missing_secrets_with_missing_variables() {
+        let yaml = r#"
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    routes: ["${WEB_DOMAIN}/*"]
+    secrets: [key]
+secrets:
+  key:
+    environment: STRIPE_KEY
+"#;
+        let err = project(yaml, None).1.unwrap_err().to_string();
+        assert!(
+            err.contains("WEB_DOMAIN") && err.contains("STRIPE_KEY"),
+            "{err}"
+        );
     }
 
     #[test]

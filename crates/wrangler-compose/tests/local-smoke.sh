@@ -25,6 +25,9 @@ cp .gitignore gi.bak && grep -v '^.wrangler/$' gi.bak > .gitignore
 if "$WC" --env local up > refused.out 2>&1; then fail "up ran with .wrangler/ not ignored"; fi
 grep -q 'not ignored by git' refused.out || fail "gitignore message: $(cat refused.out)"
 mv gi.bak .gitignore
+# A secret with characters .dev.vars files treat specially arrives unchanged.
+export STRIPE_KEY="sk\"a\\b\$HOME'x y"
+"$WC" --env local --dry-run up >/dev/null 2>&1 || fail "dry-run up before start"
 start
 running() { grep -c 'running locally' up.out || true; }
 # Two Workers, a service binding, D1, R2, KV, Queue, Durable Object, secret.
@@ -78,6 +81,20 @@ curl -fsS -o /dev/null localhost:8787/ || fail "broken compose stopped the servi
 cp compose.bak wrangler-compose.yaml
 for _ in $(seq 1 120); do [[ $(running) -ge 3 ]] && break; sleep 1; done
 [[ $(running) -ge 3 ]] || fail "restart after fix"
+[[ $(curl -fsS localhost:8788/secret) == "$STRIPE_KEY" ]] || fail "secret changed: $(curl -sS localhost:8788/secret)"
+# A dry run says a real up would stop while one runs.
+if "$WC" --env local --dry-run up >/dev/null 2>&1; then fail "dry-run up while running"; fi
+# Routing does not depend on the Host header (proxies rewrite it).
+[[ $(curl -fsS -H 'Host: example.test' localhost:8787/shared) == one ]] || fail "routing with another Host"
+# Crons run on request (they do not fire by themselves locally).
+curl -fsS -o /dev/null "localhost:8788/cdn-cgi/handler/scheduled?cron=*/5%20*%20*%20*%20*" || fail "scheduled"
+[[ $(curl -fsS localhost:8788/cron) == "*/5 * * * *" ]] || fail "cron: $(curl -sS localhost:8788/cron)"
+# Code shared from outside the Worker folder rebuilds the Worker.
+echo 'export const SHARED = "two";' > shared/value.ts
+for _ in $(seq 1 60); do [[ $(curl -fsS localhost:8787/shared) == two ]] && break; sleep 1; done
+[[ $(curl -fsS localhost:8787/shared) == two ]] || fail "shared code change"
+# Every line of a multi-line log carries the service name.
+grep -q '^api  *| second line' up.out || fail "multi-line log"
 # Logs carry the service name (AC-012).
 grep -q '^api  *| api handled /' up.out || fail "tagged logs"
 "$WC" --env local ps | grep -q 'running' || fail "ps"
