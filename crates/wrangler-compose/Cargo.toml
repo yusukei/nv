@@ -1,0 +1,16 @@
+[package]
+name = "wrangler-compose"
+description = "Run Cloudflare Workers environments like docker compose"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+rusty-s3 = "0.10.2"
+serde_json = "1.0.152"
+sha2 = "0.11.0"
+ureq = "3.4.2"
+url = "2.5.8"

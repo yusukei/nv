@@ -53,7 +53,10 @@
   <tr><td>表をすべて消した D1 に書き出しの SQL を流し、移行を適用すると、控えのあとに足した移行だけが当たる</td><td>手元の D1 で実測(<code>--local</code>)</td></tr>
   <tr><td>D1 の書き出しの間、その D1 は問い合わせに応えない</td><td><code>d1 export</code> の注意文</td></tr>
   <tr><td>R2 の S3 API の口は <code>https://&lt;アカウント ID&gt;.r2.cloudflarestorage.com</code>、管轄のあるバケットは <code>https://&lt;アカウント ID&gt;.&lt;管轄&gt;.r2.cloudflarestorage.com</code>。署名の地域は <code>auto</code>。ListObjectsV2・DeleteObjects・GetObject・PutObject を受ける</td><td><a href="https://developers.cloudflare.com/r2/api/s3/api/">R2 S3 API</a>・<a href="https://developers.cloudflare.com/r2/reference/data-location/">Data location</a></td></tr>
-  <tr><td><code>wrangler whoami --json</code> はログインしたアカウントを JSON で返し、ログインしていなければ 0 以外で終わる</td><td><code>whoami --help</code></td></tr>
+  <tr><td><code>wrangler whoami --json</code> はログインしたアカウントを <code>accounts</code> の配列で返し、ログインしていなければ 0 以外で終わる</td><td><code>whoami</code> の実装</td></tr>
+  <tr><td><code>wrangler deploy --dry-run</code> は、資源の自動作成とアップロードの分岐に入らずに終わる</td><td><code>deploy</code> の実装(<code>isDryRun</code> の分岐)</td></tr>
+  <tr><td><code>wrangler secret list --format json</code> は、シークレットの <code>name</code> を持つ配列を出す</td><td><code>secret list</code> の実装</td></tr>
+  <tr><td><code>wrangler r2 bucket delete</code> の管轄は <code>--jurisdiction</code> で渡す。<code>d1 execute</code> は <code>--yes</code> で確かめを飛ばせる</td><td>各コマンドの引数の定義</td></tr>
 </table>
 
 <h2>設計</h2>
@@ -120,6 +123,7 @@
 
 <h3 id="des-008"><span class="id">DES-008</span>打ち直しの確かめ <span class="refs">REQ-005・REQ-006・REQ-008</span></h3>
 <ul>
+  <li>端末かどうかは、<code>down</code>・<code>down --purge</code>・<code>restore --drop</code> の最初に見る(Cloudflare に問い合わせる前に止まる)</li>
   <li>標準入力と標準エラーの両方が端末のときだけ、環境名を打ってもらう。どちらかが端末でなければ、何も消さずに止まり、端末から打つよう示す</li>
   <li>打った文字列の前後の空白を除いて、環境名と完全に一致したときだけ進む</li>
 </ul>
@@ -191,9 +195,7 @@
 <ul>
   <li>Cloudflare の側の D1 の書き出し(<code>--remote</code>)が、手元と同じく <code>d1_migrations</code> を含むこと(手元の D1 でだけ確かめた)</li>
   <li>Cloudflare の側の D1 で、外部キーのある表を <code>defer_foreign_keys</code> を付けて消せること</li>
-  <li><code>wrangler deploy --dry-run</code> が、資源の自動作成や Cloudflare への問い合わせをしないこと</li>
   <li>R2 の PutObject の 1 回の上限を超える大きなオブジェクト(分割アップロードが要るもの)。当面は上限を超えるものがあれば restore の前に止める</li>
-  <li><code>wrangler secret list --format json</code> の出力の形(名前の取り出し方)</li>
 </ul>
 
 <footer>docs/wrangler-compose/design.html</footer>

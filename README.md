@@ -45,6 +45,21 @@ nv install skill            # Claude Code と Codex にスキルを入れる
 
 nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ・`nv x` の道具は `~/.nv/cache`)。
 
+## wrangler-compose の使い方
+
+nv と同じフォルダに置く(Release の `wrangler-compose-<ターゲット>`)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`)。
+
+```bash
+wrangler-compose --env staging build      # 組むだけ(何も上げない)
+wrangler-compose --env staging up         # D1 の移行 → デプロイ(初回も更新も)
+wrangler-compose --env staging backup     # D1・R2 を backups/staging/<日時>/ へ
+wrangler-compose --env staging restore --drop backups/staging/<日時>
+wrangler-compose --env staging down       # Worker だけ消す(データは残る)
+wrangler-compose --env staging down --purge
+```
+
+シークレットは `.env.<環境名>` に書く(git に入れない)。R2 を扱う `--purge`・`backup`・`restore` には、同じファイルに `WRANGLER_COMPOSE_R2_ACCESS_KEY_ID`・`WRANGLER_COMPOSE_R2_SECRET_ACCESS_KEY` が要る。
+
 ## 進め方
 
 仕様書は HTML で、ブラウザで [docs/index.html](docs/index.html) を開いて読む。要求仕様と受け入れ条件(`docs/<コマンド>/requirements.html`・`acceptance.html`)を決めてから、設計とコードに入る。nv から作る(wrangler-compose は nv に頼る)。

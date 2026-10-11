@@ -1,6 +1,6 @@
 name: release
 
-# Push a tag like v0.1.0 to publish nv (and later wrangler-compose) for every
+# Push a tag like v0.1.0 to publish nv and wrangler-compose for every
 # platform, with SHA256SUMS and VERSION for `nv self update` (DES-010).
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 env:
-  # Executables published per target. Add wrangler-compose once it exists.
-  BINS: nv
+  # Executables published per target.
+  BINS: nv wrangler-compose
   NV_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/latest/download
 
 jobs:
