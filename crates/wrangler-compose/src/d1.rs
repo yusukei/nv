@@ -58,6 +58,57 @@ pub fn apply_migrations(project: &Project) -> Result<()> {
     Ok(())
 }
 
+/// Migration file names in the folder, in the order Wrangler applies them.
+fn local_migrations(d1: &D1) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(&d1.migrations_dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                .filter(|n| n.ends_with(".sql"))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// For a database that does not exist yet, every migration is pending.
+pub fn pending_migrations_all(d1: &D1) -> Vec<String> {
+    local_migrations(d1)
+}
+
+/// Migrations not applied yet, read without writing anything: `d1 migrations
+/// list` would create the history table when it is missing (DES-016).
+pub fn pending_migrations(project: &Project, d1: &D1) -> Result<Vec<String>> {
+    let local = local_migrations(d1);
+    let table = d1.migrations_table.replace('\'', "''");
+    let check = format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'");
+    let v = project.wrangler_json([
+        "d1",
+        "execute",
+        &d1.binding,
+        "--remote",
+        "--json",
+        "--command",
+        &check,
+    ])?;
+    if names_from_execute(&v).is_empty() {
+        return Ok(local);
+    }
+    let quoted = d1.migrations_table.replace('"', "\"\"");
+    let v = project.wrangler_json([
+        "d1",
+        "execute",
+        &d1.binding,
+        "--remote",
+        "--json",
+        "--command",
+        &format!("SELECT name FROM \"{quoted}\""),
+    ])?;
+    let applied = names_from_execute(&v);
+    Ok(local.into_iter().filter(|n| !applied.contains(n)).collect())
+}
+
 /// Tables a user created: everything but SQLite's and D1's own (`sqlite_*`, `_cf_*`).
 pub fn user_tables(project: &Project, d1: &D1) -> Result<Vec<String>> {
     let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'";
@@ -152,18 +203,21 @@ mod tests {
             name: "app-db".into(),
             id: None,
             migrations_dir: "m".into(),
+            migrations_table: "d1_migrations".into(),
         };
         let by_id = D1 {
             binding: "DB".into(),
             name: "other".into(),
             id: Some("uuid-1".into()),
             migrations_dir: "m".into(),
+            migrations_table: "d1_migrations".into(),
         };
         let missing = D1 {
             binding: "DB".into(),
             name: "app-db".into(),
             id: Some("uuid-2".into()),
             migrations_dir: "m".into(),
+            migrations_table: "d1_migrations".into(),
         };
         assert!(exists(&by_name, &remote));
         assert!(exists(&by_id, &remote));

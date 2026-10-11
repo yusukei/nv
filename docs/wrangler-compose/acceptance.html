@@ -29,6 +29,7 @@
     <li><a href="#ac-008">AC-008 restore</a></li>
     <li><a href="#ac-009">AC-009 秘密の扱い</a></li>
     <li><a href="#ac-010">AC-010 配り方と更新</a></li>
+    <li><a href="#ac-011">AC-011 dry-run</a></li>
   </ul>
 </nav>
 <main>
@@ -123,6 +124,16 @@
   <li>Node も npm も入っていない Windows と macOS で、同じフォルダに置いた wrangler-compose と nv の実行ファイルだけで、<code>up</code> が動く(Node と Wrangler は nv が揃える)</li>
   <li>版のタグを push すると、その版の GitHub の Release に、nv と並んで OS ごとの wrangler-compose の実行ファイルと検証値が並ぶ</li>
   <li><code>wrangler-compose self update</code>・<code>wrangler-compose install skill</code> は無い。更新とスキルは nv の AC-010・AC-008 で確かめる</li>
+</ul>
+
+<h3 id="ac-011"><span class="id">AC-011</span>dry-run <span class="refs">REQ-011</span></h3>
+<ul>
+  <li><code>--dry-run up</code> のあと、Worker の版・D1 の移行の履歴・シークレット・設定ファイルが変わっていない。当てる予定の移行の名前と、入れる予定のシークレットの名前(値は出ない)が出る</li>
+  <li><code>--dry-run down</code>・<code>--dry-run down --purge</code> のあと、Worker・D1・R2 はどれも変わっていない。消す予定のもの(<code>--purge</code> ならオブジェクトの数まで)が出る。端末でなくても(入力を流し込んでも)動く</li>
+  <li><code>--dry-run backup</code> のあと、書き出し先に何もできていない。書き出す D1 とバケットとオブジェクトの数が出る</li>
+  <li><code>--dry-run restore --drop</code> のあと、D1 と R2 の中身が変わっていない。消す予定のものと戻す予定のものが出る</li>
+  <li>本番の操作が止まる条件(<code>.env</code> が git に入っている、API キーが無い、書きかけの控え、など)では、dry-run も同じに止まる</li>
+  <li>どの dry-run も、終わりに何も変えていないことが出る</li>
 </ul>
 
 <footer>docs/wrangler-compose/acceptance.html</footer>

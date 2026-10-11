@@ -51,6 +51,10 @@ pub fn up(project: &Project) -> Result<()> {
     d1::require_pinned_exist(project, &remote)?;
     let all_exist = project.config.d1.iter().all(|d| d1::exists(d, &remote));
 
+    if project.dry_run {
+        return plan(project, secrets.as_ref(), &remote, all_exist);
+    }
+
     if all_exist {
         stage(1, 2, "D1 migrations");
         d1::apply_migrations(project)
@@ -83,6 +87,77 @@ pub fn up(project: &Project) -> Result<()> {
         project.env_name()
     );
     Ok(())
+}
+
+/// `up --dry-run` (REQ-011): what `up` would do, using reads only.
+fn plan(
+    project: &Project,
+    secrets: Option<&BTreeMap<String, String>>,
+    remote: &[(String, String)],
+    all_exist: bool,
+) -> Result<()> {
+    eprintln!(
+        "wrangler-compose: dry run of `up` for {}:",
+        project.env_name()
+    );
+    let order = if all_exist {
+        "apply D1 migrations, then deploy"
+    } else {
+        "deploy first (Wrangler creates the missing D1 databases and R2 buckets), then apply D1 migrations"
+    };
+    eprintln!("  order: {order}");
+    for d in &project.config.d1 {
+        let pending = if d1::exists(d, remote) {
+            d1::pending_migrations(project, d)?
+        } else {
+            eprintln!(
+                "  D1 {} ({}) does not exist yet and would be created",
+                d.name, d.binding
+            );
+            d1::pending_migrations_all(d)
+        };
+        if pending.is_empty() {
+            eprintln!("  D1 {} ({}): no migrations to apply", d.name, d.binding);
+        } else {
+            eprintln!(
+                "  D1 {} ({}): would apply {}",
+                d.name,
+                d.binding,
+                pending.join(", ")
+            );
+        }
+    }
+    for b in &project.config.r2 {
+        eprintln!(
+            "  R2 bucket {} ({}): created by Wrangler if missing",
+            b.bucket, b.binding
+        );
+    }
+    match secrets {
+        Some(s) if !s.is_empty() => eprintln!(
+            "  secrets from .env.{}: {}",
+            project.env_name(),
+            s.keys().map(String::as_str).collect::<Vec<_>>().join(", ")
+        ),
+        Some(_) => eprintln!("  .env.{} has no Worker secrets", project.env_name()),
+        None => eprintln!(
+            "  no .env.{}: the Worker keeps its current secrets",
+            project.env_name()
+        ),
+    }
+    eprintln!("  checking that {} builds:", project.config.worker);
+    build(project)?;
+    if let Some(s) = secrets
+        && let Err(e) = report_leftover_secrets(project, s)
+    {
+        eprintln!("wrangler-compose: note: could not list the Worker's secrets: {e:#}");
+    }
+    dry_run_done();
+    Ok(())
+}
+
+pub fn dry_run_done() {
+    eprintln!("wrangler-compose: dry run: nothing was changed");
 }
 
 fn stage(n: usize, total: usize, what: &str) {

@@ -28,6 +28,9 @@ struct Cli {
     /// Environment in the Wrangler config (env.<name>); also read from CLOUDFLARE_ENV
     #[arg(short, long, global = true)]
     env: Option<String>,
+    /// Check everything and show what would happen, without changing anything
+    #[arg(long, global = true)]
+    dry_run: bool,
     #[command(subcommand)]
     command: Cmd,
 }
@@ -75,7 +78,8 @@ fn dispatch(cli: Cli) -> Result<()> {
     if env.is_none() && !matches!(cli.command, Cmd::Build) {
         bail!("choose an environment with --env <name> (or CLOUDFLARE_ENV); nothing was done");
     }
-    let project = Project::open(env)?;
+    let mut project = Project::open(env)?;
+    project.dry_run = cli.dry_run;
     match cli.command {
         Cmd::Build => up::build(&project),
         Cmd::Up => up::up(&project),

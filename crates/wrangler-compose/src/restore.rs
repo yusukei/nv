@@ -6,7 +6,7 @@ use crate::d1;
 use crate::files::sha256_file;
 use crate::project::Project;
 use crate::r2::{self, Store};
-use crate::up::read_env_file;
+use crate::up::{dry_run_done, read_env_file};
 use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
 use std::path::Path;
@@ -21,7 +21,7 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow!("an environment is required"))?;
     let manifest = read_manifest(from)?;
-    if drop {
+    if drop && !project.dry_run {
         confirm::require_terminal("restore --drop")?;
     }
     read_env_file(project)?;
@@ -135,6 +135,27 @@ pub fn restore(project: &Project, from: &Path, drop: bool) -> Result<()> {
     eprintln!(
         "wrangler-compose: the Worker keeps serving while restore runs, so users may see missing data until it finishes"
     );
+    if project.dry_run {
+        eprintln!(
+            "wrangler-compose: dry run of `restore` from {}:",
+            from.display()
+        );
+        for (d, _) in &d1_plan {
+            eprintln!(
+                "  D1 {} ({}): would load the backup, then apply later migrations",
+                d.name, d.binding
+            );
+        }
+        for (s, entry) in &r2_plan {
+            let n = entry["objects"].as_array().map_or(0, Vec::len);
+            eprintln!(
+                "  R2 {} ({}): would upload {n} objects (all checked against the manifest)",
+                s.bucket_name, s.binding
+            );
+        }
+        dry_run_done();
+        return Ok(());
+    }
     if drop {
         confirm::retype_env(&env, "replace its data")?;
     }

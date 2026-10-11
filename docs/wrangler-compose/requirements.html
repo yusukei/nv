@@ -32,6 +32,7 @@
     <li><a href="#req-008">REQ-008 restore</a></li>
     <li><a href="#req-009">REQ-009 秘密の扱い</a></li>
     <li><a href="#req-010">REQ-010 配り方と更新</a></li>
+    <li><a href="#req-011">REQ-011 dry-run</a></li>
     <li><a href="#out-of-scope">範囲外</a></li>
   </ul>
 </nav>
@@ -50,6 +51,7 @@
   <tr><td><code>backup [&lt;書き出し先&gt;]</code></td><td>D1 と R2 の中身を手元のフォルダへ書き出す(既定はプロジェクトの <code>backups/</code>。API キーが要る)</td><td><a href="#req-007">REQ-007</a></td></tr>
   <tr><td><code>restore &lt;控えのフォルダ&gt;</code></td><td>控えを空の D1・R2 へ戻す(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
   <tr><td><code>restore --drop &lt;控えのフォルダ&gt;</code></td><td>いまの D1・R2 の中身を消して、控えに入れ替える(API キーが要る)</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>--dry-run &lt;操作&gt;</code></td><td>上のどの操作も、何も変えずに何をするかだけを示す</td><td><a href="#req-011">REQ-011</a></td></tr>
 </table>
 <p>Cloudflare に触れる操作(<code>up</code>・<code>down</code>・<code>backup</code>・<code>restore</code>)は、環境の指定が無ければ止まる。Wrangler の操作そのものは <code>nv run wrangler …</code> で行える。</p>
 <p>wrangler-compose の更新とエージェント用のスキルは nv が受け持つ(<code>nv self update</code>・<code>nv install skill</code>。<a href="#req-010">REQ-010</a>)。wrangler-compose 自身はこの 2 つを持たない。</p>
@@ -65,6 +67,7 @@
   <li>Durable Objects のデータは Worker に属するものとして扱い、<code>down</code> で Worker と一緒に消えてよい</li>
   <li><code>backup</code> の書き出し先は、既定でプロジェクトの <code>backups/</code>。引数で別の場所を渡せる</li>
   <li>入れ物(D1・バケット)は <code>up</code> が作り、<code>restore</code> は中身だけを扱う。いまの中身を捨てて入れ替えるときは <code>restore --drop</code></li>
+  <li><code>--dry-run</code> で、どの操作も何も変えずに何をするかを示せる(試すときは dry-run から始める)</li>
   <li>Node・npm の扱いは nv(同じリポジトリの別の道具)が受け持つ。wrangler-compose は Node のことを何も知らない</li>
   <li>シークレットと wrangler-compose が使う値は、プロジェクトの <code>.env.&lt;環境名&gt;</code> に書く</li>
   <li>GitHub の公開のリポジトリに置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
@@ -183,6 +186,15 @@
   <li>OS ごとの単体の実行ファイルで配る(Windows x64、macOS arm64・x64、Linux x64)。nv と同じリポジトリ・同じ版のタグ・同じ Release で配る(nv の REQ-009)</li>
   <li>nv と同じフォルダに置いて使う(REQ-002)。最初の導入の手順は nv の REQ-009 に従う</li>
   <li>更新は <code>nv self update</code> が nv と一緒に行う(nv の REQ-010)。エージェント用のスキルは <code>nv install skill</code> が nv のものと一緒に入れる(nv の REQ-008)。wrangler-compose は更新とスキルの口を持たない</li>
+</ul>
+
+<h3 id="req-011"><span class="id">REQ-011</span>dry-run(何も変えずに、何をするかを示す)</h3>
+<ul>
+  <li><code>--dry-run</code> を付けると、<code>up</code>・<code>down</code>・<code>down --purge</code>・<code>backup</code>・<code>restore</code>(<code>--drop</code> を含む)は、Cloudflare の資源・データ・シークレット・手元のファイル(控えを含む)を何も変えずに、その操作が何をするかを示す(利用者の決定)</li>
+  <li>示すもの: <code>up</code> は当てる移行の名前と、Worker が組めるか、入れるシークレットの名前。<code>down</code>・<code>--purge</code> は消すもの(REQ-005・REQ-006 で消す前に示すものと同じ)。<code>backup</code> は書き出す D1・バケットとオブジェクトの数と書き出し先。<code>restore</code> は戻すもの、<code>--drop</code> なら消すもの</li>
+  <li>本番の操作が止まる条件(環境の指定・<code>.env</code> が git に入る・API キーが無い・正しくない・控えが書きかけ・照らした値が合わない・戻す先が無い・空でない)は、dry-run でも同じに確かめ、同じに止まる</li>
+  <li>dry-run は、確かめるために Cloudflare へ読み取りだけの問い合わせ(一覧・ログインの確認など)を行う。打ち直しの確かめは求めない(何も消さないため)</li>
+  <li>終わりに、dry-run であり何も変えていないことを示す</li>
 </ul>
 
 <h2 id="out-of-scope">範囲外</h2>

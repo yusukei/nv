@@ -35,6 +35,7 @@
     <li><a href="#des-013">DES-013 restore</a></li>
     <li><a href="#des-014">DES-014 出力と終了コード</a></li>
     <li><a href="#des-015">DES-015 試験</a></li>
+    <li><a href="#des-016">DES-016 dry-run</a></li>
     <li><a href="#unverified">確かめていないこと</a></li>
   </ul>
 </nav>
@@ -194,7 +195,18 @@
 <ul>
   <li>単体: <code>.env</code> の読み、環境の選び方、目録の読み書き、S3 の口の組み立て、空かの判定に使う表の名前の選り分け</li>
   <li>手元の結合: 実行ファイルを動かし、Cloudflare に触れない範囲(環境の指定の誤り、nv が無い、<code>.env</code> が git に入っている、端末でない <code>down</code>、書きかけの控え、<code>build</code>)を確かめる</li>
-  <li>Cloudflare を相手にする受け入れ条件(<code>up</code>・<code>down</code>・<code>--purge</code>・<code>backup</code>・<code>restore</code>)は、試験用のアカウントの使い捨ての環境で、利用者の許可を得てから行う</li>
+  <li>Cloudflare を相手にする受け入れ条件は、試験用のアカウントで、利用者の許可を得てから行う。まず全操作を <code>--dry-run</code> で通し、次に使い捨ての環境で <code>up</code> → <code>backup</code> → <code>restore --drop</code> → <code>down</code> → <code>down --purge</code> を実際に動かす</li>
+</ul>
+
+<h3 id="des-016"><span class="id">DES-016</span>dry-run <span class="refs">REQ-011</span></h3>
+<ul>
+  <li><code>--dry-run</code> はどの操作にも付く共通の引数。各操作は本番と同じ確かめ(設定・<code>.env</code> と git・API キー・控えの照合・戻す先の有無と空かどうか)を同じ順で行い、変える段の直前で「何をするか」を示して終わる。止まる条件を本番と別に書かないことで、dry-run が通れば本番もそこまでは通ることを保つ</li>
+  <li>dry-run で動かす Wrangler は読み取りだけ: <code>d1 list</code>・<code>secret list</code>・<code>whoami</code>・<code>d1 execute</code> の <code>SELECT</code>・<code>deploy --dry-run</code>(組めるか)。R2 は ListObjectsV2 だけ</li>
+  <li>未適用の移行は、移行の履歴の表(既定 <code>d1_migrations</code>。設定の <code>migrations_table</code> があればそれ)を <code>SELECT</code> で読み、移行のフォルダの <code>.sql</code> の名前から適用済みを除いて求める。表が無ければすべてが未適用。<code>d1 migrations list</code> は使わない: 履歴の表が無いと作る(<code>CREATE TABLE IF NOT EXISTS</code>。4.128.0 の <code>initMigrationsTable</code>)ので、何も変えない約束が破れる</li>
+  <li>打ち直しの確かめと、端末であることの確かめは飛ばす(何も消さないので、エージェントからも打てる)</li>
+  <li>手元のファイルも書かない: <code>backup</code> は書き出し先のフォルダを作らず、<code>up</code> はシークレットの一時ファイルを作らない(名前だけを示す)</li>
+  <li>却下: Wrangler の dry-run だけに頼る(<code>deploy</code> と <code>delete</code> にしか無く、D1・R2 の操作を確かめられない)</li>
+  <li>成り立たない場合: 読み取りから実際の操作までの間に Cloudflare の側が変われば(ほかの人のデプロイなど)、本番の結果は dry-run の表示と違いうる</li>
 </ul>
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>

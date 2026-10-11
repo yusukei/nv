@@ -5,7 +5,7 @@ use crate::d1;
 use crate::interrupt;
 use crate::project::Project;
 use crate::r2::{self, Store};
-use crate::up::read_env_file;
+use crate::up::{dry_run_done, read_env_file};
 use anyhow::{Result, anyhow};
 
 fn secret_names(project: &Project) -> Vec<String> {
@@ -45,12 +45,18 @@ pub fn down(project: &Project) -> Result<()> {
         .env
         .clone()
         .ok_or_else(|| anyhow!("an environment is required"))?;
-    confirm::require_terminal("down")?;
+    if !project.dry_run {
+        confirm::require_terminal("down")?;
+    }
     interrupt::check()?;
     eprintln!(
         "wrangler-compose: `down` deletes the Worker and everything below. D1 and R2 data are kept."
     );
     show_worker_losses(project);
+    if project.dry_run {
+        dry_run_done();
+        return Ok(());
+    }
     confirm::retype_env(&env, "delete the Worker")?;
     project.wrangler_interactive(["delete"])?;
     eprintln!(
@@ -65,7 +71,9 @@ pub fn purge(project: &Project) -> Result<()> {
         .env
         .clone()
         .ok_or_else(|| anyhow!("an environment is required"))?;
-    confirm::require_terminal("down --purge")?;
+    if !project.dry_run {
+        confirm::require_terminal("down --purge")?;
+    }
     // Validates that .env.<env> is kept out of git before reading keys from it.
     read_env_file(project)?;
 
@@ -103,6 +111,10 @@ pub fn purge(project: &Project) -> Result<()> {
             "  R2 bucket:       {} ({}), {n} objects",
             s.bucket_name, s.binding
         );
+    }
+    if project.dry_run {
+        dry_run_done();
+        return Ok(());
     }
     confirm::retype_env(&env, "delete the Worker and all its data")?;
 

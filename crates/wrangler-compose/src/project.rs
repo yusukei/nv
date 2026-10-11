@@ -16,6 +16,7 @@ pub struct D1 {
     pub name: String,
     pub id: Option<String>,
     pub migrations_dir: PathBuf,
+    pub migrations_table: String,
 }
 
 #[derive(Debug)]
@@ -43,6 +44,8 @@ pub struct Project {
     pub env: Option<String>,
     pub config: Config,
     pub wrangler_version: String,
+    /// `--dry-run`: check everything, change nothing (REQ-011).
+    pub dry_run: bool,
 }
 
 /// Prints the parts of the resolved Wrangler config that wrangler-compose
@@ -68,7 +71,7 @@ if (!env || envs.includes(env)) {
     worker: c.name,
     configPath: c.userConfigPath || c.configPath,
     accountId: c.account_id || null,
-    d1: (c.d1_databases || []).map(d => ({ binding: d.binding, name: d.database_name, id: d.database_id || null, migrationsDir: d.migrations_dir || "migrations" })),
+    d1: (c.d1_databases || []).map(d => ({ binding: d.binding, name: d.database_name, id: d.database_id || null, migrationsDir: d.migrations_dir || "migrations", migrationsTable: d.migrations_table || "d1_migrations" })),
     r2: (c.r2_buckets || []).map(b => ({ binding: b.binding, bucket: b.bucket_name, jurisdiction: b.jurisdiction || null })),
     routes: (c.routes || []).map(r => typeof r === "string" ? r : (r.custom_domain ? `${r.pattern} (custom domain)` : r.pattern)),
     crons: (c.triggers && c.triggers.crons) || [],
@@ -163,6 +166,7 @@ impl Project {
             env,
             config,
             wrangler_version: version.to_string(),
+            dry_run: false,
         })
     }
 
@@ -291,6 +295,8 @@ fn parse_config(v: &Value, dir: &Path) -> Result<Config> {
                 id: opt_string(&d["id"]),
                 migrations_dir: dir
                     .join(opt_string(&d["migrationsDir"]).unwrap_or_else(|| "migrations".into())),
+                migrations_table: opt_string(&d["migrationsTable"])
+                    .unwrap_or_else(|| "d1_migrations".into()),
             })
         })
         .collect::<Result<_>>()?;

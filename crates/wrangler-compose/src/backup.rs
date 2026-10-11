@@ -4,7 +4,7 @@ use crate::files::sha256_file;
 use crate::git;
 use crate::project::Project;
 use crate::r2::{self, Store};
-use crate::up::read_env_file;
+use crate::up::{dry_run_done, read_env_file};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::fs;
@@ -40,6 +40,32 @@ pub fn backup(project: &Project, dest: Option<PathBuf>) -> Result<()> {
                 .map_err(|e| anyhow!("{e:#}; nothing was written"))?;
             stores.push(store);
         }
+    }
+
+    if project.dry_run {
+        eprintln!("wrangler-compose: dry run of `backup` for {env}:");
+        eprintln!(
+            "  would write into {}",
+            base.join(&env).join("<time>").display()
+        );
+        for d in &project.config.d1 {
+            eprintln!(
+                "  D1 {} ({}): exported to SQL; it will not answer queries while exporting",
+                d.name, d.binding
+            );
+        }
+        for s in &stores {
+            let objects = s.list_all()?;
+            let bytes: u64 = objects.iter().map(|o| o.size).sum();
+            eprintln!(
+                "  R2 {} ({}): {} objects, {bytes} bytes",
+                s.bucket_name,
+                s.binding,
+                objects.len()
+            );
+        }
+        dry_run_done();
+        return Ok(());
     }
 
     // A new folder every time: never write into an existing backup.

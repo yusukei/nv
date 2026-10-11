@@ -70,6 +70,7 @@ nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ�
 nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`)。
 
 ```bash
+wrangler-compose --env staging --dry-run up   # 何も変えずに、何をするかを示す(どの操作にも付く)
 wrangler-compose --env staging build      # 組むだけ(何も上げない)
 wrangler-compose --env staging up         # D1 の移行 → デプロイ(初回も更新も)
 wrangler-compose --env staging backup     # D1・R2 を backups/staging/<日時>/ へ
