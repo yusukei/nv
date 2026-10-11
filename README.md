@@ -15,32 +15,32 @@
 
 ## 導入
 
-Release から OS に合う `nv` と `wrangler-compose` を取り、同じフォルダ(下の例では `~/.local/bin`)に置く。インストーラも PATH の書き換えも要らない(PATH に入れるかは自分で決める)。wrangler-compose を使わないなら `nv` だけでよい。`<owner>/<repo>` はこのリポジトリ。
+Release から OS に合う `nv` と `wrangler-compose` を取り、同じフォルダ(下の例では `~/.local/bin`)に置く。インストーラも PATH の書き換えも要らない(PATH に入れるかは自分で決める)。wrangler-compose を使わないなら `nv` だけでよい。
 
 macOS はブラウザで取ると隔離の印が付いて止められるので、どの OS もコマンドで取る。
 
 ### macOS(Apple Silicon)
 
 ```bash
-R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-aarch64-apple-darwin" && chmod +x ~/.local/bin/$b; done
+R=https://github.com/yusukei/nv/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-aarch64-apple-darwin" && chmod +x ~/.local/bin/$b; done
 ```
 
 ### macOS(Intel)
 
 ```bash
-R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-apple-darwin" && chmod +x ~/.local/bin/$b; done
+R=https://github.com/yusukei/nv/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-apple-darwin" && chmod +x ~/.local/bin/$b; done
 ```
 
 ### Linux(x64)
 
 ```bash
-R=https://github.com/<owner>/<repo>/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-unknown-linux-musl" && chmod +x ~/.local/bin/$b; done
+R=https://github.com/yusukei/nv/releases/latest/download; mkdir -p ~/.local/bin && for b in nv wrangler-compose; do curl -fL -o ~/.local/bin/$b "$R/$b-x86_64-unknown-linux-musl" && chmod +x ~/.local/bin/$b; done
 ```
 
 ### Windows(x64、PowerShell)
 
 ```powershell
-$R = "https://github.com/<owner>/<repo>/releases/latest/download"; $D = "$HOME\.local\bin"; New-Item -ItemType Directory -Force $D | Out-Null; foreach ($b in "nv", "wrangler-compose") { Invoke-WebRequest -OutFile "$D\$b.exe" "$R/$b-x86_64-pc-windows-msvc.exe" }
+$R = "https://github.com/yusukei/nv/releases/latest/download"; $D = "$HOME\.local\bin"; New-Item -ItemType Directory -Force $D | Out-Null; foreach ($b in "nv", "wrangler-compose") { Invoke-WebRequest -OutFile "$D\$b.exe" "$R/$b-x86_64-pc-windows-msvc.exe" }
 ```
 
 ### 入ったかを確かめる
