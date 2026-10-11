@@ -218,6 +218,7 @@
 <h3 id="ac-018"><span class="id">AC-018</span>compose ファイル <span class="refs">REQ-018</span></h3>
 <ul>
   <li>要求仕様の例と同じ <code>wrangler-compose.yaml</code> を、compose の根でも <code>web/</code> の中でも、<code>--env local up</code> で読める(上へたどる)。<code>-f</code> は受けず、渡すと止まる</li>
+  <li><code>wrangler-compose.local.yaml</code>(サービスを 1 つ足し、ポートを変えたもの)を置くと、<code>--env local up</code> はそちらだけを使い(共通のファイルの中身は混ざらない)、使ったファイルの名前が出る。<code>--env staging up</code> は <code>wrangler-compose.yaml</code> を使う</li>
   <li>どの操作も <code>wrangler-compose --env &lt;環境名&gt; [--dry-run] &lt;操作&gt; [サービス…]</code> の形で打てる(<code>wrangler-compose --env staging up</code>・<code>wrangler-compose --env local up web</code> など)。環境の指定が無ければ、compose ファイルがあっても AC-001 と同じに止まる</li>
   <li><code>build</code> の文字列の形と、<code>context</code>・<code>config</code> の形の両方で、同じサービスになる。<code>config</code> を省くと <code>wrangler.jsonc</code>・<code>wrangler.json</code>・<code>wrangler.toml</code> の順に探す</li>
   <li><code>name</code> を省くと、compose の根のフォルダ名がプロジェクトの名前として出る</li>

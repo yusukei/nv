@@ -311,7 +311,7 @@
 <ul>
   <li>YAML を読むクレートを 1 つ足す。候補は <code>serde-saphyr</code>(YAML 1.2、純 Rust)と <code>serde_yaml_ng</code>(<code>serde_yaml</code> の後継)。作る時点で手入れが続いている方を選ぶ。<code>serde_yaml</code> は手入れが止まっているので使わない</li>
   <li>いったん <code>serde_json::Value</code> の木に読み、自前で確かめる(<code>serde</code> の <code>deny_unknown_fields</code> では、<code>x-</code> を許しつつ知らないキーで止まる、という docker と同じ決まりを書けない)。知らないキーは、どこ(<code>services.web.environment</code> など)にあるかを示して止まる</li>
-  <li>探し方: いまのフォルダから上へ、各フォルダで <code>wrangler-compose.yaml</code>・<code>wrangler-compose.yml</code> を見る。同じフォルダに両方あれば止まる。compose ファイルより先に Wrangler の設定ファイルが見つかっても、上へたどるのをやめない(サービスのフォルダの中で打っても、まとめた全体を使う。docker と同じ)。見つからなければ DES-003 の探し方に戻る</li>
+  <li>探し方: いまのフォルダから上へ、各フォルダで <code>wrangler-compose.&lt;環境名&gt;.yaml</code>・<code>.yml</code>、<code>wrangler-compose.yaml</code>・<code>.yml</code> を見て、どれかがある最初のフォルダで止まる。そのフォルダに環境のファイルがあればそれを、無ければ共通のファイルを使う(置き換え。中身は混ぜない)。同じ名前の <code>.yaml</code> と <code>.yml</code> が両方あれば止まる。環境名は <code>--env</code>(無ければ <code>CLOUDFLARE_ENV</code>)のもので、環境の指定の無い <code>build</code> は共通のファイルだけを見る。compose ファイルより先に Wrangler の設定ファイルが見つかっても、上へたどるのをやめない(サービスのフォルダの中で打っても、まとめた全体を使う。docker と同じ)。見つからなければ DES-003 の探し方に戻る</li>
   <li>compose ファイルが無いときは、Wrangler の設定ファイルのフォルダを compose の根とし、その Worker の名前(無ければフォルダ名)のサービス 1 つを持つものとして扱う。以下の作りは、サービスが 1 つの場合もいつも同じ道を通る(分かれ道を作らない)</li>
   <li><code>ports</code> の短い書き方は <code>"ポート:ポート"</code>・<code>"アドレス:ポート:ポート"</code>。IPv6 のアドレスは <code>"[::1]:8787:8787"</code></li>
   <li>設定はサービスごとに DES-003 のスクリプトで読む。スクリプトは compose の根で動かし、<code>unstable_readConfig</code> に設定ファイルのパスを渡す(Wrangler は compose の根の <code>node_modules</code> のもの)</li>

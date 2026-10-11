@@ -76,7 +76,7 @@
 </table>
 <p>複数の Worker を <code>wrangler-compose.yaml</code> にまとめたプロジェクトでも、形は変わらない。docker compose と同じく、操作のあとにサービス(Worker)の名前を並べて絞れるだけ(<a href="#req-018">REQ-018</a>〜<a href="#req-020">REQ-020</a>)。</p>
 <div class="box decision">
-<p>形はどの場合も <code>wrangler-compose --env &lt;環境名&gt; [--dry-run] &lt;操作&gt; [&lt;操作の引数&gt;…] [サービス…]</code>(例: <code>wrangler-compose --env staging up</code>・<code>wrangler-compose --env local up web</code>)。docker compose で組み合わせを切り替える <code>-f</code> に当たるのが <code>--env</code> で、wrangler-compose は compose ファイルを選ぶ引数(<code>-f</code>)を持たない。compose ファイルは、いまのフォルダから上へたどって見つける 1 つだけ(利用者の決定)。</p>
+<p>形はどの場合も <code>wrangler-compose --env &lt;環境名&gt; [--dry-run] &lt;操作&gt; [&lt;操作の引数&gt;…] [サービス…]</code>(例: <code>wrangler-compose --env staging up</code>・<code>wrangler-compose --env local up web</code>)。docker compose で組み合わせを切り替える <code>-f</code> に当たるのが <code>--env</code> で、切り替えの口は <code>--env</code> 1 つに統一する(<code>-f</code> は持たない。利用者の決定)。compose ファイルも <code>--env</code> で決まる: <code>wrangler-compose.&lt;環境名&gt;.yaml</code> があればそれを、無ければ <code>wrangler-compose.yaml</code> を使う(<a href="#req-018">REQ-018</a>)。</p>
 </div>
 <table>
   <tr><th style="width:38%">形(<code>wrangler-compose --env &lt;環境名&gt;</code> のあと)</th><th>すること</th><th style="width:12%">条項</th></tr>
@@ -328,8 +328,10 @@ services:
 x-notes: 何を書いてもよい      # x- で始まるキーは読み飛ばす(docker と同じ)</code></pre>
 <ul>
   <li>ファイル名は <code>wrangler-compose.yaml</code>(<code>wrangler-compose.yml</code> も読む。両方あれば止まる)。docker compose の <code>compose.yaml</code> とは別の名前にし、同じリポジトリに両方を置ける</li>
-  <li>いまのフォルダから上へたどって最初に見つかったものを使う。ファイルを選ぶ引数(docker の <code>-f</code>)は持たない(何を扱うかは <code>--env</code> で切り替える。利用者の決定)。見つからなければ、いまの決まり(いまのフォルダから上へたどって最初の Wrangler の設定ファイル 1 つ)で動く</li>
-  <li>環境ごとに compose ファイルを分けない(<code>wrangler-compose.staging.yaml</code> のようなものは持たない)。環境ごとの違いは、各サービスの Wrangler の設定の <code>env.&lt;環境名&gt;</code> が持つ</li>
+  <li>使う compose ファイルは <code>--env</code> だけで決まる。ファイルを選ぶ引数(docker の <code>-f</code>)は持たない(切り替えの口を 2 つにしない。利用者の決定)</li>
+  <li>環境ごとにファイルを分けてもよい: <code>--env &lt;環境名&gt;</code> のとき、<code>wrangler-compose.&lt;環境名&gt;.yaml</code>(例: <code>wrangler-compose.staging.yaml</code>・<code>wrangler-compose.local.yaml</code>)があればそれを、無ければ <code>wrangler-compose.yaml</code> を使う。環境のファイルは共通のファイルを<strong>置き換える</strong>(重ね合わせない。どのファイルを使ったかを最初に示す)。環境ごとに Worker の組み合わせ・手元のポートなどを変えたいときに使う</li>
+  <li>いまのフォルダから上へたどり、上の 2 つのどちらかがある最初のフォルダのものを使う。見つからなければ、いまの決まり(いまのフォルダから上へたどって最初の Wrangler の設定ファイル 1 つ)で動く</li>
+  <li>環境の値(変数・バインディング・ルートなど)は、ファイルを分けても、各サービスの Wrangler の設定の <code>env.&lt;環境名&gt;</code> が持つ(compose ファイルには書けない。REQ-002)</li>
   <li>受けるキー(docker compose と同じ名前・同じ意味)
     <ul>
       <li><code>name</code>: プロジェクトの名前。表示と控えの目録に使う</li>
@@ -397,7 +399,7 @@ x-notes: 何を書いてもよい      # x- で始まるキーは読み飛ばす
   <li><strong><code>--env local down --purge</code> を、端末でない場(エージェント)から打てるようにするか</strong>。案 A(推奨): いまの決まりと同じく、打ち直しを受けられない場では止まる(本番の控えを戻した手元のデータも、消すと戻せないため)。案 B: <code>local</code> だけは <code>--yes</code> で打ち直しを省ける(エージェントが手元を作り直せる)</li>
   <li><strong>手元の鍵の既定の値</strong>。案 A(推奨): どの PC・どのプロジェクトでも同じ決まった値(手元でしか通じない。README とスキルに書ける)。案 B: プロジェクトごとに作って <code>.wrangler/</code> に置く</li>
   <li><strong><code>up</code> を裏で動かす(<code>up -d</code>)を今回持つか</strong>。案 A(推奨): 持たない。前面で動かし、ほかの端末から <code>down</code> で止められれば足りる。案 B: 持つ(ログは <code>logs</code> が要るようになる)</li>
-  <li><strong>compose ファイルの名前</strong>。案 A(推奨): <code>wrangler-compose.yaml</code>(docker の <code>compose.yaml</code> と同じリポジトリに置ける)。案 B: <code>compose.yaml</code> も読む(docker compose と取り合う)</li>
+  <li><strong>compose ファイルの名前</strong>。案 A(推奨): <code>wrangler-compose.yaml</code> と <code>wrangler-compose.&lt;環境名&gt;.yaml</code>(docker の <code>compose.yaml</code> と同じリポジトリに置ける)。案 B: <code>compose.yaml</code> も読む(docker compose と取り合う)</li>
   <li><strong><code>ports</code> の書き方</strong>。案 A(推奨): docker の短い書き方 <code>"[アドレス:]ポート:ポート"</code> を受け、2 つのポートは同じ数に限る。案 B: <code>"8787"</code> のように 1 つだけ(docker では 1 つだけ書くと「中のポート」の意味になり、意味が食い違う)</li>
   <li><strong>知らない compose のキー</strong>。案 A(推奨): 止まる。案 B: docker のように知らせて読み飛ばす</li>
 </ol>
@@ -408,7 +410,7 @@ x-notes: 何を書いてもよい      # x- で始まるキーは読み飛ばす
   <li>Node・npm の取得と版の管理(nv が受け持つ)</li>
   <li>状態の一覧(<code>ps</code>)、Cloudflare の環境のログの表示(<code>logs</code>)、手元の <code>up</code> を裏で動かすこと(<code>up -d</code>)。必要になったら足す(Wrangler の操作そのものは <code>nv run wrangler …</code> で行える)</li>
   <li>R2 の公開の URL(<code>r2.dev</code>・独自ドメイン)を手元で再現すること。手元では Worker を通すか、手元の S3 の口の署名付き URL で配る</li>
-  <li>compose ファイルの、docker compose にあって wrangler-compose が受けない機能: <code>profiles</code>・<code>extends</code>・<code>include</code>・<code>-f</code>(ファイルの指定と重ね合わせ。<code>--env</code> が受け持つ)・変数の差し込み(<code>${VAR}</code>)・<code>environment</code>・<code>env_file</code>・<code>volumes</code>・<code>networks</code>・<code>scale</code>。必要になったら足す</li>
+  <li>compose ファイルの、docker compose にあって wrangler-compose が受けない機能: <code>profiles</code>・<code>extends</code>・<code>include</code>・<code>-f</code>(ファイルの選択は <code>--env</code> が受け持つ)・ファイルの重ね合わせ(環境のファイルは置き換えだけ)・変数の差し込み(<code>${VAR}</code>)・<code>environment</code>・<code>env_file</code>・<code>volumes</code>・<code>networks</code>・<code>scale</code>。必要になったら足す</li>
   <li><code>backup</code>・<code>restore</code> をサービスで絞ること(控えはプロジェクト全体で 1 つ)</li>
   <li>手元でサービスの一部だけを止める・入れ替えること</li>
   <li>手元の KV・Queues・Durable Objects の控え(<code>local down --purge</code> では消える)</li>
