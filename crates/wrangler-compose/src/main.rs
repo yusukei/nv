@@ -6,6 +6,7 @@ mod build;
 mod compose;
 mod confirm;
 mod ctx;
+mod data;
 mod dotenv;
 mod files;
 mod configs;

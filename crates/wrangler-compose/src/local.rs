@@ -119,10 +119,11 @@ enum Stop {
 }
 
 /// What a running `up` writes to `up.json` for `ps`, `down` and `logs`.
-fn record(pid: u32, gateway: u16, workers: &[(String, Option<String>)]) -> Value {
+fn record(pid: u32, gateway: u16, token: &str, workers: &[(String, Option<String>)]) -> Value {
     json!({
         "pid": pid,
         "gateway": gateway,
+        "token": token,
         "services": workers.iter().map(|(s, u)| json!({ "service": s, "url": u })).collect::<Vec<_>>(),
     })
 }
@@ -189,7 +190,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut configs = Vec::new();
     let gw_dir = run.join(configs::GATEWAY);
     std::fs::create_dir_all(&gw_dir)?;
-    configs.push(write_cfg(&gw_dir, &configs::gateway(&gw_dir, &port_map)?)?);
+    configs.push(write_cfg(&gw_dir, &configs::gateway(&gw_dir, &port_map, gateway_port)?)?);
+    let token = new_token()?;
+    configs.push(data_config(ctx, &run, &token)?);
     for (s, w) in &workers {
         let dir = run.join(&s.name);
         std::fs::create_dir_all(&dir)?;
@@ -229,65 +232,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let log_file = Arc::new(Mutex::new(
         OpenOptions::new().create(true).append(true).open(p.log())?,
     ));
-    let mut cmd = ctx.wrangler(["dev"]);
-    for c in &configs {
-        cmd.arg("-c").arg(c);
-    }
-    cmd.args(["--ip", "127.0.0.1", "--port", &gateway_port.to_string()])
-        .arg("--persist-to")
-        .arg(p.state())
-        .env("WRANGLER_SEND_METRICS", "false")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    own_group(&mut cmd);
-    let mut child = cmd.spawn().context(crate::tr!("Wrangler を起動できません", "cannot start Wrangler"))?;
-    let ready = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::channel::<()>();
-    for stream in [
-        child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-        child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let ready = ready.clone();
-        let tx = tx.clone();
-        let log_file = log_file.clone();
-        std::thread::spawn(move || {
-            let mut f = LogFilter::default();
-            for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
-                if line.contains("Ready on") && !ready.swap(true, Ordering::SeqCst) {
-                    let _ = tx.send(());
-                }
-                if let Some(out) = f.filter(&line) {
-                    eprintln!("{out}");
-                    if let Ok(mut lf) = log_file.lock() {
-                        let _ = writeln!(lf, "{out}");
-                    }
-                }
-            }
-        });
-    }
-    drop(tx);
-    let started = Instant::now();
-    loop {
-        match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(()) => break,
-            Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(200)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-        if let Some(status) = child.try_wait()? {
-            bail!(crate::tr!("Wrangler が止まりました({status})。上の出力を見てください", "Wrangler stopped ({status}); see the output above"));
-        }
-        if crate::interrupt::check().is_err() {
-            stop_child(&mut child);
-            return Ok(Stop::Done);
-        }
-        if started.elapsed() > Duration::from_secs(180) {
-            stop_child(&mut child);
-            bail!(crate::tr!("Wrangler が 3 分たっても動き出しません", "Wrangler did not become ready within 3 minutes"));
-        }
-    }
+    let Some(mut child) = spawn_runtime(ctx, p, &configs, gateway_port, Some(log_file))? else {
+        return Ok(Stop::Done);
+    };
 
     // 6. Forward every declared port to the gateway, then say where things are.
     for (_, l) in listeners {
@@ -299,9 +246,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         let url = w.ports.first().map(|pt| format!("http://{}:{}", url_host(&pt.ip), pt.port));
         urls.push((s.name.clone(), url));
     }
-    std::fs::write(
-        p.record(),
-        serde_json::to_vec_pretty(&record(std::process::id(), gateway_port, &urls))?,
+    write_private(
+        &p.record(),
+        &serde_json::to_string_pretty(&record(std::process::id(), gateway_port, &token, &urls))?,
     )?;
     announce(ctx, &urls, &port_map);
 
@@ -435,6 +382,132 @@ fn notices(services: &[&Service]) {
     }
 }
 
+/// The data service's config and token file (REQ-017).
+fn data_config(ctx: &Ctx, run: &Path, token: &str) -> Result<PathBuf> {
+    let dir = run.join(configs::DATA);
+    std::fs::create_dir_all(&dir)?;
+    let path = write_cfg(&dir, &configs::data_service(&ctx.compose, &dir)?)?;
+    write_private(&dir.join(".dev.vars"), &format!("WC_TOKEN=\"{token}\"\n"))?;
+    Ok(path)
+}
+
+/// 256 random bits for the data service's token (DES-011).
+fn new_token() -> Result<String> {
+    let mut b = [0u8; 32];
+    getrandom::fill(&mut b).map_err(|e| anyhow!("random: {e}"))?;
+    Ok(crate::files::hex(&b))
+}
+
+/// Start one `wrangler dev` with `configs` and wait until it serves.
+/// `None` means the user pressed Ctrl+C while it started.
+fn spawn_runtime(
+    ctx: &Ctx,
+    p: &Paths,
+    configs: &[PathBuf],
+    port: u16,
+    log_file: Option<Arc<Mutex<File>>>,
+) -> Result<Option<Child>> {
+    let mut cmd = ctx.wrangler(["dev"]);
+    for c in configs {
+        cmd.arg("-c").arg(c);
+    }
+    cmd.args(["--ip", "127.0.0.1", "--port", &port.to_string()])
+        .arg("--persist-to")
+        .arg(p.state())
+        .env("WRANGLER_SEND_METRICS", "false")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    own_group(&mut cmd);
+    let mut child = cmd.spawn().context(crate::tr!("Wrangler を起動できません", "cannot start Wrangler"))?;
+    let ready = Arc::new(AtomicBool::new(false));
+    let show = log_file.is_some();
+    let (tx, rx) = mpsc::channel::<()>();
+    for stream in [
+        child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let ready = ready.clone();
+        let tx = tx.clone();
+        let log_file = log_file.clone();
+        std::thread::spawn(move || {
+            let mut f = LogFilter::default();
+            for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
+                if line.contains("Ready on") && !ready.swap(true, Ordering::SeqCst) {
+                    let _ = tx.send(());
+                }
+                if let Some(out) = f.filter(&line) {
+                    // A temporary runtime only shows errors.
+                    if show || out.trim_start().starts_with('✘') {
+                        eprintln!("{out}");
+                    }
+                    if let Some(lf) = &log_file
+                        && let Ok(mut lf) = lf.lock()
+                    {
+                        let _ = writeln!(lf, "{out}");
+                    }
+                }
+            }
+        });
+    }
+    drop(tx);
+    let started = Instant::now();
+    loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(()) => return Ok(Some(child)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(200)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if let Some(status) = child.try_wait()? {
+            bail!(crate::tr!("Wrangler が止まりました({status})。上の出力を見てください", "Wrangler stopped ({status}); see the output above"));
+        }
+        if crate::interrupt::check().is_err() {
+            stop_child(&mut child);
+            return Ok(None);
+        }
+        if started.elapsed() > Duration::from_secs(180) {
+            stop_child(&mut child);
+            bail!(crate::tr!("Wrangler が 3 分たっても動き出しません", "Wrangler did not become ready within 3 minutes"));
+        }
+    }
+}
+
+/// Run `f` against the data service: the running `up`'s, or a temporary
+/// runtime with only the gateway and the data service (DES-011).
+fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<T>) -> Result<T> {
+    let p = Paths::new(ctx);
+    match try_lock(&p)? {
+        None => {
+            let rec = read_record(&p).ok_or_else(|| anyhow!(crate::tr!("動いている up が分かりません", "cannot find the running up")))?;
+            let port = rec["gateway"].as_u64().unwrap_or(0);
+            let token = rec["token"].as_str().unwrap_or_default().to_string();
+            f(&crate::data::Client::new(format!("http://127.0.0.1:{port}"), token), true)
+        }
+        Some(lock) => {
+            let run = p.dir.join("run-data");
+            let _ = std::fs::remove_dir_all(&run);
+            let port = free_port()?;
+            let gw = run.join(configs::GATEWAY);
+            std::fs::create_dir_all(&gw)?;
+            let token = new_token()?;
+            let cfgs = vec![
+                write_cfg(&gw, &configs::gateway(&gw, &[], port)?)?,
+                data_config(ctx, &run, &token)?,
+            ];
+            let Some(mut child) = spawn_runtime(ctx, &p, &cfgs, port, None)? else {
+                bail!(crate::tr!("中断しました(Ctrl+C)", "interrupted (Ctrl+C)"));
+            };
+            let r = f(&crate::data::Client::new(format!("http://127.0.0.1:{port}"), token), false);
+            stop_child(&mut child);
+            let _ = std::fs::remove_dir_all(&run);
+            drop(lock);
+            r
+        }
+    }
+}
+
 // ---------------------------------------------------------------- down / ps / logs
 
 pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
@@ -454,6 +527,12 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
             "this deletes the local data: {}",
             state.display()
         ));
+        if state.exists() {
+            let counts = with_data(ctx, |c, _| crate::data::counts(&ctx.compose, c))?;
+            for (t, key, n) in counts {
+                eprintln!("  {}", crate::data::describe_count(t, &key, n));
+            }
+        }
         if ctx.dry_run {
             say(crate::tr!("dry-run なので何も変えていません", "dry run: nothing was changed"));
             return Ok(());
@@ -564,12 +643,51 @@ pub fn logs(ctx: &Ctx, follow: bool, names: &[String]) -> Result<()> {
     }
 }
 
-pub fn backup(_ctx: &Ctx, _dest: Option<PathBuf>) -> Result<()> {
-    bail!(crate::tr!("手元の backup はまだ作っていません", "local backup is not implemented yet"))
+pub fn backup(ctx: &Ctx, dest: Option<PathBuf>) -> Result<()> {
+    with_data(ctx, |c, _| crate::data::backup(ctx, c, dest).map(|_| ()))
 }
 
-pub fn restore(_ctx: &Ctx, _from: &Path, _drop: bool) -> Result<()> {
-    bail!(crate::tr!("手元の restore はまだ作っていません", "local restore is not implemented yet"))
+pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
+    let plan = crate::data::plan_restore(&ctx.compose, from)?;
+    say(crate::tr!(
+        "{} の控え(環境 {})を {} へ戻します",
+        "restoring the backup {} (taken from environment {}) into {}",
+        from.display(),
+        plan.from_env,
+        ctx.env
+    ));
+    with_data(ctx, |c, running| {
+        let full = crate::data::non_empty(c, &plan)?;
+        if !full.is_empty() && !drop {
+            bail!(crate::tr!(
+                "戻す先が空ではありません(何もしていません):\n  {}\nいまの中身を消して入れ替えるには --drop を付けてください",
+                "the destination is not empty (nothing was done):\n  {}\nuse --drop to replace the current contents",
+                full.join("\n  ")
+            ));
+        }
+        if running {
+            say(crate::tr!(
+                "up が動いているので、戻している間は Worker から欠けたデータが見えることがあります",
+                "up is running, so Workers may see partial data while this runs"
+            ));
+        }
+        if ctx.dry_run {
+            if drop && !full.is_empty() {
+                say(crate::tr!("消す: {}", "would delete: {}", full.join(", ")));
+            }
+            say(crate::tr!("dry-run なので何も変えていません", "dry run: nothing was changed"));
+            return Ok(());
+        }
+        if drop && !full.is_empty() {
+            say(crate::tr!("先に消すもの: {}", "to be deleted first: {}", full.join(", ")));
+            crate::confirm::retype_env(&ctx.env, &crate::tr!("いまの中身を消して控えに入れ替える", "replace the current contents with the backup"))?;
+            crate::data::drop_targets(c, &plan)?;
+        }
+        crate::data::load(c, &plan, from)?;
+        crate::data::apply_migrations(ctx, c)?;
+        say(crate::tr!("戻しました", "restored"));
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------- helpers
@@ -582,6 +700,9 @@ pub fn restore(_ctx: &Ctx, _from: &Path, _drop: bool) -> Result<()> {
 struct LogFilter {
     in_bindings: bool,
     in_error: bool,
+    /// A "Processing <config> configuration:" warning being collected; it is
+    /// shown only if it says more than the tool's own S3 setting notice.
+    config_warning: Option<Vec<String>>,
 }
 
 impl LogFilter {
@@ -603,6 +724,24 @@ impl LogFilter {
             return Some(out);
         }
         let t = line.trim_start();
+        if let Some(block) = &mut self.config_warning {
+            if t.is_empty() && block.len() > 1 {
+                let block = self.config_warning.take().unwrap_or_default();
+                let interesting = block
+                    .iter()
+                    .skip(1)
+                    .any(|l| !l.contains("experimental_s3_credentials"));
+                return interesting.then(|| block.join("\n"));
+            }
+            if !t.is_empty() {
+                block.push(line);
+            }
+            return None;
+        }
+        if t.starts_with('▲') && t.contains("Processing ") && t.contains(" configuration:") {
+            self.config_warning = Some(vec![line]);
+            return None;
+        }
         if line.contains("has access to the following bindings") || t.starts_with("Binding ") {
             self.in_bindings = true;
             return None;
@@ -733,7 +872,7 @@ fn stop_child(child: &mut Child) {
     let pid = child.id();
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+        let _ = Command::new("kill").args(["-s", "TERM", "--", &format!("-{pid}")]).status();
     }
     #[cfg(windows)]
     {
@@ -749,7 +888,7 @@ fn stop_child(child: &mut Child) {
     #[cfg(unix)]
     {
         // Anything left in the group (workerd) gets a hard stop.
-        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).stderr(Stdio::null()).status();
+        let _ = Command::new("kill").args(["-s", "KILL", "--", &format!("-{pid}")]).stderr(Stdio::null()).status();
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -759,7 +898,7 @@ fn stop_child(child: &mut Child) {
 fn terminate(pid: u32) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+        let _ = Command::new("kill").args(["-s", "TERM", "--", &pid.to_string()]).status();
     }
     #[cfg(windows)]
     {
@@ -786,5 +925,14 @@ mod tests {
         assert!(f.filter("").is_none());
         assert!(f.filter("✘ [ERROR] boom").is_some());
         assert!(f.filter("    at worker.js:1").is_some());
+        assert!(f.filter("").is_none());
+        // The tool's own S3 setting notice is not shown; anything else is.
+        assert!(f.filter("▲ [WARNING] Processing run/api/wrangler.json configuration:").is_none());
+        assert!(f.filter("").is_none());
+        assert!(f.filter("    - \"local_dev.experimental_s3_credentials\" fields are experimental").is_none());
+        assert!(f.filter("").is_none());
+        assert!(f.filter("▲ [WARNING] Processing run/web/wrangler.json configuration:").is_none());
+        assert!(f.filter("    - something else").is_none());
+        assert!(f.filter("").unwrap().contains("something else"));
     }
 }

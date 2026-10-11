@@ -154,7 +154,8 @@ pub fn dev_vars(c: &Compose, w: &Worker) -> String {
 
 /// The gateway (REQ-017, DES-008): the one Worker reachable from outside,
 /// sending each request to the Worker that owns the port it came in on.
-pub fn gateway(dir: &Path, ports: &[(u16, String)]) -> Result<Value> {
+/// Requests to `/__wc/` on its own internal port go to the data service.
+pub fn gateway(dir: &Path, ports: &[(u16, String)], internal_port: u16) -> Result<Value> {
     let script = dir.join("index.js");
     std::fs::write(&script, GATEWAY_JS)
         .with_context(|| crate::tr!("{} を書けません", "cannot write {}", script.display()))?;
@@ -163,18 +164,73 @@ pub fn gateway(dir: &Path, ports: &[(u16, String)]) -> Result<Value> {
         .enumerate()
         .map(|(i, (p, _))| (p.to_string(), json!(format!("S{i}"))))
         .collect();
-    let services: Vec<Value> = ports
+    let mut services: Vec<Value> = ports
         .iter()
         .enumerate()
         .map(|(i, (_, svc))| json!({ "binding": format!("S{i}"), "service": svc }))
         .collect();
+    services.push(json!({ "binding": "WC_DATA", "service": DATA }));
     Ok(json!({
         "name": GATEWAY,
         "main": script,
         "compatibility_date": "2026-09-01",
-        "vars": { "WC_PORTS": Value::Object(map) },
+        "vars": { "WC_PORTS": Value::Object(map), "WC_INTERNAL_PORT": internal_port.to_string() },
         "services": services,
     }))
+}
+
+pub const DATA: &str = "wc-data";
+
+/// The data service (REQ-017, DES-011): reads and writes this
+/// environment's D1, R2 and KV from inside it, for backup, restore, purge
+/// and counts. It answers only with the token, written to `.dev.vars`.
+pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
+    let script = dir.join("index.js");
+    std::fs::write(&script, DATA_JS)?;
+    let (mut d1, mut r2, mut kv) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut d1m, mut r2m, mut kvm) = (Map::new(), Map::new(), Map::new());
+    for s in &c.services {
+        match &s.kind {
+            Kind::D1(list) => {
+                for r in list {
+                    let b = format!("D1_{}", d1.len());
+                    d1.push(json!({ "binding": b, "database_name": r.key, "database_id": r.key }));
+                    d1m.insert(r.key.clone(), json!(b));
+                }
+            }
+            Kind::R2(list) => {
+                for r in list {
+                    let b = format!("R2_{}", r2.len());
+                    r2.push(json!({ "binding": b, "bucket_name": r.key }));
+                    r2m.insert(r.key.clone(), json!(b));
+                }
+            }
+            Kind::Kv(list) => {
+                for r in list {
+                    let b = format!("KV_{}", kv.len());
+                    kv.push(json!({ "binding": b, "id": r.key }));
+                    kvm.insert(r.key.clone(), json!(b));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut cfg = json!({
+        "name": DATA,
+        "main": script,
+        "compatibility_date": "2026-09-01",
+        "vars": { "WC_MAP": { "d1": d1m, "r2": r2m, "kv": kvm } },
+    });
+    if !d1.is_empty() {
+        cfg["d1_databases"] = json!(d1);
+    }
+    if !r2.is_empty() {
+        cfg["r2_buckets"] = json!(r2);
+    }
+    if !kv.is_empty() {
+        cfg["kv_namespaces"] = json!(kv);
+    }
+    Ok(cfg)
 }
 
 /// The per-service log receiver (DES-013): tail events carry no script
@@ -221,10 +277,111 @@ pub fn migrate(c: &Compose, dir: &Path) -> Result<Option<(PathBuf, Vec<String>)>
 const GATEWAY_JS: &str = r#"// Made by wrangler-compose: routes each local port to its service.
 export default {
   async fetch(request, env) {
-    const port = new URL(request.url).port;
+    const url = new URL(request.url);
+    const port = url.port;
+    if (port === env.WC_INTERNAL_PORT && url.pathname.startsWith("/__wc/")) {
+      return env.WC_DATA.fetch(request);
+    }
     const binding = env.WC_PORTS[port];
     if (!binding) return new Response(`wrangler-compose: no service on port ${port}`, { status: 404 });
     return env[binding].fetch(request);
+  },
+};
+"#;
+
+const DATA_JS: &str = r#"// Made by wrangler-compose: the data service. Answers only with the token.
+const enc = new TextEncoder();
+function same(a, b) {
+  const x = enc.encode(a), y = enc.encode(b);
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
+  return d === 0;
+}
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const out = (v) => (v instanceof ArrayBuffer ? { $blob: b64(v) } : v);
+const inp = (v) => (v && typeof v === "object" && "$blob" in v ? unb64(v.$blob) : v);
+const json = (v, status = 200) => Response.json(v, { status });
+
+export default {
+  async fetch(request, env) {
+    const auth = request.headers.get("authorization") || "";
+    if (!env.WC_TOKEN || !same(auth, `Bearer ${env.WC_TOKEN}`)) return new Response(null, { status: 404 });
+    const url = new URL(request.url);
+    const [, , kind, key, op, ...rest] = url.pathname.split("/");
+    const name = decodeURIComponent(rest.join("/"));
+    const binding = env.WC_MAP[kind] && env.WC_MAP[kind][key];
+    if (!binding) return json({ error: `no ${kind} ${key}` }, 404);
+    const b = env[binding];
+    try {
+      if (kind === "d1") {
+        const body = await request.json();
+        if (op === "query") {
+          const st = b.prepare(body.sql).bind(...(body.params || []).map(inp));
+          const [columns, ...rows] = await st.raw({ columnNames: true });
+          return json({ columns: columns || [], rows: rows.map((r) => r.map(out)) });
+        }
+        if (op === "batch") {
+          await b.batch(body.statements.map((s) => b.prepare(s.sql).bind(...(s.params || []).map(inp))));
+          return json({ ok: true });
+        }
+        if (op === "exec") {
+          await b.exec(body.sql);
+          return json({ ok: true });
+        }
+      }
+      if (kind === "r2") {
+        if (op === "list") {
+          const r = await b.list({ cursor: url.searchParams.get("cursor") || undefined, include: ["httpMetadata", "customMetadata"] });
+          return json({
+            objects: r.objects.map((o) => ({ key: o.key, size: o.size, etag: o.etag, http: o.httpMetadata || {}, custom: o.customMetadata || {} })),
+            cursor: r.truncated ? r.cursor : null,
+          });
+        }
+        if (op === "object" && request.method === "GET") {
+          const o = await b.get(name);
+          if (!o) return json({ error: "not found" }, 404);
+          return new Response(o.body, { headers: { "x-wc-meta": JSON.stringify({ http: o.httpMetadata || {}, custom: o.customMetadata || {} }) } });
+        }
+        if (op === "object" && request.method === "PUT") {
+          const meta = JSON.parse(request.headers.get("x-wc-meta") || "{}");
+          await b.put(name, request.body, { httpMetadata: meta.http, customMetadata: meta.custom });
+          return json({ ok: true });
+        }
+        if (op === "delete") {
+          const body = await request.json();
+          await b.delete(body.keys);
+          return json({ ok: true });
+        }
+      }
+      if (kind === "kv") {
+        if (op === "list") {
+          const r = await b.list({ cursor: url.searchParams.get("cursor") || undefined });
+          return json({ keys: r.keys, cursor: r.list_complete ? null : r.cursor });
+        }
+        if (op === "value" && request.method === "GET") {
+          const r = await b.getWithMetadata(name, { type: "arrayBuffer" });
+          if (r.value === null) return json({ error: "not found" }, 404);
+          return new Response(r.value, { headers: { "x-wc-meta": JSON.stringify({ metadata: r.metadata }) } });
+        }
+        if (op === "value" && request.method === "PUT") {
+          const meta = JSON.parse(request.headers.get("x-wc-meta") || "{}");
+          const opts = {};
+          if (meta.metadata != null) opts.metadata = meta.metadata;
+          if (meta.expiration) opts.expiration = meta.expiration;
+          await b.put(name, await request.arrayBuffer(), opts);
+          return json({ ok: true });
+        }
+        if (op === "value" && request.method === "DELETE") {
+          await b.delete(name);
+          return json({ ok: true });
+        }
+      }
+      return json({ error: `unknown operation ${kind}/${op}` }, 400);
+    } catch (e) {
+      return json({ error: String((e && e.message) || e) }, 500);
+    }
   },
 };
 "#;
