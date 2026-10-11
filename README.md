@@ -1,6 +1,6 @@
-# wrangler-compose
+# nv
 
-2 つのコマンドを、1 つのリポジトリで別々に作る。
+Node・npm を uv のように扱う `nv` と、Cloudflare Workers の環境を docker compose のように扱う `wrangler-compose`。2 つのコマンドを、1 つのリポジトリで別々に作る。
 
 | コマンド | 受け持つもの | 持たないもの | 要求仕様 |
 |---|---|---|---|
