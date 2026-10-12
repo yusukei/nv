@@ -235,9 +235,6 @@ impl Cf {
         Ok(self.call("POST", &self.account_path(rest), Some(body), headers)?["result"].take())
     }
 
-    pub fn put(&self, rest: &str, body: &Value) -> Result<Value> {
-        Ok(self.call("PUT", &self.account_path(rest), Some(body), &[])?["result"].take())
-    }
 
     pub fn put_with(&self, rest: &str, body: &Value, headers: &[(&str, &str)]) -> Result<Value> {
         Ok(self.call("PUT", &self.account_path(rest), Some(body), headers)?["result"].take())

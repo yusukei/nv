@@ -162,11 +162,10 @@
 
 <h3 id="des-011"><span class="id">DES-011</span>道具のサービス <span class="refs">REQ-017・REQ-013・REQ-016・REQ-006</span></h3>
 <ul>
-  <li><strong>データのサービス</strong>(すべての環境): その環境のすべての R2・KV への、ふつうのバインディングを持つ Worker。HTTP で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける。<code>up</code> が利用者のサービスと一緒に建て(リモートは Cloudflare に、手元は同じ <code>wrangler dev</code> の中に)、<code>down</code> が一緒に下ろす。<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う。これで R2 の API キーが要らない(REQ-016)</li>
+  <li><strong>データのサービス</strong>(手元だけ): その環境のすべての D1・R2・KV への、ふつうのバインディングを持つ Worker。同じ <code>wrangler dev</code> の中で動き、<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う。リモートには置かない(REQ-017)。以前の版がリモートに置いた <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code> は、<code>up</code>・<code>down</code> が <code>wrangler delete</code> で消す</li>
   <li><strong>入口のサービス</strong>(手元だけ): DES-008</li>
-  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚え、覚えていない PC では入れ直してから使う。リモートはルートを持たず <code>workers.dev</code> の URL だけ、手元は <code>127.0.0.1</code> だけで受ける。リモートで合言葉を覚えていない(または古い)PC は、Cloudflare の API でシークレットを入れ直し、効くまで待ってから使う</li>
-  <li>リモートのデータのサービスはアカウントの <code>workers.dev</code> のサブドメインで動くので、それが無いアカウントでは止まる(作り方は決めていない)</li>
-  <li>名前は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>(手元は <code>wc-data</code>・<code>wc-gateway</code>)</li>
+  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。<code>127.0.0.1</code> だけで受ける</li>
+  <li>名前は <code>wc-data</code>・<code>wc-gateway</code></li>
 </ul>
 
 <h3 id="des-012"><span class="id">DES-012</span>down <span class="refs">REQ-011</span></h3>

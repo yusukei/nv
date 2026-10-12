@@ -183,8 +183,9 @@
 
 <h3 id="ac-017"><span class="id">AC-017</span>道具のサービス <span class="refs">REQ-017</span></h3>
 <ul>
-  <li><code>up</code> のあと、道具のサービスが利用者のサービスと同じ環境にあり、<code>ps</code> に分けて出る。<code>down</code> のあと無くなる</li>
-  <li>道具のサービスへ外から要求しても、何も返らない</li>
+  <li><code>--env local up</code> のあと、道具のサービスが手元にあり、<code>ps</code> に分けて出る。<code>down</code> のあと無くなる</li>
+  <li>リモートの <code>up</code> のあと、Cloudflare のアカウントにある Worker は compose ファイルの Worker だけ。以前の版が置いた <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code> があれば消えている</li>
+  <li>リモートへの操作の間、道具が動かすのは Wrangler のコマンドだけで、Cloudflare の API へ直接の要求が 1 つも無い</li>
 </ul>
 
 <h3 id="ac-018"><span class="id">AC-018</span>手元と本番の違いの知らせ <span class="refs">REQ-018</span></h3>

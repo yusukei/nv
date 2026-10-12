@@ -38,10 +38,8 @@ pub struct Names {
     /// Worker service → script name.
     pub workers: BTreeMap<String, String>,
     pub resources: Vec<Res>,
-    /// The data service's script name.
+    /// The data service older versions deployed (deleted when found).
     pub data: String,
-    /// `<project>-<env>-`: what every name the tool makes starts with.
-    pub prefix: String,
 }
 
 impl Names {
@@ -120,7 +118,6 @@ pub fn names(c: &Compose, env: &str) -> Result<Names> {
         workers,
         resources,
         data,
-        prefix,
     })
 }
 
@@ -358,26 +355,6 @@ fn write_records(ctx: &Ctx, v: &Value) -> Result<()> {
     Ok(())
 }
 
-fn token_path(ctx: &Ctx) -> PathBuf {
-    ctx.env_dir().join("data-token")
-}
-
-/// The data service's token on this machine (made when there is none).
-fn data_token(ctx: &Ctx) -> Result<(String, bool)> {
-    match std::fs::read_to_string(token_path(ctx)) {
-        Ok(t) if !t.trim().is_empty() => Ok((t.trim().to_string(), false)),
-        _ => {
-            let t = crate::local::new_token()?;
-            // A dry run changes nothing, on this machine either.
-            if !ctx.dry_run {
-                std::fs::create_dir_all(ctx.env_dir())?;
-                crate::local::write_private(&token_path(ctx), &t)?;
-            }
-            Ok((t, true))
-        }
-    }
-}
-
 fn hash_of(parts: &[&[u8]]) -> String {
     let mut h = Sha256::new();
     for p in parts {
@@ -459,11 +436,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
     let seen = look(&cf, &n)?;
     let mut records = read_records(ctx);
     let first = !n.workers.values().any(|w| seen.scripts.contains_key(w))
-        && !n.resources.iter().any(|r| seen.has(r))
-        && !seen.scripts.contains_key(&n.data);
-    let Some(subdomain) = seen.subdomain.clone() else {
-        bail!(no_subdomain());
-    };
+        && !n.resources.iter().any(|r| seen.has(r));
 
     // 3. What needs a yes first: a new environment, Durable Object classes
     //    that go away with their data, and dropped Workers to delete.
@@ -554,8 +527,9 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
         }
     }
 
-    // 6. The data service (REQ-017), with the resources that now exist.
-    ensure_data(ctx, &cf, &act, &n, &seen, &ids, &mut records)?;
+    // 6. Nothing of the tool runs in a remote environment (REQ-017): a data
+    //    service an older version deployed goes, with its token here.
+    remove_old_data_service(ctx, &cf, &act, &n, &seen, &mut records)?;
 
     // 7. In dependency order: migrations, then Workers (REQ-010). A failed
     //    migration stops everything after it.
@@ -656,7 +630,10 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
         if let Kind::Worker(w) = &s.kind {
             let script = &n.workers[&s.name];
             let mut urls: Vec<String> = w.routes.clone();
-            if !w.ports.is_empty() && w.routes.is_empty() {
+            if !w.ports.is_empty()
+                && w.routes.is_empty()
+                && let Some(subdomain) = &seen.subdomain
+            {
                 urls.push(format!("https://{script}.{subdomain}.workers.dev"));
             }
             eprintln!(
@@ -676,12 +653,6 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
     Ok(())
 }
 
-fn no_subdomain() -> String {
-    crate::tr!(
-        "このアカウントには workers.dev のサブドメインがまだありません。道具のデータのサービスはそこで動くので、Cloudflare のダッシュボードの Workers の画面を一度開いてサブドメインを決めてください(何もしていません)",
-        "this account has no workers.dev subdomain yet; the tool's data service runs there, so open Workers in the Cloudflare dashboard once to choose one (nothing was done)"
-    )
-}
 
 fn kind_label(kind: &str) -> &'static str {
     match kind {
@@ -1042,54 +1013,38 @@ fn normalize(v: &Value) -> Value {
     }
 }
 
-/// Deploy the data service when it is missing or changed (DES-011).
-fn ensure_data(
+/// A data service (`<project>-<env>-wc-data`) that versions before 0.1.11
+/// deployed: reachable on workers.dev with full access to the environment's
+/// data, so it is deleted, and this machine's token for it too.
+fn remove_old_data_service(
     ctx: &Ctx,
     cf: &Cf,
     act: &Act,
     n: &Names,
     seen: &Seen,
-    ids: &Ids,
     records: &mut Value,
 ) -> Result<()> {
-    let dir = ctx.env_dir().join("run").join("wc-data");
-    std::fs::create_dir_all(&dir)?;
-    let mut cfg = configs::data_service(&ctx.compose, &dir, Some(ids))?;
-    cfg["name"] = json!(n.data);
-    cfg["account_id"] = json!(cf.account);
-    cfg["workers_dev"] = json!(true);
-    cfg["preview_urls"] = json!(false);
-    let (token, new) = data_token(ctx)?;
-    let hash = hash_of(&[cfg.to_string().as_bytes(), token.as_bytes()]);
-    if seen.scripts.contains_key(&n.data) && !new && records["data"] == hash.as_str() {
-        return Ok(());
+    if seen.scripts.contains_key(&n.data) {
+        act.run(
+            crate::tr!(
+                "以前の版が置いた道具のデータのサービス {} を消す",
+                "deleting {}, the data service an older version deployed",
+                n.data
+            ),
+            || {
+                run_wrangler(
+                    wrangler(ctx, cf, &["delete", "--name", &n.data, "--force"]),
+                    crate::tr!("{} を消せません", "cannot delete {}", n.data),
+                )?;
+                records["data"] = Value::Null;
+                Ok(())
+            },
+        )?;
     }
-    act.run(
-        crate::tr!(
-            "道具のデータのサービス {} を展開する",
-            "deploying the tool's data service {}",
-            n.data
-        ),
-        || {
-            let cfg_path = dir.join("wrangler.json");
-            std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg)?)?;
-            let secrets = dir.join("secrets.json");
-            crate::local::write_private(&secrets, &json!({ "WC_TOKEN": token }).to_string())?;
-            let mut cmd = wrangler(ctx, cf, &["deploy", "-c"]);
-            cmd.arg(&cfg_path).arg("--secrets-file").arg(&secrets);
-            let r = run_wrangler(
-                cmd,
-                crate::tr!(
-                    "データのサービスを展開できません(上の出力を見てください)",
-                    "cannot deploy the data service (see the output above)"
-                ),
-            );
-            let _ = std::fs::remove_file(&secrets);
-            r?;
-            records["data"] = json!(hash);
-            Ok(())
-        },
-    )
+    if !ctx.dry_run {
+        let _ = std::fs::remove_file(ctx.env_dir().join("data-token"));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1264,16 +1219,13 @@ pub fn do_exports(
     (!map.is_empty()).then(|| Value::Object(map))
 }
 
-/// Workers the compose file no longer has: named like the environment's,
-/// or deployed by the tool before.
+/// Workers the compose file no longer has: only those this machine's
+/// record says the tool deployed. A name alone does not tell environments
+/// apart (`staging` and `staging-eu` share the start), so names are not
+/// matched (REQ-006).
 fn orphans(ctx: &Ctx, n: &Names, seen: &Seen, records: &Value) -> Vec<String> {
     let known: BTreeSet<&String> = n.workers.values().collect();
-    let mut out: BTreeSet<String> = seen
-        .scripts
-        .keys()
-        .filter(|s| s.starts_with(&n.prefix) && **s != n.data && !known.contains(s))
-        .cloned()
-        .collect();
+    let mut out: BTreeSet<String> = BTreeSet::new();
     for name in records["workers"]
         .as_object()
         .into_iter()
@@ -1405,7 +1357,7 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
     let client = if resources.is_empty() {
         None
     } else {
-        data_client_with(ctx, &cf, &n, &seen).ok()
+        None::<crate::data::Client>
     };
     for r in &resources {
         let count = match (&client, r.kind) {
@@ -1423,8 +1375,8 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         eprintln!(
             "  {}",
             crate::tr!(
-                "道具のデータのサービス {}",
-                "the tool's data service {}",
+                "以前の版が置いた道具のデータのサービス {}",
+                "{}, the data service an older version deployed",
                 n.data
             )
         );
@@ -1451,15 +1403,15 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         },
     )?;
 
-    // R2 buckets must be empty to go: emptied through the data service.
+    // R2 buckets must be empty to go.
     for r in resources.iter().filter(|r| r.kind == "r2") {
-        let c = client.as_ref().ok_or_else(|| {
-            anyhow!(crate::tr!(
-                "データのサービスにつながらないので、バケット {} を空にできません",
-                "cannot reach the data service to empty bucket {}",
+        let Some(c) = client.as_ref() else {
+            bail!(crate::tr!(
+                "バケット {} を空にできません。中身のあるバケットは、いまは --purge で消せません(何もしていません)",
+                "cannot empty bucket {}: a bucket with objects cannot be removed by --purge for now (nothing was done)",
                 r.name
-            ))
-        })?;
+            ));
+        };
         act.run(
             crate::tr!("{} を空にする", "emptying {}", r.name),
             || crate::data::empty(c, "r2", &r.key),
@@ -1515,83 +1467,24 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         )?;
     }
     if data_too {
-        act.run(
-            crate::tr!(
-                "下ろす: 道具のデータのサービス {}",
-                "taking down the tool's data service {}",
-                n.data
-            ),
-            || {
-                cf.delete(&format!("/workers/scripts/{}", n.data))?;
-                records["data"] = Value::Null;
-                Ok(())
-            },
-        )?;
-    } else if !resources.is_empty() {
-        // The data service loses the bindings of what was deleted.
-        let seen = look(&cf, &n)?;
-        let ids = seen.ids(&n);
-        ensure_data(ctx, &cf, &act, &n, &seen, &ids, &mut records)?;
+        remove_old_data_service(ctx, &cf, &act, &n, &seen, &mut records)?;
     }
     write_records(ctx, &records)?;
     say(crate::tr!("下ろしました", "taken down"));
     Ok(())
 }
 
-// ---------------------------------------------------------------- data service
+// ---------------------------------------------------------------- data
 
-/// The data service of this remote environment (DES-011), with this
-/// machine's token. A machine without the token (or with an old one) puts
-/// a new one in first.
+/// Remote D1, R2 and KV contents are not read or written by the tool:
+/// nothing of the tool runs in a remote environment (REQ-017), and Cloudflare
+/// is reached only through Wrangler. backup and restore against a remote
+/// environment wait until they are built on Wrangler's commands.
 pub fn data_client(ctx: &Ctx) -> Result<crate::data::Client> {
-    let n = names(&ctx.compose, &ctx.env)?;
-    let cf = Cf::connect(ctx)?;
-    let seen = look(&cf, &n)?;
-    data_client_with(ctx, &cf, &n, &seen)
-}
-
-fn data_client_with(ctx: &Ctx, cf: &Cf, n: &Names, seen: &Seen) -> Result<crate::data::Client> {
-    if !seen.scripts.contains_key(&n.data) {
-        bail!(crate::tr!(
-            "環境 {} に道具のデータのサービスがありません。先に --env {} up を打ってください",
-            "environment {} has no data service yet; run --env {} up first",
-            ctx.env,
-            ctx.env
-        ));
-    }
-    let sub = seen
-        .subdomain
-        .clone()
-        .ok_or_else(|| anyhow!(no_subdomain()))?;
-    let base = format!("https://{}.{sub}.workers.dev", n.data);
-    let (token, new) = data_token(ctx)?;
-    let client = crate::data::Client::remote(base.clone(), token.clone());
-    if !new && client.reachable() {
-        return Ok(client);
-    }
-    // Put this machine's token in, then wait for it to take effect.
-    let token = if new {
-        token
-    } else {
-        let t = crate::local::new_token()?;
-        crate::local::write_private(&token_path(ctx), &t)?;
-        t
-    };
-    cf.put(
-        &format!("/workers/scripts/{}/secrets", n.data),
-        &json!({ "name": "WC_TOKEN", "text": token, "type": "secret_text" }),
-    )?;
-    let client = crate::data::Client::remote(base, token);
-    for _ in 0..30 {
-        if client.reachable() {
-            return Ok(client);
-        }
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
     bail!(crate::tr!(
-        "データのサービス {} が答えません",
-        "the data service {} does not answer",
-        n.data
+        "リモートの環境 {} の backup・restore は、いまは使えません(Wrangler のコマンドで作り直すまで止めています。何もしていません)",
+        "backup and restore of the remote environment {} are unavailable for now (stopped until they are rebuilt on Wrangler's commands; nothing was done)",
+        ctx.env
     ))
 }
 
@@ -1663,13 +1556,19 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
             }
         }
     }
-    println!(
-        "{:<16} {:<8} {:<10} {}",
-        "wc-data",
-        "tool",
-        state(seen.scripts.contains_key(&n.data)),
-        n.data
-    );
+    if seen.scripts.contains_key(&n.data) {
+        println!(
+            "{:<16} {:<8} {:<10} {}",
+            "wc-data",
+            "tool",
+            crate::tr!("残り", "orphan"),
+            crate::tr!(
+                "{}(以前の版が置いた道具の Worker。up が消す)",
+                "{} (left by an older version; up deletes it)",
+                n.data
+            )
+        );
+    }
     for o in orphans(ctx, &n, &seen, &records) {
         println!(
             "{:<16} {:<8} {:<10} {o}",

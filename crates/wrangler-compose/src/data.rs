@@ -27,7 +27,7 @@ fn say(msg: String) {
     eprintln!("wrangler-compose: {msg}");
 }
 
-/// Talks to the data service of one environment.
+/// Talks to the local data service of one environment (127.0.0.1).
 pub struct Client {
     base: String,
     token: String,
@@ -45,32 +45,6 @@ impl Client {
             .build()
             .into();
         Client { base, token, agent }
-    }
-
-    /// The data service of a remote environment, on workers.dev (through
-    /// the proxy the environment names, like every other download).
-    pub fn remote(base: String, token: String) -> Client {
-        let agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_response(Some(Duration::from_secs(300)))
-            .user_agent(concat!("wrangler-compose/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
-        Client { base, token, agent }
-    }
-
-    /// Whether the data service answers this token (it answers 404 to any
-    /// other, so a wrong token and a missing service look the same).
-    pub fn reachable(&self) -> bool {
-        self.query_probe().is_ok()
-    }
-
-    fn query_probe(&self) -> Result<()> {
-        if self.get_json("ping")?["ok"] != true {
-            bail!("refused");
-        }
-        Ok(())
     }
 
     fn url(&self, path: &str) -> String {
