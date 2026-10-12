@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -270,22 +270,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut port_map = Vec::new();
     for (s, w) in &workers {
         for port in &w.ports {
-            let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
-                .parse()
-                .map_err(|_| {
-                    anyhow!(crate::tr!(
-                        "アドレス {} が読めません",
-                        "cannot parse address {}",
-                        port.ip
-                    ))
-                })?;
-            let l = TcpListener::bind(addr).map_err(|e| {
-                anyhow!(crate::tr!(
-                    "{} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
-                    "cannot listen on {addr} for {} ({e}); is something else using it? change ports",
-                    s.name
-                ))
-            })?;
+            let l = claim_port(&s.name, port)?;
             listeners.push((s.name.clone(), l));
             port_map.push((port.port, s.name.clone()));
         }
@@ -298,22 +283,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         let Some(port) = s.ports.first() else {
             continue;
         };
-        let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
-            .parse()
-            .map_err(|_| {
-                anyhow!(crate::tr!(
-                    "アドレス {} が読めません",
-                    "cannot parse address {}",
-                    port.ip
-                ))
-            })?;
-        let l = TcpListener::bind(addr).map_err(|e| {
-            anyhow!(crate::tr!(
-                "{} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
-                "cannot listen on {addr} for {} ({e}); is something else using it? change ports",
-                s.name
-            ))
-        })?;
+        let l = claim_port(&s.name, port)?;
         let sites: Vec<crate::r2proxy::Site> = buckets
             .iter()
             .map(|b| crate::r2proxy::Site {
@@ -640,13 +610,8 @@ fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
             _ => &s.ports,
         };
         for port in ports {
-            let addr = format!("{}:{}", bracket(&port.ip), port.port);
-            if let Err(e) = TcpListener::bind(&addr) {
-                problems.push(crate::tr!(
-                    "{} の {addr} で待ち受けられません({e})",
-                    "{} cannot listen on {addr} ({e})",
-                    s.name
-                ));
+            if let Err(e) = claim_port(&s.name, port) {
+                problems.push(format!("{e:#}"));
             }
         }
     }
@@ -801,6 +766,12 @@ pub(crate) fn new_token() -> Result<String> {
 
 /// Start one `wrangler dev` with `configs` and wait until it serves.
 /// `None` means the user pressed Ctrl+C while it started.
+///
+/// Wrangler picks its devtools port itself (9229, else the next free one)
+/// before workerd binds it, so two `up`s starting together can pick the
+/// same one and one runtime dies. Each start asks for a port the system
+/// chose instead, and a start whose port was taken in the meantime is
+/// tried again.
 fn spawn_runtime(
     ctx: &Ctx,
     p: &Paths,
@@ -808,11 +779,45 @@ fn spawn_runtime(
     port: u16,
     log_file: Option<Arc<Mutex<File>>>,
 ) -> Result<Option<Runtime>> {
+    const TRIES: u32 = 3;
+    for attempt in 1.. {
+        match start_runtime(ctx, p, configs, port, free_port()?, log_file.clone())? {
+            Start::Ready(r) => return Ok(Some(r)),
+            Start::Interrupted => return Ok(None),
+            Start::PortTaken(_) if attempt < TRIES => say(crate::tr!(
+                "Wrangler の使うポートがほかのものと重なったので、起動し直します",
+                "a port Wrangler uses was taken by something else; starting it again"
+            )),
+            Start::PortTaken(status) => bail!(crate::tr!(
+                "Wrangler の使うポートが {TRIES} 回ともほかのものと重なって止まりました({status})。少し待ってから、もう一度打ってください",
+                "Wrangler stopped because a port it uses was taken, {TRIES} times in a row ({status}); wait a moment and try again"
+            )),
+        }
+    }
+    unreachable!()
+}
+
+enum Start {
+    Ready(Runtime),
+    Interrupted,
+    /// Wrangler stopped while starting because a port was already in use.
+    PortTaken(std::process::ExitStatus),
+}
+
+fn start_runtime(
+    ctx: &Ctx,
+    p: &Paths,
+    configs: &[PathBuf],
+    port: u16,
+    inspector_port: u16,
+    log_file: Option<Arc<Mutex<File>>>,
+) -> Result<Start> {
     let mut cmd = ctx.wrangler(["dev"]);
     for c in configs {
         cmd.arg("-c").arg(c);
     }
     cmd.args(["--ip", "127.0.0.1", "--port", &port.to_string()])
+        .args(["--inspector-port", &inspector_port.to_string()])
         .arg("--persist-to")
         .arg(p.state())
         .env("WRANGLER_SEND_METRICS", "false")
@@ -824,6 +829,7 @@ fn spawn_runtime(
         "cannot start Wrangler"
     ))?);
     let ready = Arc::new(AtomicBool::new(false));
+    let in_use = Arc::new(AtomicBool::new(false));
     let show = log_file.is_some();
     let (tx, rx) = mpsc::channel::<()>();
     for stream in [
@@ -841,7 +847,7 @@ fn spawn_runtime(
     .into_iter()
     .flatten()
     {
-        let ready = ready.clone();
+        let (ready, in_use) = (ready.clone(), in_use.clone());
         let tx = tx.clone();
         let log_file = log_file.clone();
         std::thread::spawn(move || {
@@ -849,6 +855,9 @@ fn spawn_runtime(
             for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
                 if line.contains("Ready on") && !ready.swap(true, Ordering::SeqCst) {
                     let _ = tx.send(());
+                }
+                if line.contains("Address already in use") {
+                    in_use.store(true, Ordering::SeqCst);
                 }
                 if let Some(out) = f.filter(&line) {
                     // A temporary runtime only shows errors.
@@ -868,20 +877,23 @@ fn spawn_runtime(
     let started = Instant::now();
     loop {
         match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(()) => return Ok(Some(child)),
+            Ok(()) => return Ok(Start::Ready(child)),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 std::thread::sleep(Duration::from_millis(200))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         if let Some(status) = child.0.try_wait()? {
+            if in_use.load(Ordering::SeqCst) {
+                return Ok(Start::PortTaken(status));
+            }
             bail!(crate::tr!(
                 "Wrangler が止まりました({status})。上の出力を見てください",
                 "Wrangler stopped ({status}); see the output above"
             ));
         }
         if crate::interrupt::check().is_err() {
-            return Ok(None);
+            return Ok(Start::Interrupted);
         }
         if started.elapsed() > Duration::from_secs(180) {
             bail!(crate::tr!(
@@ -1602,6 +1614,58 @@ pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Listen on a declared port (REQ-009). Binding alone does not show that
+/// the port is free: on macOS a listener on 127.0.0.1 binds while another
+/// program listens on 0.0.0.0 (and the other way round), and then quietly
+/// takes that program's localhost traffic. So whoever already answers
+/// there counts as using the port.
+fn claim_port(name: &str, port: &crate::compose::Port) -> Result<TcpListener> {
+    let addr: SocketAddr = format!("{}:{}", bracket(&port.ip), port.port)
+        .parse()
+        .map_err(|_| {
+            anyhow!(crate::tr!(
+                "アドレス {} が読めません",
+                "cannot parse address {}",
+                port.ip
+            ))
+        })?;
+    if let Some(other) = answering(&addr) {
+        let at = if other == addr {
+            String::new()
+        } else {
+            format!(" {other}")
+        };
+        bail!(crate::tr!(
+            "{name} の {addr} で待ち受けられません(ほかのものが{at}で待ち受けています)。それを止めるか、ports を変えてください",
+            "cannot listen on {addr} for {name} (something else listens{at}); stop it or change ports"
+        ));
+    }
+    TcpListener::bind(addr).map_err(|e| {
+        anyhow!(crate::tr!(
+            "{name} の {addr} で待ち受けられません({e})。ほかのものが使っていないか、ports を変えてください",
+            "cannot listen on {addr} for {name} ({e}); is something else using it? change ports"
+        ))
+    })
+}
+
+/// Where something already accepts connections that would reach `addr`:
+/// the loopback addresses for a loopback or any-address port (what
+/// "localhost" reaches), the address itself otherwise.
+fn answering(addr: &SocketAddr) -> Option<SocketAddr> {
+    let ip = addr.ip();
+    let targets: Vec<SocketAddr> = if ip.is_unspecified() || ip.is_loopback() {
+        vec![
+            (Ipv4Addr::LOCALHOST, addr.port()).into(),
+            (Ipv6Addr::LOCALHOST, addr.port()).into(),
+        ]
+    } else {
+        vec![*addr]
+    };
+    targets
+        .into_iter()
+        .find(|t| TcpStream::connect_timeout(t, Duration::from_millis(300)).is_ok())
+}
+
 fn free_port() -> Result<u16> {
     let l = TcpListener::bind("127.0.0.1:0")?;
     Ok(l.local_addr()?.port())
@@ -1655,6 +1719,7 @@ fn stop_child(child: &mut Child) {
     {
         let _ = Command::new("kill")
             .args(["-s", "TERM", "--", &format!("-{pid}")])
+            .stderr(Stdio::null())
             .status();
     }
     #[cfg(windows)]
@@ -1747,5 +1812,35 @@ mod tests {
         );
         assert!(f.filter("    - something else").is_none());
         assert!(f.filter("").unwrap().contains("something else"));
+    }
+
+    fn port(ip: &str, port: u16) -> crate::compose::Port {
+        crate::compose::Port {
+            ip: ip.into(),
+            port,
+        }
+    }
+
+    #[test]
+    fn a_port_someone_answers_on_through_any_address_is_taken() {
+        let other = TcpListener::bind("0.0.0.0:0").unwrap();
+        let p = other.local_addr().unwrap().port();
+        let e = claim_port("web", &port("127.0.0.1", p)).unwrap_err();
+        assert!(format!("{e:#}").contains(&format!("127.0.0.1:{p}")));
+        assert!(format!("{e:#}").contains("else listens") || format!("{e:#}").contains("ほかのものが"));
+    }
+
+    #[test]
+    fn a_port_someone_answers_on_through_loopback_is_taken() {
+        let other = TcpListener::bind("127.0.0.1:0").unwrap();
+        let p = other.local_addr().unwrap().port();
+        assert!(claim_port("web", &port("0.0.0.0", p)).is_err());
+    }
+
+    #[test]
+    fn a_free_port_is_claimed() {
+        let p = free_port().unwrap();
+        let l = claim_port("web", &port("127.0.0.1", p)).unwrap();
+        assert_eq!(l.local_addr().unwrap().port(), p);
     }
 }
