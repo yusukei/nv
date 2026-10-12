@@ -151,6 +151,22 @@ fn forward_one(
         let _ = std::io::copy(&mut c_read, &mut u_write);
         let _ = u_write.shutdown(Shutdown::Write);
     });
+    if !upgrade {
+        // The client must not send a second request on this connection: it
+        // would reach the gateway without PORT_HEADER (HTTP keep-alive, which
+        // browsers use for every page). Wrangler's answer may keep the
+        // connection open, so the answer to the client says close.
+        if let Some((rbuf, rlen)) = read_head(&mut up)? {
+            client.write_all(&close_head(&rbuf, rlen))?;
+            let res = parse(&rbuf, rlen, false);
+            // The answer ends at its length, not when Wrangler closes (it may not).
+            let _ = copy_body(&mut up, &mut client, &rbuf[rlen..], &head.method, res.as_ref());
+        }
+        let _ = client.shutdown(Shutdown::Both);
+        let _ = up.shutdown(Shutdown::Both);
+        let _ = t.join();
+        return Ok(());
+    }
     let _ = std::io::copy(&mut up, &mut client);
     // The answer is complete: end both directions so the request side's
     // thread stops too.
@@ -158,6 +174,112 @@ fn forward_one(
     let _ = up.shutdown(Shutdown::Both);
     let _ = t.join();
     Ok(())
+}
+
+/// Copy an answer's body to the client and stop at its end: `Content-Length`
+/// bytes, or the chunks up to the last one, or (neither) until the upstream
+/// closes. HEAD answers and 1xx/204/304 have no body. `first` is what was read
+/// with the head.
+fn copy_body(
+    up: &mut TcpStream,
+    client: &mut TcpStream,
+    first: &[u8],
+    method: &str,
+    res: Option<&Head>,
+) -> std::io::Result<()> {
+    let status: u16 = res.and_then(|h| h.path.parse().ok()).unwrap_or(200);
+    if method.eq_ignore_ascii_case("HEAD") || status < 200 || status == 204 || status == 304 {
+        return Ok(());
+    }
+    let chunked = res
+        .and_then(|h| h.get("transfer-encoding"))
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let length: Option<u64> = res
+        .and_then(|h| h.get("content-length"))
+        .and_then(|v| v.parse().ok());
+    if let (false, Some(n)) = (chunked, length) {
+        let take = (n as usize).min(first.len());
+        client.write_all(&first[..take])?;
+        let rest = n - take as u64;
+        std::io::copy(&mut Read::by_ref(up).take(rest), client)?;
+        return Ok(());
+    }
+    if !chunked {
+        client.write_all(first)?;
+        std::io::copy(up, client)?;
+        return Ok(());
+    }
+    // Chunked: pass the bytes through while following the chunk sizes.
+    let mut buf = first.to_vec();
+    let mut pos = 0usize;
+    let mut chunk = [0u8; 16 * 1024];
+    let mut fill = |buf: &mut Vec<u8>| -> std::io::Result<bool> {
+        let k = up.read(&mut chunk)?;
+        buf.extend_from_slice(&chunk[..k]);
+        Ok(k > 0)
+    };
+    loop {
+        // the size line
+        let line_end = loop {
+            if let Some(i) = find(&buf[pos..], b"\r\n") {
+                break pos + i;
+            }
+            if !fill(&mut buf)? {
+                client.write_all(&buf)?;
+                return Ok(());
+            }
+        };
+        let size_text = String::from_utf8_lossy(&buf[pos..line_end]).to_string();
+        let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)
+            .unwrap_or(0);
+        if size == 0 {
+            // trailers end with an empty line
+            loop {
+                if let Some(i) = find(&buf[line_end..], b"\r\n\r\n") {
+                    let end = line_end + i + 4;
+                    client.write_all(&buf[..end])?;
+                    return Ok(());
+                }
+                if !fill(&mut buf)? {
+                    client.write_all(&buf)?;
+                    return Ok(());
+                }
+            }
+        }
+        let next = line_end + 2 + size + 2;
+        while buf.len() < next {
+            if !fill(&mut buf)? {
+                client.write_all(&buf)?;
+                return Ok(());
+            }
+        }
+        // send what is complete and keep the rest
+        client.write_all(&buf[..next])?;
+        buf.drain(..next);
+        pos = 0;
+    }
+}
+
+/// The head of an answer, with `Connection: close` in place of whatever it
+/// said about the connection (one request per connection).
+fn close_head(buf: &[u8], len: usize) -> Vec<u8> {
+    let text = String::from_utf8_lossy(&buf[..len]);
+    let mut out = String::new();
+    for (i, line) in text.split("\r\n").enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let name = line.split(':').next().unwrap_or("").trim();
+        if i > 0
+            && (name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive"))
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push_str("\r\n");
+    }
+    out.push_str("connection: close\r\n\r\n");
+    out.into_bytes()
 }
 
 struct Head {
@@ -577,5 +699,78 @@ mod tests {
                 .any(|(k, v)| *k == "access-control-allow-origin" && v == "http://localhost:8787")
         );
         assert!(cors_headers(&s, Some("http://evil.test"), "GET").is_empty());
+    }
+
+    /// A gateway like Wrangler's: answers every request on a connection and
+    /// keeps it open; 200 when the request carries PORT_HEADER, else 404.
+    fn keep_alive_gateway() -> SocketAddr {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for c in l.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut c = c;
+                    let mut buf = Vec::new();
+                    while let Ok(Some((b, len))) = read_head_after(&mut c, std::mem::take(&mut buf)) {
+                        let head = parse(&b, len, true).unwrap();
+                        let ok = head.get(PORT_HEADER).is_some();
+                        let body: &[u8] = if ok { b"ok" } else { b"no port" };
+                        let status = if ok { "200 OK" } else { "404 Not Found" };
+                        let res = format!("HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: keep-alive\r\n\r\n", body.len());
+                        if c.write_all(res.as_bytes()).and_then(|_| c.write_all(body)).is_err() {
+                            return;
+                        }
+                        buf = b[len..].to_vec();
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    fn get(c: &mut TcpStream) -> std::io::Result<Option<(String, String)>> {
+        c.write_all(b"GET / HTTP/1.1\r\nhost: localhost\r\nconnection: keep-alive\r\n\r\n")?;
+        let Some((b, len)) = read_head(c)? else {
+            return Ok(None);
+        };
+        let head = parse(&b, len, false).unwrap();
+        let n: usize = head.get("content-length").unwrap().parse().unwrap();
+        let mut body = b[len..].to_vec();
+        while body.len() < n {
+            let mut chunk = [0u8; 64];
+            let k = c.read(&mut chunk)?;
+            if k == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..k]);
+        }
+        let conn = head.get("connection").unwrap_or("").to_string();
+        Ok(Some((format!("{} {}", head.path, String::from_utf8_lossy(&body)), conn)))
+    }
+
+    #[test]
+    fn a_kept_alive_connection_carries_one_request() {
+        let gateway = keep_alive_gateway();
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        // forward_worker accepts in the calling thread until `stop`
+        let s = stop.clone();
+        std::thread::spawn(move || forward_worker(l, gateway, Arc::new(Vec::new()), s));
+
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let (first, conn) = get(&mut c).unwrap().unwrap();
+        assert_eq!(first, "200 ok");
+        // The client is told to close, so a browser does not send a second
+        // request here (it would reach the gateway without PORT_HEADER).
+        assert_eq!(conn, "close");
+        // And the connection is closed: a second request gets no answer.
+        assert!(matches!(get(&mut c), Ok(None) | Err(_)));
+        // A new connection works again.
+        let mut c2 = TcpStream::connect(addr).unwrap();
+        c2.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        assert_eq!(get(&mut c2).unwrap().unwrap().0, "200 ok");
+        stop.store(true, Ordering::SeqCst);
     }
 }
