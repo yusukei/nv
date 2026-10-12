@@ -14,15 +14,12 @@ const EXE_SUFFIX: &str = std::env::consts::EXE_SUFFIX;
 const TOOLS: &[&str] = &["nv", "wrangler-compose"];
 
 fn release_base() -> Result<String> {
-    if let Ok(m) = std::env::var("NV_RELEASE_MIRROR") {
-        return Ok(m.trim_end_matches('/').to_string());
-    }
     option_env!("NV_RELEASE_BASE")
         .map(|b| b.trim_end_matches('/').to_string())
         .ok_or_else(|| {
             anyhow!(crate::tr!(
-                "この nv は Release の取り先なしで組まれています。NV_RELEASE_MIRROR を設定してください",
-                "this nv was built without a release location; set NV_RELEASE_MIRROR"
+                "この nv は Release の取り先なしで組まれているので、入れ替えられません",
+                "this nv was built without a release location, so it cannot update itself"
             ))
         })
 }

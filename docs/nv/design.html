@@ -91,7 +91,7 @@
 <h3 id="des-004"><span class="id">DES-004</span>Node の取得 <span class="refs">REQ-002</span></h3>
 <ol>
   <li>錠 <code>locks/node-&lt;版&gt;.lock</code> を取る(<code>File::lock</code>。取れるまで待つ)。取ったあと、置き場にその版があれば何もしない(先に取った nv が入れたもの)</li>
-  <li>取り先(既定 <code>https://nodejs.org/dist</code>。環境変数 <code>NV_NODE_MIRROR</code> で差し替え)から <code>v&lt;版&gt;/SHASUMS256.txt</code> と配布物を <code>tmp/</code> へ取る</li>
+  <li>取り先 <code>https://nodejs.org/dist</code> から <code>v&lt;版&gt;/SHASUMS256.txt</code> と配布物を <code>tmp/</code> へ取る</li>
   <li>配布物の SHA-256 を <code>SHASUMS256.txt</code> の行と照らす。合わない・行が無いときは消して止まる</li>
   <li><code>tmp/</code> の中で展開し、配布物の一番上のフォルダ(<code>node-v&lt;版&gt;-&lt;OS&gt;-&lt;CPU&gt;</code>)を <code>cache/node/&lt;版&gt;</code> へ名前の付け替えで移す。移すのが最後の一手なので、途中で止まっても半端な版は置き場に無い</li>
   <li>起動のたびに、<code>tmp/</code> に残った古いもの(1 日より前)を消す</li>
@@ -99,7 +99,6 @@
 <ul>
   <li>HTTP はすべて ureq の既定の設定の 1 つの Agent で行う(環境変数のプロキシを読む)</li>
   <li>却下: 置き場に「済み」の印のファイルを書いて見分ける(印と中身がずれうる。名前の付け替えなら、ある=完成している)</li>
-  <li>成り立たない場合: 取り先を差し替えると、<code>SHASUMS256.txt</code> も同じ取り先から来るので、壊れていないことは分かるが本物であることは保証しない(公式の署名 <code>SHASUMS256.txt.asc</code> は確かめない。要求の範囲)</li>
 </ul>
 
 <h3 id="des-005"><span class="id">DES-005</span>sync と「依存が揃っているか」 <span class="refs">REQ-003・REQ-004</span></h3>
@@ -141,7 +140,7 @@
 <h3 id="des-008"><span class="id">DES-008</span>node list / install / uninstall <span class="refs">REQ-006</span></h3>
 <ul>
   <li><code>list</code> は <code>cache/node/</code> のフォルダ名を版の順に並べる。<code>install</code> は DES-004。<code>uninstall</code> は錠を取ってフォルダを消す</li>
-  <li><code>list --remote</code> は、取り先(既定 <code>https://nodejs.org/dist</code>。<code>NV_NODE_MIRROR</code>)の <code>index.json</code> を読む。各版の <code>files</code> に、この OS の配布物の名前(macOS arm64 は <code>osx-arm64-tar</code>、macOS x64 は <code>osx-x64-tar</code>、Linux は <code>linux-x64</code>、Windows は <code>win-x64-zip</code>)がある版だけを残す(<code>index.json</code> の中身は 2026-10 の実物で確認: 870 版、<code>version</code>・<code>date</code>・<code>lts</code>(名前か false)・<code>files</code> などを持つ)</li>
+  <li><code>list --remote</code> は、取り先 <code>https://nodejs.org/dist</code> の <code>index.json</code> を読む。各版の <code>files</code> に、この OS の配布物の名前(macOS arm64 は <code>osx-arm64-tar</code>、macOS x64 は <code>osx-x64-tar</code>、Linux は <code>linux-x64</code>、Windows は <code>win-x64-zip</code>)がある版だけを残す(<code>index.json</code> の中身は 2026-10 の実物で確認: 870 版、<code>version</code>・<code>date</code>・<code>lts</code>(名前か false)・<code>files</code> などを持つ)</li>
   <li>結果は標準出力に 1 版 1 行で出す(<code>24.21.0  LTS Krypton  (入れてある)</code>)。版の前の <code>v</code> は付けない(<code>.node-version</code> にそのまま書けるように)</li>
 </ul>
 
@@ -174,7 +173,7 @@
 
 <h3 id="des-011"><span class="id">DES-011</span>self update <span class="refs">REQ-010</span></h3>
 <ol>
-  <li>取り先(既定 <code>https://github.com/&lt;持ち主&gt;/&lt;リポジトリ&gt;/releases/latest/download</code>。環境変数 <code>NV_RELEASE_MIRROR</code> で差し替え)から <code>VERSION</code> を取り、いまの版と比べる。新しくなければ「最新」と示して終わる。<code>--check</code> はここで終わる</li>
+  <li>取り先(ビルドの時に <code>NV_RELEASE_BASE</code> で決める。CI は <code>https://github.com/&lt;持ち主&gt;/&lt;リポジトリ&gt;/releases/latest/download</code>)から <code>VERSION</code> を取り、いまの版と比べる。新しくなければ「最新」と示して終わる。<code>--check</code> はここで終わる</li>
   <li><code>SHA256SUMS</code> と、自分のターゲットの <code>nv-…</code>(同じフォルダに wrangler-compose があればそれも)を、入れ替える実行ファイルと同じフォルダの一時ファイルへ取り、照らす。1 つでも合わなければ全部消して止まる</li>
   <li>入れ替え: いまのファイルを <code>&lt;名前&gt;.old</code> へ名前を付け替え、取ったものを本来の名前へ付け替える(Windows でも、動いている実行ファイルの名前の付け替えはできる)。2 つ目の付け替えに失敗したら、<code>.old</code> を戻す</li>
   <li>新しい nv を <code>nv install skill --if-installed</code>(内部の引数)で起こし、印のあるスキルだけを新しい中身で入れ直す(古い nv は新しいスキルの中身を持たないため)</li>
@@ -199,7 +198,7 @@
 <h3 id="des-013"><span class="id">DES-013</span>試験</h3>
 <ul>
   <li>単体の試験: 版の読み取り、<code>SHASUMS256.txt</code> の照合、ロックファイルの <code>bin</code> の引き方、入口が JavaScript かの見分け</li>
-  <li>結合の試験(<code>NV_HOME</code> を一時のフォルダにして実行ファイルを動かす): 手元で配る偽の取り先(検証値の合わない配布物、途中で切れる応答)で AC-002・AC-010 の失敗の側を確かめる。本物の取り先での取得は CI の 1 つの仕事で行う</li>
+  <li>AC-002・AC-010 の検証値が合わない側は、単体の試験(照合)で確かめる。本物の取り先での取得は CI の 1 つの仕事(<code>NV_HOME</code> を一時のフォルダにして実行ファイルを動かす)で行う</li>
   <li>CI は Windows・macOS・Linux の 3 つで回す。エージェントの振る舞い(AC-008 の 3 回)は手で確かめる</li>
 </ul>
 

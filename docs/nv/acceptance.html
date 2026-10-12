@@ -48,7 +48,7 @@
 <ul>
   <li>置き場にその版が無い状態で <code>nv sync</code> を打つと、置き場にその版ができる。もう一度打つと、取り直さない</li>
   <li>Windows でも macOS でも、取った Node は <code>~/.nv/cache</code> の下にあり、<code>~/.nv</code> の外(<code>%LOCALAPPDATA%</code>・<code>~/Library/Caches</code> など)に nv のものができていない</li>
-  <li>検証値と合わない配布物を返す取り先に差し替えると、置き場に何もできずに止まり、検証値が合わないと出る</li>
+  <li>取った配布物が検証値と合わないと、置き場に何もできずに止まり、検証値が合わないと出る</li>
   <li>取っている途中で止めると、置き場に壊れた版が残らない(次の <code>nv sync</code> で取り直して動く)</li>
   <li>2 つの <code>nv sync</code> を同時に打っても、両方が成功し、置き場の版は 1 つ</li>
   <li>公式に直接出られず、プロキシ(<code>HTTPS_PROXY</code>)を通してだけ出られる網で、<code>nv sync</code> が Node を取れる</li>
@@ -85,7 +85,6 @@
   <li><code>nv node install 22.11.0</code> のあと <code>nv node list</code> に <code>22.11.0</code> が出る。<code>nv node uninstall 22.11.0</code> のあと出ない</li>
   <li><code>nv node list --remote</code> は、系列ごとに最新の版が 1 行ずつ、新しい順に並ぶ。LTS の版には LTS の名前が付き、置き場に入っている版には印が付く。その OS 向けの配布物が無い版は出ない</li>
   <li><code>nv node list --remote 24</code> は 24 系のすべての版、<code>--lts</code> は LTS の版だけ、<code>--all</code> はすべての版を出す</li>
-  <li>取り先を <code>NV_NODE_MIRROR</code> で差し替えると、その取り先の一覧を出す</li>
 </ul>
 
 <h3 id="ac-007"><span class="id">AC-007</span>利用者の環境 <span class="refs">REQ-007</span></h3>
@@ -117,7 +116,7 @@
   <li>nv と同じフォルダに wrangler-compose があると、<code>nv self update</code> のあと <code>wrangler-compose --version</code> も nv と同じ版になる。無ければ wrangler-compose は入らない</li>
   <li>最新の版で <code>nv self update</code> を打つと、何も変わらず、最新であると出る</li>
   <li><code>nv self update --check</code> は、新しい版があるかを示し、実行ファイルは変わらない</li>
-  <li>検証値と合わない実行ファイルを返す取り先に差し替えると、入れ替えずに止まり、いまの nv が動く</li>
+  <li>取った実行ファイルが検証値と合わないと、入れ替えずに止まり、いまの nv が動く</li>
   <li>取っている途中で止めても、いまの nv が動く</li>
   <li>Windows で、動いている nv から <code>nv self update</code> を打っても入れ替わる</li>
   <li>プロキシを通してだけ出られる網で、<code>nv self update</code> が動く</li>

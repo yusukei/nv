@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_MIRROR: &str = "https://nodejs.org/dist";
+const NODE_DIST: &str = "https://nodejs.org/dist";
 
 /// The Node distribution name for this machine (`darwin-arm64`, `win-x64`, ...).
 fn platform() -> Result<&'static str> {
@@ -21,15 +21,6 @@ fn platform() -> Result<&'static str> {
             "Node is not provided by nv for {os}/{arch}"
         )),
     })
-}
-
-fn mirror() -> String {
-    std::env::var("NV_NODE_MIRROR")
-        .ok()
-        .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| DEFAULT_MIRROR.to_string())
-        .trim_end_matches('/')
-        .to_string()
 }
 
 /// The name this machine's archive has in the `files` list of index.json.
@@ -53,7 +44,7 @@ pub struct Release {
 pub fn remote(index: Option<&str>) -> Result<Vec<Release>> {
     let text = match index {
         Some(t) => t.to_string(),
-        None => http::get_text(&format!("{}/index.json", mirror()))?,
+        None => http::get_text(&format!("{NODE_DIST}/index.json"))?,
     };
     let json: serde_json::Value = serde_json::from_str(&text).context(crate::tr!(
         "Node の版の一覧(index.json)を読めません",
@@ -157,22 +148,21 @@ pub fn ensure(home: &NvHome, v: Version) -> Result<Node> {
 }
 
 fn install(home: &NvHome, v: Version, dest: &Path) -> Result<()> {
-    let mirror = mirror();
     let stem = format!("node-v{v}-{}", platform()?);
     let file = format!("{stem}.{}", archive_ext());
 
     eprintln!(
         "nv: {}",
         crate::tr!(
-            "Node {v} を {mirror} から取ります",
-            "downloading Node {v} from {mirror}"
+            "Node {v} を {NODE_DIST} から取ります",
+            "downloading Node {v} from {NODE_DIST}"
         )
     );
-    let sums = http::get_text(&format!("{mirror}/v{v}/SHASUMS256.txt"))?;
+    let sums = http::get_text(&format!("{NODE_DIST}/v{v}/SHASUMS256.txt"))?;
     let tmp = home.new_tmp(&format!("node-{v}"))?;
     let result = (|| -> Result<()> {
         let archive = tmp.join(&file);
-        let actual = http::download(&format!("{mirror}/v{v}/{file}"), &archive)?;
+        let actual = http::download(&format!("{NODE_DIST}/v{v}/{file}"), &archive)?;
         http::verify(http::checksum_for(&sums, &file), &actual, &file)?;
 
         let unpacked = tmp.join("unpacked");
