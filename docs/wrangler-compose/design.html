@@ -108,7 +108,7 @@
 <h3 id="des-007"><span class="id">DES-007</span>build <span class="refs">REQ-008・REQ-015</span></h3>
 <ul>
   <li>Worker ごとに、バインディングを持たない組み立て用の設定で <code>wrangler deploy --dry-run --outdir .wrangler/compose/build/&lt;サービス&gt;/</code> を動かし、組み立てたもの(バンドル)を置く。docker のイメージに当たる</li>
-  <li>組み立てたものに、コードと組み立てのキーの要約(SHA-256)を添える。<code>up</code> はいまのコードと比べ、違えば古いと示す(<code>--build</code> で組み直す。docker と同じく勝手には組み直さない。ただし組み立てたものが無ければ組み立てる)</li>
+  <li>組み立てたものに、コードと組み立てのキーの要約(SHA-256)を添える。<code>up</code> はいまのコードと比べ、違えば組み立て直す(<code>--build</code> なら比べずに組み直す)。手元の <code>up</code> は動いている間もコードを見ていて、変われば組み立て直して動かし直す(DES-008)</li>
   <li>手元の <code>up</code> もリモートの <code>up</code> も、同じ組み立てたものを組み直さずに使う(手元は DES-008、リモートは <code>deploy --no-bundle</code>)</li>
 </ul>
 

@@ -86,7 +86,7 @@ enum Cmd {
     },
 }
 
-/// Japanese `--help` (REQ-012), same approach as nv.
+/// Japanese `--help` (REQ-019), same approach as nv.
 const JA_ABOUT: &[(&str, &str)] = &[
     (
         "",

@@ -28,7 +28,7 @@ pub fn retype_env(env: &str, action: &str) -> Result<()> {
     std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line)?;
-    // The name itself is never translated (REQ-012).
+    // The name itself is never translated (REQ-019).
     if line.trim() != env {
         bail!(crate::tr!(
             "環境名が違います。何も変えていません",

@@ -1,4 +1,4 @@
-//! Display language (REQ-012, DES-014; same rules as nv): Japanese when the OS language is
+//! Display language (REQ-019, DES-014; same rules as nv): Japanese when the OS language is
 //! Japanese, English otherwise; `NV_LANG=ja|en` overrides.
 
 use std::sync::OnceLock;

@@ -61,8 +61,9 @@
 <ul>
   <li>5 つの型が、手元とリモートの両方で、それぞれ Worker・D1・R2・KV・Queue として建つ。知らない <code>type</code> は止まる</li>
   <li>D1・R2・KV・Queue のそれぞれで、省略形のサービスは資源 1 つ、複数形のサービスは並べた数だけ資源になる。1 つのサービスに両方を書くと止まる。別のサービスに同じ名前の資源があっても、別の資源として建つ</li>
-  <li>R2 のバケットの <code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> が、リモートのバケットの設定に入っている。手元でも同じに効く(AC-009 の同じ試験で確かめる)</li>
+  <li>R2 のバケットの <code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> が、リモートのバケットの設定に入っている。手元では <code>public</code>・<code>cors</code>・<code>notifications</code> が同じに効き(AC-009 の同じ試験で確かめる)、ほかは効かないことを <code>up</code> が知らせる</li>
   <li><code>vars</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
+  <li><code>compatibility_date</code> の無い Worker のサービスは、何もせずに止まる(場所を示す)</li>
 </ul>
 
 <h3 id="ac-003"><span class="id">AC-003</span>つながり <span class="refs">REQ-003</span></h3>

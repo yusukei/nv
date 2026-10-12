@@ -43,7 +43,8 @@
 </table>
 
 <h2 id="bindings">バインディング</h2>
-<p>Wrangler はバインディングの種類ごとに、手元で動くか・<code>remote: true</code> で Cloudflare の本物につなげるかを決めている。wrangler-compose はこの表に合わせて知らせる(REQ-021)。種類の名前は Wrangler の内側の名前。</p>
+<p>Wrangler はバインディングの種類ごとに、手元で動くか・<code>remote: true</code> で Cloudflare の本物につなげるかを決めている。wrangler-compose はこの表に合わせて知らせる(REQ-018)。種類の名前は Wrangler の内側の名前。</p>
+<p>この節の <code>remote: true</code> は Wrangler そのものの機能の説明で、wrangler-compose は使わない(手元とリモートを混ぜない。利用者の決定)。手元で足りないものは道具のサービスが補うか、リモートの環境で確かめる。</p>
 
 <h3>手元では動かない(<code>remote: true</code> で本物につなぐ)</h3>
 <table>
@@ -113,8 +114,8 @@
   <tr><th style="width:30%">機能</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
   <tr><td><code>request.cf</code>(国・都市・ASN など)</td><td>Cloudflare から取れればその値(使う人の場所ではなく自分の回線のもの)、取れなければ決まった代わりの値</td><td>実測(取れないときの警告)</td></tr>
   <tr><td>ゾーンの機能(WAF・キャッシュのルール・リダイレクト・Access・Bot 対策など)</td><td>要求が Cloudflare の網を通らないので、どれも効かない。Access の JWT のような付け足されるヘッダも来ない</td><td>推測</td></tr>
-  <tr><td>R2 の公開の URL(<code>r2.dev</code>・独自ドメイン)</td><td>無い。Worker を通して配るか、手元の S3 の口の署名付き URL を使う(範囲外。workers-sdk #3687 で要望が出ている)</td><td>資料(要望の issue)</td></tr>
-  <tr><td>R2 のバケットの設定(CORS・ライフサイクル・イベント通知)</td><td>手元のバケットには当たらない見込み。ブラウザから署名付き URL を使うときの CORS の振る舞いは本番と違いうる</td><td>推測</td></tr>
+  <tr><td>R2 の公開の URL(<code>r2.dev</code>・独自ドメイン)</td><td>Wrangler だけでは無い(workers-sdk #3687)。wrangler-compose は r2 のサービスに <code>ports</code> があれば <code>http://&lt;バケット&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で配る(REQ-009)</td><td>資料・実装</td></tr>
+  <tr><td>R2 のバケットの設定(CORS・ライフサイクル・イベント通知)</td><td>Wrangler だけでは当たらない(手元の S3 の口は CORS をすべて許す。実測)。wrangler-compose は <code>ports</code> のある r2 のサービスで CORS を、どの r2 のサービスでもイベント通知を本番と同じに補う。ライフサイクル・ロック・保存クラスは手元では効かない(REQ-009)</td><td>実測・実装</td></tr>
   <tr><td>D1 の Time Travel・読み取りの複製</td><td>手元の D1 には無い</td><td>推測</td></tr>
   <tr><td>KV の結果整合性</td><td>手元では書いた値がすぐ読める。本番の「しばらく古い値が見える」は再現されない</td><td>推測</td></tr>
   <tr><td>キャッシュ(Cache API・<code>fetch</code> のキャッシュ)</td><td>手元のキャッシュで、本番の拠点ごとのキャッシュとは振る舞いが違う</td><td>推測</td></tr>
