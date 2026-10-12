@@ -124,6 +124,8 @@
   <li>コードを変えると、打ち直さずに新しいコードが応える。移行を足して <code>up</code> を打ち直すと、足した移行が当たる</li>
   <li>Ctrl+C のあと何も残らない。<code>down</code> のあとの <code>up</code> で前のデータが見え、<code>down --purge</code> のあとは空</li>
   <li>2 つ目の <code>--env local up</code> は止まる。ほかの端末からの <code>--env local down</code> で止まる</li>
+  <li><code>ports</code> だけを変えた別のプロジェクトを同時に <code>up</code> すると(同じ時に打っても)、両方が応える。Worker の名前が同じでも、互いの呼び出し先の登録(dev registry)を上書きしない</li>
+  <li>ほかのプログラムが <code>0.0.0.0:8787</code> で待ち受けているとき、<code>127.0.0.1:8787</code> の <code>ports</code> を持つ <code>up</code> は何も動かさずに止まり、そのポートを示す(<code>--dry-run up</code> も同じ理由を示す)。逆(ほかが <code>127.0.0.1</code>、こちらが <code>0.0.0.0</code>)も同じ</li>
 </ul>
 
 <h3 id="ac-010"><span class="id">AC-010</span>up(リモート) <span class="refs">REQ-010</span></h3>
