@@ -9,11 +9,6 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The S3-compatible API keys for local R2 (REQ-009, REQ-016): the tool
-/// decides them; they only work on this machine.
-pub const LOCAL_S3_KEY: &str = "wrangler-compose-local";
-pub const LOCAL_S3_SECRET: &str = "wrangler-compose-local-secret";
-
 /// Cloudflare's defaults for queue consumers; the local simulator's own
 /// defaults (5, 1 s, 2) differ (DES-008).
 const QUEUE_DEFAULTS: (u64, u64, u64) = (10, 5, 3);
@@ -48,12 +43,16 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
             Target::D1(k) => {
                 d1.push(json!({ "binding": binding, "database_name": k, "database_id": k }))
             }
-            Target::R2(k) => r2.push(json!({
-                "binding": binding,
-                "bucket_name": k,
-                "local_dev": { "experimental_s3_credentials": {
-                    "accessKeyId": LOCAL_S3_KEY, "secretAccessKey": LOCAL_S3_SECRET } }
-            })),
+            Target::R2(k) => {
+                let mut b = json!({ "binding": binding, "bucket_name": k });
+                // The S3-compatible API's keys (REQ-009): random per project,
+                // never fixed ones anyone could know.
+                if let Some(s3) = &c.local_s3 {
+                    b["local_dev"] = json!({ "experimental_s3_credentials": {
+                        "accessKeyId": s3.key, "secretAccessKey": s3.secret } });
+                }
+                r2.push(b)
+            }
             Target::Kv(k) => kv.push(json!({ "binding": binding, "id": k })),
             Target::Queue(k) => producers.push(json!({ "binding": binding, "queue": k })),
             Target::Worker(other) => services.push(json!({ "binding": binding, "service": other })),

@@ -7,6 +7,11 @@
 //! does not hold is passed on unsigned again, and the simulator refuses it
 //! for the reason R2 would. The canonical request is built the way the
 //! simulator builds it (miniflare's r2/s3 worker).
+//!
+//! Only IP addresses are taken for another machine. A host name that is not
+//! local (`evil.example`) is what a web page uses after rebinding its name
+//! to 127.0.0.1, so such a request goes on as it came and the simulator
+//! refuses it, as it would without the tool.
 
 use sha2::{Digest, Sha256};
 
@@ -16,6 +21,16 @@ const ALGORITHM: &str = "AWS4-HMAC-SHA256";
 /// LOCALHOST_HOSTNAMES).
 fn is_local(hostname: &str) -> bool {
     matches!(hostname, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// An IP address such as `192.168.1.10` or `[fe80::1]`: how another machine
+/// on the LAN reaches the port (REQ-009). Never a name a web page controls.
+fn is_ip(hostname: &str) -> bool {
+    let h = hostname
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(hostname);
+    h.parse::<std::net::IpAddr>().is_ok()
 }
 
 /// The host name of a `Host` header (`a.b:9050`, `[::1]:9050`), lower case.
@@ -67,11 +82,22 @@ pub fn rewrite(
     };
     let host = get("host").unwrap_or_default();
     let origin = get("origin");
-    let host_ok = is_local(&hostname_of_host(&host));
-    let origin_ok = origin
-        .as_deref()
-        .is_none_or(|o| hostname_of_origin(o).is_some_and(|h| is_local(&h)));
+    let host_name = hostname_of_host(&host);
+    let origin_name = origin.as_deref().map(hostname_of_origin);
+    let host_ok = is_local(&host_name);
+    let origin_ok = origin_name
+        .as_ref()
+        .is_none_or(|h| h.as_deref().is_some_and(is_local));
     if host_ok && origin_ok {
+        return None;
+    }
+    // Another machine comes by IP address; any other name goes on as it
+    // came, for the simulator to refuse.
+    let host_lan = host_ok || is_ip(&host_name);
+    let origin_lan = origin_name
+        .as_ref()
+        .is_none_or(|h| h.as_deref().is_none_or(|h| is_local(h) || is_ip(h)));
+    if !host_lan || !origin_lan {
         return None;
     }
     let local_host = match host.trim().rsplit_once(':') {
@@ -403,6 +429,22 @@ mod tests {
         // another access key
         let r = rewrite("GET", &t, &h(&[("Host", "10.10.0.12:9050")]), "someone-else", SECRET).unwrap();
         assert!(!r.resigned);
+    }
+
+    #[test]
+    fn a_host_name_is_never_signed_again() {
+        // A page that rebound its name to 127.0.0.1 signs for that name:
+        // the request goes on as it came, for the simulator to refuse.
+        let t = presigned("evil.example:9050", "/cdn-cgi/local/r2/s3/storage/a");
+        assert_eq!(rewrite("GET", &t, &h(&[("Host", "evil.example:9050")]), KEY, SECRET), None);
+        let t = presigned("localhost:9050", "/cdn-cgi/local/r2/s3/storage/a");
+        assert_eq!(
+            rewrite("GET", &t, &h(&[("Host", "localhost:9050"), ("Origin", "http://evil.example:9050")]), KEY, SECRET),
+            None
+        );
+        // An IPv6 LAN address is an address.
+        let t = presigned("[fe80::1]:9050", "/cdn-cgi/local/r2/s3/storage/a");
+        assert!(rewrite("GET", &t, &h(&[("Host", "[fe80::1]:9050")]), KEY, SECRET).unwrap().resigned);
     }
 
     #[test]

@@ -138,6 +138,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
         return dry_run(ctx, &services);
     }
     tool_dir_ignored(ctx)?;
+    save_s3_keys(ctx)?;
     let Some(_lock) = try_lock(&p)? else {
         // Services taken down with `down <service>` come back into the
         // running `up` (REQ-011); otherwise a second `up` stops (REQ-009).
@@ -405,6 +406,11 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             sites,
             gateway: format!("127.0.0.1:{gateway_port}").parse()?,
             token: token.clone(),
+            s3: ctx
+                .compose
+                .local_s3
+                .clone()
+                .expect("a local compose file has local S3 keys"),
         });
         let stop = stop.clone();
         accepters.push(std::thread::spawn(move || {
@@ -567,12 +573,19 @@ fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)
         eprintln!(
             "{}",
             crate::tr!(
-                "  {svc:<16} R2 の S3 互換の口: {base}/cdn-cgi/local/r2/s3(パス形式・地域 auto・鍵 {} / {})\n  {:<16} バケット: {}",
-                "  {svc:<16} R2 S3-compatible API: {base}/cdn-cgi/local/r2/s3 (path style, region auto, keys {} / {})\n  {:<16} buckets: {}",
-                configs::LOCAL_S3_KEY,
-                configs::LOCAL_S3_SECRET,
+                "  {svc:<16} R2 の S3 互換の口: {base}/cdn-cgi/local/r2/s3(パス形式・地域 auto。鍵は Worker の secrets に ${{{key}}}・${{{secret}}} で渡す。値は {})\n  {:<16} バケット: {}",
+                "  {svc:<16} R2 S3-compatible API: {base}/cdn-cgi/local/r2/s3 (path style, region auto; pass the keys to a Worker's secrets as ${{{key}}} and ${{{secret}}}; the values are in {})\n  {:<16} buckets: {}",
+                crate::compose::s3_keys_file(ctx.root()).display(),
                 "",
-                buckets.join(", ")
+                buckets.join(", "),
+                key = format!(
+                    "WC_R2_{}_S3_KEY",
+                    svc.to_ascii_uppercase().replace('-', "_")
+                ),
+                secret = format!(
+                    "WC_R2_{}_S3_SECRET",
+                    svc.to_ascii_uppercase().replace('-', "_")
+                )
             )
         );
         for p in public {
@@ -916,6 +929,22 @@ fn tool_dir_ignored(ctx: &Ctx) -> Result<()> {
         ctx.root(),
         &ctx.tool_dir(),
         crate::tr!("道具の作業フォルダ", "the tool's folder").as_str(),
+    )
+}
+
+/// Keep the local S3 keys this load made (REQ-009), so later loads and
+/// other tools see the same ones. Only the user can read the file.
+fn save_s3_keys(ctx: &Ctx) -> Result<()> {
+    let Some(k) = ctx.compose.local_s3.as_ref().filter(|k| k.fresh) else {
+        return Ok(());
+    };
+    let file = crate::compose::s3_keys_file(ctx.root());
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    write_private(
+        &file,
+        &serde_json::to_string_pretty(&serde_json::json!({ "key": k.key, "secret": k.secret }))?,
     )
 }
 

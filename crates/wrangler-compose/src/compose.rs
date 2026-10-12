@@ -22,8 +22,57 @@ pub struct Compose {
     /// remote environment works only on that account (REQ-006).
     pub env_file: PathBuf,
     pub account_id: Option<String>,
+    /// The local S3-compatible API keys (REQ-009): random per project, kept
+    /// in `.wrangler/compose/local/s3-keys.json`. None for other environments.
+    pub local_s3: Option<S3Keys>,
     /// In dependency order: what a service needs comes before it.
     pub services: Vec<Service>,
+}
+
+/// An access key and its secret for the local S3-compatible API.
+#[derive(Clone, Debug, PartialEq)]
+pub struct S3Keys {
+    pub key: String,
+    pub secret: String,
+    /// Made by this load and not yet written: `up` writes it (nothing else
+    /// does, so `--dry-run` changes nothing).
+    pub fresh: bool,
+}
+
+/// Where the local S3 keys are kept (under the tool's folder, out of git).
+pub fn s3_keys_file(root: &Path) -> PathBuf {
+    root.join(".wrangler")
+        .join("compose")
+        .join("local")
+        .join("s3-keys.json")
+}
+
+/// The kept keys, or new random ones (`fresh`) when none are kept yet.
+fn local_s3_keys(root: &Path) -> Result<S3Keys> {
+    let file = s3_keys_file(root);
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if let (Some(key), Some(secret)) = (v["key"].as_str(), v["secret"].as_str())
+            && !key.is_empty()
+            && !secret.is_empty()
+        {
+            return Ok(S3Keys {
+                key: key.to_string(),
+                secret: secret.to_string(),
+                fresh: false,
+            });
+        }
+    }
+    let random = |n: usize| -> Result<String> {
+        let mut b = vec![0u8; n];
+        getrandom::fill(&mut b).map_err(|e| anyhow::anyhow!("random: {e}"))?;
+        Ok(crate::files::hex(&b))
+    };
+    Ok(S3Keys {
+        key: format!("wc{}", random(10)?),
+        secret: random(32)?,
+        fresh: true,
+    })
 }
 
 #[derive(Debug)]
@@ -231,7 +280,7 @@ impl Lookup for Vars {
     fn get(&self, name: &str) -> Option<String> {
         // The tool's own variables come first (WC_ is the tool's prefix);
         // they are filled in once the services are read (r2_endpoints).
-        if is_r2_var(name) {
+        if is_r2_var(name) || is_r2_key_var(name) {
             return Some(format!("{MARK}{name}{MARK}"));
         }
         std::env::var(name)
@@ -249,12 +298,52 @@ fn is_r2_var(name: &str) -> bool {
     name.len() > "WC_R2__S3".len() && name.starts_with("WC_R2_") && name.ends_with("_S3")
 }
 
+/// `WC_R2_<SERVICE>_S3_KEY` / `_S3_SECRET`: the keys of an r2 service's
+/// S3-compatible API (REQ-004). Secrets, so only in a Worker's `secrets`.
+fn is_r2_key_var(name: &str) -> bool {
+    name.starts_with("WC_R2_")
+        && ((name.ends_with("_S3_KEY") && name.len() > "WC_R2__S3_KEY".len())
+            || (name.ends_with("_S3_SECRET") && name.len() > "WC_R2__S3_SECRET".len()))
+}
+
+fn upper(x: &str) -> String {
+    x.to_ascii_uppercase().replace('-', "_")
+}
+
 fn r2_var_name(service: &str, sub: Option<&str>) -> String {
-    let up = |x: &str| x.to_ascii_uppercase().replace('-', "_");
     match sub {
-        None => format!("WC_R2_{}_S3", up(service)),
-        Some(b) => format!("WC_R2_{}_{}_S3", up(service), up(b)),
+        None => format!("WC_R2_{}_S3", upper(service)),
+        Some(b) => format!("WC_R2_{}_{}_S3", upper(service), upper(b)),
     }
+}
+
+/// The keys of every r2 service: locally the project's own random keys;
+/// remotely the tool cannot make R2 API tokens (Wrangler has no command
+/// for them), so the user gives their own.
+fn r2_keys(c: &Compose, env: &str) -> BTreeMap<String, Result<String, String>> {
+    let mut out = BTreeMap::new();
+    for svc in &c.services {
+        let Kind::R2(_) = &svc.kind else { continue };
+        let names = [
+            format!("WC_R2_{}_S3_KEY", upper(&svc.name)),
+            format!("WC_R2_{}_S3_SECRET", upper(&svc.name)),
+        ];
+        for (i, name) in names.into_iter().enumerate() {
+            let v = match &c.local_s3 {
+                Some(k) if env == "local" => Ok(if i == 0 {
+                    k.key.clone()
+                } else {
+                    k.secret.clone()
+                }),
+                _ => Err(crate::tr!(
+                    "{name} は手元(--env local)でだけ道具が用意します。{env} では R2 の API トークンの鍵を .env.{env} の変数に書き、${{変数:-${{{name}}}}} のように書いてください",
+                    "{name} is provided by the tool only locally (--env local); for {env}, put your R2 API token's keys in variables in .env.{env} and write ${{VAR:-${{{name}}}}}"
+                )),
+            };
+            out.insert(name.clone(), v);
+        }
+    }
+    out
 }
 
 /// The S3-compatible endpoint (path style, the bucket in the path) of every
@@ -302,14 +391,44 @@ fn r2_endpoints(c: &Compose, env: &str) -> BTreeMap<String, Result<String, Strin
     out
 }
 
-/// Tool variables may stand only in a Worker's `environment` values; every
-/// other place is checked here, before the services are read.
-fn tool_vars_outside_environment(v: &Value, at: &str, out: &mut Vec<String>) {
+/// The tool variables in a string (between MARKs).
+fn tool_vars_in(s: &str) -> impl Iterator<Item = &str> {
+    s.split(MARK)
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1)
+        .map(|(_, p)| p)
+}
+
+/// The endpoint variables may stand only in a Worker's `environment`
+/// values, the key variables only in its `secrets`; every other place is
+/// checked here, before the services are read.
+fn misplaced_tool_vars(v: &Value, at: &str, place: Option<&str>, out: &mut Vec<String>) {
     match v {
-        Value::String(s) if s.contains(MARK) => out.push(at.to_string()),
+        Value::String(s) if s.contains(MARK) => {
+            for name in tool_vars_in(s) {
+                let ok = match place {
+                    Some("environment") => !is_r2_key_var(name),
+                    Some("secrets") => is_r2_key_var(name),
+                    _ => false,
+                };
+                if !ok {
+                    out.push(if is_r2_key_var(name) {
+                        crate::tr!(
+                            "  - {at}: {name} は鍵なので、Worker の secrets の値でだけ使えます",
+                            "  - {at}: {name} is a key, so it can only be used in a Worker's secrets values"
+                        )
+                    } else {
+                        crate::tr!(
+                            "  - {at}: {name} は Worker の environment の値でだけ使えます",
+                            "  - {at}: {name} can only be used in a Worker's environment values"
+                        )
+                    });
+                }
+            }
+        }
         Value::Array(a) => {
             for (i, x) in a.iter().enumerate() {
-                tool_vars_outside_environment(x, &format!("{at}[{i}]"), out);
+                misplaced_tool_vars(x, &format!("{at}[{i}]"), None, out);
             }
         }
         Value::Object(o) => {
@@ -319,28 +438,34 @@ fn tool_vars_outside_environment(v: &Value, at: &str, out: &mut Vec<String>) {
                 } else {
                     format!("{at}.{k}")
                 };
-                let is_env = at.starts_with("services.")
+                let place = (at.starts_with("services.")
                     && at.matches('.').count() == 1
-                    && k == "environment";
-                if !is_env {
-                    tool_vars_outside_environment(x, &here, out);
-                }
+                    && (k == "environment" || k == "secrets"))
+                    .then_some(k.as_str())
+                    .or(place);
+                misplaced_tool_vars(x, &here, place, out);
             }
         }
         _ => {}
     }
 }
 
-/// Puts the tool variables' values into the Workers' `environment`.
+/// Puts the tool variables' values into the Workers' `environment` and
+/// `secrets`.
 fn fill_tool_vars(c: &mut Compose, env: &str) -> Vec<String> {
-    let endpoints = r2_endpoints(c, env);
+    let mut endpoints = r2_endpoints(c, env);
+    endpoints.extend(r2_keys(c, env));
     let mut errors = Vec::new();
     for svc in &mut c.services {
         let Kind::Worker(w) = &mut svc.kind else {
             continue;
         };
-        for (k, v) in w.vars.iter_mut() {
-            let Value::String(text) = v else { continue };
+        let vars = w.vars.iter_mut().filter_map(|(k, v)| match v {
+            Value::String(t) => Some(("environment", k, t)),
+            _ => None,
+        });
+        let secrets = w.secrets.iter_mut().map(|(k, t)| ("secrets", k, t));
+        for (place, k, text) in vars.chain(secrets) {
             if !text.contains(MARK) {
                 continue;
             }
@@ -352,15 +477,18 @@ fn fill_tool_vars(c: &mut Compose, env: &str) -> Vec<String> {
                 }
                 match endpoints.get(part) {
                     Some(Ok(e)) => filled.push_str(e),
-                    Some(Err(why)) => errors.push(format!("services.{}.environment.{k}: {why}", svc.name)),
+                    Some(Err(why)) => errors.push(format!("services.{}.{place}.{k}: {why}", svc.name)),
                     None => errors.push(crate::tr!(
-                        "services.{}.environment.{k}: {part} という R2 のバケットはありません(あるもの: {})",
-                        "services.{}.environment.{k}: no R2 bucket for {part} (there are: {})",
+                        "services.{}.{place}.{k}: {part} という R2 の道具の変数はありません(あるもの: {})",
+                        "services.{}.{place}.{k}: no R2 tool variable {part} (there are: {})",
                         svc.name,
-                        if endpoints.is_empty() {
-                            "-".to_string()
-                        } else {
-                            endpoints.keys().cloned().collect::<Vec<_>>().join(", ")
+                        {
+                            let names: Vec<String> = endpoints
+                                .keys()
+                                .filter(|n| is_r2_key_var(n) == is_r2_key_var(part))
+                                .cloned()
+                                .collect();
+                            if names.is_empty() { "-".to_string() } else { names.join(", ") }
                         }
                     )),
                 }
@@ -444,7 +572,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
         bail!(missing_message(&missing, env, &env_file));
     }
     let mut outside = Vec::new();
-    tool_vars_outside_environment(&expanded, "", &mut outside);
+    misplaced_tool_vars(&expanded, "", None, &mut outside);
     if !outside.is_empty() {
         bail!(
             "{}\n{}",
@@ -453,14 +581,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
                 "{} has errors (nothing was done):",
                 file.display()
             ),
-            outside
-                .iter()
-                .map(|at| crate::tr!(
-                    "  - {at}: WC_ で始まる道具の変数は、Worker の environment の値でだけ使えます",
-                    "  - {at}: the tool's WC_ variables can only be used in a Worker's environment values"
-                ))
-                .collect::<Vec<_>>()
-                .join("\n")
+            outside.join("\n")
         );
     }
     let dir_name = root
@@ -488,6 +609,9 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     let mut compose = compose.expect("no errors means a compose file");
     compose.env_file = env_file;
     compose.account_id = account_id;
+    if env == "local" {
+        compose.local_s3 = Some(local_s3_keys(&root)?);
+    }
     let errors = fill_tool_vars(&mut compose, env);
     if !errors.is_empty() {
         bail!(
@@ -924,6 +1048,7 @@ impl Checker {
             context,
             env_file: PathBuf::new(),
             account_id: None,
+            local_s3: None,
             services,
         })
     }
@@ -2276,6 +2401,89 @@ services:
         let yaml = format!("{ONE_WORKER}    routes: [\"${{WC_R2_STORAGE_S3}}\"]\n");
         let err = project(&yaml, None).1.unwrap_err().to_string();
         assert!(err.contains("services.web.routes[0]"), "{err}");
+    }
+
+    const R2_KEYS: &str = r#"
+name: shop
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    secrets:
+      S3_KEY: ${R2_KEY:-${WC_R2_STORAGE_S3_KEY}}
+      S3_SECRET: ${R2_SECRET:-${WC_R2_STORAGE_S3_SECRET}}
+  storage:
+    type: r2
+    ports: ["9050:9050"]
+"#;
+
+    fn web_secrets(c: &Compose) -> &BTreeMap<String, String> {
+        match &c.service("web").unwrap().kind {
+            Kind::Worker(w) => &w.secrets,
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn the_local_s3_keys_are_random_kept_and_given_as_secrets() {
+        let (d, c) = project(R2_KEYS, None);
+        let c = c.unwrap();
+        let k = c.local_s3.clone().unwrap();
+        assert!(k.fresh);
+        assert!(k.key.len() >= 20 && k.secret.len() == 64, "{k:?}");
+        assert_ne!(k.key, "wrangler-compose-local");
+        assert_eq!(web_secrets(&c)["S3_KEY"], k.key);
+        assert_eq!(web_secrets(&c)["S3_SECRET"], k.secret);
+        // Another project gets other keys.
+        let other = project(R2_KEYS, None).1.unwrap().local_s3.unwrap();
+        assert_ne!(other.key, k.key);
+        assert_ne!(other.secret, k.secret);
+        // Kept keys are read back as they are.
+        let file = s3_keys_file(&d.0);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"{"key":"wckept","secret":"s3cret"}"#).unwrap();
+        let c = load(&d.0.join("wrangler-compose.yaml"), "local").unwrap();
+        assert_eq!(
+            c.local_s3,
+            Some(S3Keys {
+                key: "wckept".into(),
+                secret: "s3cret".into(),
+                fresh: false
+            })
+        );
+        assert_eq!(web_secrets(&c)["S3_KEY"], "wckept");
+    }
+
+    #[test]
+    fn the_s3_keys_stay_in_secrets_and_are_not_made_remotely() {
+        let yaml = R2_KEYS.replace("    secrets:", "    environment:");
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(
+            err.contains("services.web.environment.S3_KEY") && err.contains("secrets"),
+            "{err}"
+        );
+
+        let d = tempdir::Dir::new();
+        std::fs::create_dir_all(d.0.join("web")).unwrap();
+        std::fs::write(d.0.join("wrangler-compose.yaml"), R2_KEYS).unwrap();
+        std::fs::write(d.0.join(".env.staging"), "CLOUDFLARE_ACCOUNT_ID=acc\n").unwrap();
+        let err = load(&d.0.join("wrangler-compose.yaml"), "staging")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("services.web.secrets.S3_KEY") && err.contains(".env.staging"),
+            "{err}"
+        );
+        std::fs::write(
+            d.0.join(".env.staging"),
+            "CLOUDFLARE_ACCOUNT_ID=acc\nR2_KEY=k\nR2_SECRET=s\n",
+        )
+        .unwrap();
+        let c = load(&d.0.join("wrangler-compose.yaml"), "staging").unwrap();
+        assert!(c.local_s3.is_none());
+        assert_eq!(web_secrets(&c)["S3_KEY"], "k");
+        assert_eq!(web_secrets(&c)["S3_SECRET"], "s");
     }
 
     #[test]

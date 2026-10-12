@@ -49,7 +49,14 @@ for p in "${pids[@]}"; do wait "$p" || fail "write request"; done
 U=http://127.0.0.1:9000/cdn-cgi/local/r2/s3/storage-files
 curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://localhost:8787' -H 'Access-Control-Request-Method: PUT' | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "allowed preflight"
 curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://elsewhere.test' -H 'Access-Control-Request-Method: PUT' | grep -q ' 403 ' || fail "refused preflight"
-K="wrangler-compose-local:wrangler-compose-local-secret"
+# The S3 keys are random per project, kept where only the user can read them,
+# and never printed (REQ-009). The fixed keys of older versions are refused.
+KF=.wrangler/compose/local/s3-keys.json
+[[ $(stat -f %Lp "$KF" 2>/dev/null || stat -c %a "$KF") == 600 ]] || fail "s3-keys.json mode"
+K="$(sed -n 's/.*"key": *"\([^"]*\)".*/\1/p' "$KF"):$(sed -n 's/.*"secret": *"\([^"]*\)".*/\1/p' "$KF")"
+[[ "$K" == wc*:* ]] || fail "s3 keys: $(cat "$KF")"
+! grep -q "${K#*:}" up.out || fail "s3 secret printed"
+[[ $(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user wrangler-compose-local:wrangler-compose-local-secret "$U/x") == 401 ]] || fail "old fixed keys accepted"
 [[ $(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'hi' -H 'content-type: text/plain' "$U/pub.txt") == 200 ]] || fail "signed put"
 [[ $(curl -fsS -H 'Host: storage-files.localhost:9000' http://127.0.0.1:9000/pub.txt) == hi ]] || fail "public url"
 # A client waiting for 100 Continue still gets the bucket's CORS headers.
@@ -62,7 +69,11 @@ C=(--connect-to 192.0.2.10:9000:127.0.0.1:9000)
 [[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'lan' "$L/lan.txt") == 200 ]] || fail "LAN signed put"
 [[ $(curl -s "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -r 0-1 "$L/lan.txt") == la ]] || fail "LAN signed range get"
 curl -s -i "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -H 'Origin: http://localhost:8787' "$L/lan.txt" | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "LAN CORS"
-[[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user wrangler-compose-local:wrong "$L/lan.txt") == 403 ]] || fail "LAN wrong signature"
+[[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user "${K%%:*}:wrong" "$L/lan.txt") == 403 ]] || fail "LAN wrong signature"
+# A host name is never signed again, even with the right keys: that is what a
+# web page rebinding its name to 127.0.0.1 would send (DES-019).
+N=(--connect-to evil.test:9000:127.0.0.1:9000)
+[[ $(curl -s "${N[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K "http://evil.test:9000/cdn-cgi/local/r2/s3/storage-files/lan.txt") == 403 ]] || fail "host name signed again"
 # R2 event notifications reach the queue consumer (AC-009).
 curl -fsS -o /dev/null "localhost:8788/upload?k=n1"
 for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out && break; sleep 1; done

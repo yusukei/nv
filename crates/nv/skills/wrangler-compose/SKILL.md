@@ -36,6 +36,9 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
   Never print, commit or copy secret values.
 - `${WC_R2_<SERVICE>_S3}` in a Worker's `environment` is the bucket's S3-compatible endpoint, filled in by
   the tool for local and remote; do not write endpoints per environment by hand.
+- `${WC_R2_<SERVICE>_S3_KEY}` / `${WC_R2_<SERVICE>_S3_SECRET}` in a Worker's `secrets` are the local S3 keys
+  (random per project, in `.wrangler/compose/local/s3-keys.json`). Never print or copy them. Remotely the
+  tool cannot make R2 keys: write `${R2_KEY:-${WC_R2_<SERVICE>_S3_KEY}}` with `R2_KEY` in `.env.<env>`.
 - A remote environment needs `CLOUDFLARE_ACCOUNT_ID=<account id>` in its `.env.<env>`; every remote command,
   even `--dry-run`, stops without it or when the environment variable differs. Ask the user for the ID;
   do not pick an account yourself.

@@ -249,6 +249,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>値は環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む</li>
   <li>既定の無い変数が無ければ、何もせずに止まり、無い変数をまとめて示す</li>
   <li>道具が値を決める変数(<code>WC_</code> で始まる)がある。<code>WC_R2_&lt;サービス&gt;_S3</code>(複数形のバケットは <code>WC_R2_&lt;サービス&gt;_&lt;名前&gt;_S3</code>。名前は英大文字にし <code>-</code> は <code>_</code>)は、その R2 のバケットの S3 互換の API の接続先(パス形式でバケット名まで): 手元は <code>http://127.0.0.1:&lt;ports&gt;/cdn-cgi/local/r2/s3/&lt;資源の名前&gt;</code>(r2 のサービスに <code>ports</code> が要る)、リモートは <code>https://&lt;CLOUDFLARE_ACCOUNT_ID&gt;[.&lt;jurisdiction&gt;].r2.cloudflarestorage.com/&lt;実際の名前&gt;</code>。Worker が S3 互換の API で R2 を読み書きするとき、接続先を人が環境ごとに書かずに済むようにする(利用者の決定。2026-10-12)。使えるのは Worker の <code>environment</code> の値だけで、ほかの場所・無いバケット・決まらないとき(手元で <code>ports</code> が無い、リモートでアカウントの ID が無い)は止まる。<code>${X:-${WC_R2_STORAGE_S3}}</code> のように既定にも使える</li>
+  <li><code>WC_R2_&lt;サービス&gt;_S3_KEY</code>・<code>WC_R2_&lt;サービス&gt;_S3_SECRET</code> は、手元の S3 互換の API の鍵。鍵はプロジェクトごとの乱数で、道具が作って <code>.wrangler/compose/local/s3-keys.json</code>(本人だけが読める)に置き、画面には出さない。秘密の値なので、使えるのは Worker の <code>secrets</code> の値だけ。リモートの鍵(R2 の API トークン)は道具が作れない(Wrangler に無い)ので、<code>${R2_KEY:-${WC_R2_STORAGE_S3_KEY}}</code> のように <code>.env.&lt;環境&gt;</code> の変数で渡し、無ければ止まる(利用者の決定 2026-10-12。決まった鍵は誰でも知っているので、LAN に開いた口が誰にでも読み書き・削除される)</li>
   <li><code>.env.&lt;環境&gt;</code> は git に入れない。git の中で <code>.gitignore</code> で外れていない、またはすでに git に入っていれば止まる</li>
 </ul>
 
@@ -294,7 +295,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>手元では、<strong>ふつうのプロダクトを作るのに無いと困る機能</strong>を、本物と同じに提供し、同じに振る舞わせる(動作が違えば手元で開発する意義が薄れるため。利用者の決定)。本物にあって手元の模擬に無いものは、道具のサービス(REQ-017)で補う</li>
   <li>実際のプロダクトでほとんど使わない機能は、手元で再現しない(利用者の決定)。再現しないものは <a href="local-support.html">手元で使えないもの</a>に理由とともに書く</li>
   <li>r2 のサービスに <code>ports</code> を書くと、そのポートが手元の R2 の口になる: S3 互換の API(署名付き URL を含む)は <code>http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/r2/s3</code> で、CORS はバケットの <code>cors</code> どおりに答える。<code>public: true</code> のバケットは <code>http://&lt;バケット名&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で配る(利用者の決定)。<code>ports</code> が無いと CORS と公開の URL は本番と同じにならず、<code>up</code> がそのことを知らせる</li>
-  <li><code>ports</code> にアドレスを書いて外(LAN)にも開いた口(<code>0.0.0.0:9050:9050</code> など)は、ほかの機械(HMD・スマートフォン・別の PC)から、その機械のアドレスで届いた要求にも同じに応える。そのアドレスで作った署名付き URL は通り、署名が合わなければ本物と同じに拒む(利用者の決定 2026-10-12「LAN経由で動作しなければ意味がないです」)</li>
+  <li><code>ports</code> にアドレスを書いて外(LAN)にも開いた口(<code>0.0.0.0:9050:9050</code> など)は、ほかの機械(HMD・スマートフォン・別の PC)から、その機械のアドレスで届いた要求にも同じに応える。そのアドレスで作った署名付き URL は通り、署名が合わなければ本物と同じに拒む(利用者の決定 2026-10-12「LAN経由で動作しなければ意味がないです」)。ほかの機械が届くのは IP アドレスで、名前(DNS の名前)で届いた要求は手元の模擬と同じに拒む(悪いページが自分の名前を 127.0.0.1 に向け直して手元の口を読むのを防ぐ。利用者の決定 2026-10-12)</li>
   <li>R2 は、手元でも本物と同じに使える: バインディングの API、S3 互換の API(署名付き URL を含む)、CORS、公開の URL、イベント通知(Queue へ)。ライフサイクル・オブジェクトのロック・保管の種類は手元では再現しない(リモートには設定を入れる)(利用者の決定)</li>
   <li>D1・KV・Queue は、ふだん使う API(読み書き・一覧・一括処理・移行・送受信・やり直しなど)を手元でも本物と同じに使える。Queue の受け手は、手元でも本物の既定値(1 回にまとめる数 10・待つ時間 5 秒・やり直し 3 回)で動く。D1 の上限の一部・KV の結果整合・Queue の同時処理などは手元で再現しない(<a href="local-support.html">手元で使えないもの</a>に理由とともに書く)(利用者の決定)</li>
   <li>それでも本物と違うところは、<a href="local-support.html">手元で使えないもの</a>に理由とともに書き、無くしていく(REQ-018)</li>

@@ -28,6 +28,8 @@ pub struct Shared {
     /// The gateway's internal port: the simulator's S3 API and the data service.
     pub gateway: SocketAddr,
     pub token: String,
+    /// The project's local S3 keys (REQ-009).
+    pub s3: crate::compose::S3Keys,
 }
 
 /// Accept connections until `stop` is set, then drop the listener so the
@@ -374,8 +376,8 @@ fn handle(mut client: TcpStream, shared: &Shared) -> std::io::Result<()> {
             &head.method,
             &head.path,
             &head.headers,
-            crate::configs::LOCAL_S3_KEY,
-            crate::configs::LOCAL_S3_SECRET,
+            &shared.s3.key,
+            &shared.s3.secret,
         );
         let head = match rewritten {
             Some(r) => Head {
