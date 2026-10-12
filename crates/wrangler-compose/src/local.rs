@@ -1408,10 +1408,46 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
                     "replace the current contents with the backup"
                 ),
             )?;
-            crate::data::drop_targets(c, &plan)?;
         }
-        crate::data::load(c, &plan, from)?;
-        crate::data::apply_migrations(ctx, c)?;
+        // What is there now is kept aside first, so a restore that fails
+        // half-way puts it back instead of leaving half of each.
+        let before = if drop && !full.is_empty() {
+            say(crate::tr!(
+                "失敗したときに戻せるよう、いまの中身を控えます",
+                "keeping the current contents, to put back if this fails"
+            ));
+            let dir =
+                crate::data::backup(ctx, c, Some(Paths::new(ctx).dir.join("before-restore")))?;
+            crate::data::drop_targets(c, &plan)?;
+            Some(dir)
+        } else {
+            None
+        };
+        let loaded =
+            crate::data::load(c, &plan, from).and_then(|_| crate::data::apply_migrations(ctx, c));
+        if let Err(e) = loaded {
+            say(crate::tr!(
+                "戻せませんでした: {e:#}。元の中身に戻します",
+                "the restore failed: {e:#}; putting the previous contents back"
+            ));
+            crate::data::drop_targets(c, &plan)?;
+            if let Some(dir) = &before {
+                let back = crate::data::plan_restore(&ctx.compose, dir)?;
+                crate::data::load(c, &back, dir)?;
+                say(crate::tr!(
+                    "元の中身に戻しました(控え: {})",
+                    "the previous contents are back (kept in {})",
+                    dir.display()
+                ));
+            }
+            bail!(crate::tr!(
+                "控えを戻せませんでした(中身は戻す前のままです)",
+                "the backup was not restored (the contents are as before)"
+            ));
+        }
+        if let Some(dir) = before {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         say(crate::tr!("戻しました", "restored"));
         Ok(())
     })

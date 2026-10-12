@@ -304,6 +304,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
                 missing.insert(Missing {
                     name: var,
                     message: None,
+                    invalid: false,
                 });
             }
         }
@@ -335,19 +336,36 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
 }
 
 fn missing_message(missing: &BTreeSet<Missing>, env: &str, env_file: &Path) -> String {
+    let mut parts = Vec::new();
+    let bad: Vec<String> = missing
+        .iter()
+        .filter(|m| m.invalid)
+        .map(|m| format!("  - {}", m.name))
+        .collect();
+    if !bad.is_empty() {
+        parts.push(crate::tr!(
+            "${{…}} の書き方が違います(何もしていません。$ そのものは $$ と書きます):\n{}",
+            "malformed ${{…}} (nothing was done; write $$ for a literal $):\n{}",
+            bad.join("\n")
+        ));
+    }
     let lines: Vec<String> = missing
         .iter()
+        .filter(|m| !m.invalid)
         .map(|m| match &m.message {
             Some(msg) => format!("  - {}: {msg}", m.name),
             None => format!("  - {}", m.name),
         })
         .collect();
-    crate::tr!(
-        "環境 {env} で、値の無い変数があります(何もしていません)。環境変数か {} に書いてください:\n{}",
-        "environment {env} has variables without a value (nothing was done); set them in the environment or in {}:\n{}",
-        env_file.display(),
-        lines.join("\n")
-    )
+    if !lines.is_empty() {
+        parts.push(crate::tr!(
+            "環境 {env} で、値の無い変数があります(何もしていません)。環境変数か {} に書いてください:\n{}",
+            "environment {env} has variables without a value (nothing was done); set them in the environment or in {}:\n{}",
+            env_file.display(),
+            lines.join("\n")
+        ));
+    }
+    parts.join("\n")
 }
 
 /// `x-` keys are skipped at every level (REQ-001), as docker compose does.

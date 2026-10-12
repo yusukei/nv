@@ -17,6 +17,11 @@ export default {
       await env.FILES.put("meta.txt", "m", { customMetadata: { title: "café 日本" }, httpMetadata: { contentType: "text/plain; charset=utf-8" } });
       await env.FILES.put("d/../e", "dot");
       await env.CACHE.put("ü", "v", { metadata: { note: "日本" } });
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO big(rowid, n, x, t) VALUES (42, 9007199254740993, 1.0, char(1) || 'z')"),
+        env.DB.prepare("INSERT INTO seqd(v) VALUES ('a'), ('b'), ('c')"),
+        env.DB.prepare("DELETE FROM seqd WHERE id = 3"),
+      ]);
       console.log("first line\nsecond line");
       return new Response("seeded");
     }
@@ -27,6 +32,14 @@ export default {
       const e = await env.FILES.get("e");
       const k = await env.CACHE.getWithMetadata("ü");
       return Response.json({ ...r, title: m?.customMetadata?.title, dot: d ? await d.text() : null, e: e ? "present" : null, kv: k.metadata });
+    }
+    if (u.pathname === "/values") {
+      const r = await env.DB.prepare("SELECT CAST(n AS TEXT) AS n, typeof(x) AS x, rowid AS id, t = char(1) || 'z' AS t FROM big").first();
+      return Response.json(r);
+    }
+    if (u.pathname === "/next") {
+      const r = await env.DB.prepare("INSERT INTO seqd(v) VALUES ('d') RETURNING id").first();
+      return Response.json(r);
     }
     if (u.pathname === "/secret") { return new Response(env.STRIPE_KEY); }
     if (u.pathname === "/cron") { return new Response((await env.CACHE.get("cron")) ?? "none"); }

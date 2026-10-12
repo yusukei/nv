@@ -80,7 +80,9 @@
 <h3 id="des-003"><span class="id">DES-003</span>値の展開 <span class="refs">REQ-004・REQ-005</span></h3>
 <ul>
   <li>docker compose の展開の決まり(<code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR-既定}</code>・<code>${VAR:?説明}</code>・<code>${VAR?説明}</code>・<code>$VAR</code>・<code>$$</code>)を自前で書く。展開するのは文字列の値だけで、型の確かめの前に行う</li>
-  <li>値は環境変数 → <code>.env.&lt;環境&gt;</code>。無い変数は集めてからまとめて示す</li>
+  <li>値は環境変数 → <code>.env.&lt;環境&gt;</code>。無い変数は集めてからまとめて示す(シークレットの変数も同じ一覧に入れる)。<code>$5</code>・<code>${}</code>・閉じていない <code>${</code> など書き方の誤りは、docker compose と同じく止める(<code>$</code> そのものは <code>$$</code>)</li>
+  <li><code>x-</code> で始まるキーは、どの階層でも展開の前に取り除く。真偽・数の欄は、展開で文字列になった <code>"true"</code>・<code>"600"</code> も受ける</li>
+  <li><code>.env.&lt;環境&gt;</code> の読み方も docker compose に合わせる: 引用符の無い値は <code> #</code> の前まで、<code>'…'</code> は書いたまま、<code>"…"</code> は複数行にでき <code>\n</code> などを文字にし、閉じた引用符のあとは注釈。引用符の無い値と <code>"…"</code> の中の <code>${VAR}</code> は、環境変数とそれより前に書いた値から展開する</li>
   <li>シークレットの値は、表に出す場面(<code>--dry-run</code> など)で伏せる</li>
 </ul>
 
@@ -118,7 +120,7 @@
   <li>入口は道具のサービス(DES-011)で、<code>ports</code> を持つ Worker へのつながりを持ち、要求の URL のポートで振り分ける。道具は <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(WebSocket もそのまま通る)</li>
   <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)。<code>ports</code> のある r2 のサービスのバケットには、Worker のポートの S3 互換の口は答えない(404。本番の Worker のアドレスにも S3 の口は無い)ので、<code>cors</code> を飛ばして届くことは無い。そのため Worker のポートは 1 つの接続に 1 つの要求(<code>Connection: close</code>)で受け、要求ごとに行き先を確かめる。WebSocket などの upgrade はそのまま通す</li>
   <li><strong>ログ</strong>: 手元では、Worker のログにどの Worker のものかが付かない(実測)。そこで道具がサービスごとに小さな tail の受け手(<code>wc-logs-&lt;サービス&gt;</code>)を置き、受け手が届いたログにサービス名を付けて出す。道具は Wrangler 自身の行(起動・再読み込み・エラー)と受け手の行だけを画面と <code>.wrangler/compose/local/logs/up.log</code> に出し、名前の付かない生の行は出さない</li>
-  <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る</li>
+  <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る。前に見た中身は道具の KV(<code>wc-notify-state</code>)に残し、Queue が受け取ってから進めるので、動かし直しても抜けも重なりも無く、送れなかったものは次の回に送り直す</li>
   <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。git の外)</li>
   <li>動かす前に、移行を <code>d1 migrations apply --local --persist-to …</code> で当てる</li>
   <li>使う Wrangler は 4.149.0 以上(この設計を確かめた版)</li>
@@ -172,8 +174,11 @@
 <h3 id="des-014"><span class="id">DES-014</span>backup・restore <span class="refs">REQ-013</span></h3>
 <ul>
   <li>D1・R2・KV のどれも、データのサービスで、その環境の中から書き出し・読み込む。道具は控えのファイルとの受け渡しだけを行う。D1 もデータのサービスで扱うのは、手元で <code>up</code> が動いている最中に別のプロセスから D1 を書き出す・戻すと、同時の書き込みで失敗する(<code>SQLITE_BUSY</code>。実測)ため</li>
-  <li>控えの形(<code>format: 2</code>。環境によらず同じ): <code>manifest.json</code>(最後に書く。無いフォルダは書きかけ)に <code>project</code>・<code>environment</code>・<code>created</code>・資源ごとの <code>type</code>・<code>key</code>・ファイルと SHA-256。D1 は <code>d1/&lt;key&gt;.jsonl</code>(表の作り・行・索引など。1 行 1 つの JSON。BLOB は base64)、R2 は <code>r2/&lt;key&gt;/</code> にオブジェクトとメタデータ、KV は <code>kv/&lt;key&gt;.jsonl</code>(キー・値(base64)・メタデータ・期限)</li>
+  <li>控えの形(<code>format: 3</code>。環境によらず同じ。2 も読む): <code>manifest.json</code>(最後に書く。無いフォルダは書きかけ)に <code>project</code>・<code>environment</code>・<code>created</code>・資源ごとの <code>type</code>・<code>key</code>・ファイルと SHA-256。D1 は <code>d1/&lt;key&gt;.jsonl</code>(表の作り・行・索引など。1 行 1 つの JSON。BLOB は base64)、R2 は <code>r2/&lt;key&gt;/</code> にオブジェクトとメタデータ、KV は <code>kv/&lt;key&gt;.jsonl</code>(キー・値(base64)・メタデータ・期限)</li>
   <li>戻すときは、資源の名前と型で compose ファイルに照らし、すべてのファイルの SHA-256 を確かめてから始める。D1 は表の作り → 行(50 行ずつ。外部キーは確かめを後回しにする)→ 索引などの順に入れ、最後に控えのあとの移行を当てる(移行の SQL の分け方は Wrangler の <code>unstable_splitSqlQuery</code>)。KV は戻す時点で期限が切れたものを戻さない</li>
+  <li>D1 は、すべての表と AUTOINCREMENT の数え(<code>sqlite_sequence</code>)を 1 つの batch(1 つのトランザクション)で読むので、<code>up</code> が動いている最中の控えも 1 つの時点のものになる。生成列は書き出さない(入れるときに計算し直される)。整数の主キーを持たない表は、隠れた rowid も残す</li>
+  <li>JSON では正しく運べない値(2^53 を超える整数、整数に見える実数・無限大、印の文字で始まる文字列)は、印(文字コード 1)を付けた文字列で書き、戻すときに <code>CAST</code> で元の型に戻す</li>
+  <li><code>restore --drop</code> は消す前にいまの中身を <code>.wrangler/compose/&lt;環境&gt;/before-restore/</code> に控え、途中で失敗すれば消して控えを戻す(成功すれば控えは消す)。空の先への <code>restore</code> が失敗したときは空に戻す</li>
   <li>D1 の仮想表(FTS など)は控えられない(止まって示す)</li>
   <li>手元で <code>up</code> が動いていなければ、操作の間だけ入口とデータのサービスだけの実行環境を立てる</li>
 </ul>

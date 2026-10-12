@@ -178,7 +178,14 @@ impl Head {
 
 /// Read until the end of the head; returns it and every byte read.
 fn read_head(stream: &mut TcpStream) -> std::io::Result<Option<(Vec<u8>, usize)>> {
-    let mut buf = Vec::new();
+    read_head_after(stream, Vec::new())
+}
+
+/// The same, starting with bytes already read.
+fn read_head_after(
+    stream: &mut TcpStream,
+    mut buf: Vec<u8>,
+) -> std::io::Result<Option<(Vec<u8>, usize)>> {
     let mut chunk = [0u8; 8192];
     loop {
         if let Some(i) = find(&buf, b"\r\n\r\n") {
@@ -380,9 +387,19 @@ fn proxy_s3(
     std::thread::spawn(move || {
         let _ = std::io::copy(&mut c_read, &mut u_write);
     });
-    let Some((rbuf, rlen)) = read_head(&mut up)? else {
+    let Some((mut rbuf, mut rlen)) = read_head(&mut up)? else {
         return respond(&mut client, 502, &[], b"no answer from the local R2");
     };
+    // Interim answers (100 Continue for `Expect: 100-continue`) go through
+    // as they are; the final answer is the one that gets the CORS headers.
+    while status_line(&rbuf).starts_with('1') {
+        client.write_all(&rbuf[..rlen])?;
+        let rest = rbuf[rlen..].to_vec();
+        let Some((b, l)) = read_head_after(&mut up, rest)? else {
+            return respond(&mut client, 502, &[], b"no answer from the local R2");
+        };
+        (rbuf, rlen) = (b, l);
+    }
     let Some(rhead) = parse(&rbuf, rlen, false) else {
         return respond(&mut client, 502, &[], b"bad answer from the local R2");
     };

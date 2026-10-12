@@ -210,7 +210,8 @@ pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
                         let q = format!("Q_{}", producers.len());
                         producers.push(json!({ "binding": q, "queue": n.queue }));
                         notify.push(json!({ "bucket": b, "name": r.key, "queue": q,
-                            "events": n.events, "prefix": n.prefix, "suffix": n.suffix }));
+                            "queue_key": n.queue, "events": n.events,
+                            "prefix": n.prefix, "suffix": n.suffix }));
                     }
                 }
             }
@@ -239,9 +240,10 @@ pub fn data_service(c: &Compose, dir: &Path) -> Result<Value> {
     if !r2.is_empty() {
         cfg["r2_buckets"] = json!(r2);
     }
-    if !kv.is_empty() {
-        cfg["kv_namespaces"] = json!(kv);
-    }
+    // The tool's own namespace for R2 notifications (no compose resource
+    // can be named like it: wc- names are the tool's).
+    kv.push(json!({ "binding": "WC_STATE", "id": "wc-notify-state" }));
+    cfg["kv_namespaces"] = json!(kv);
     Ok(cfg)
 }
 
@@ -338,13 +340,16 @@ const json = (v, status = 200) => Response.json(v, { status });
 // second; each bucket with notifications is compared with the last look and
 // the differences go to the queue in Cloudflare's message format. Creates
 // cannot be told apart from outside, so they are all reported as PutObject.
+// The last look of each rule is kept in WC_STATE (a KV namespace of the
+// tool's), so a restart neither loses nor repeats changes, and it moves on
+// only after the queue took the messages (a failed send is tried again).
 const seen = new Map();
 async function listAll(bucket) {
   const out = new Map();
   let cursor;
   do {
     const r = await bucket.list({ cursor });
-    for (const o of r.objects) out.set(o.key, o);
+    for (const o of r.objects) out.set(o.key, { etag: o.etag, uploaded: o.uploaded.getTime(), size: o.size });
     cursor = r.truncated ? r.cursor : undefined;
   } while (cursor);
   return out;
@@ -352,29 +357,45 @@ async function listAll(bucket) {
 async function tick(env) {
   let sent = 0;
   for (const n of env.WC_NOTIFY || []) {
+    const id = `${n.name}|${n.queue_key}|${n.events.join(",")}|${n.prefix || ""}|${n.suffix || ""}`;
     const now = await listAll(env[n.bucket]);
-    const before = seen.get(n.bucket + n.queue);
-    seen.set(n.bucket + n.queue, now);
-    if (!before) continue;
+    const text = JSON.stringify([...now]);
+    let before = seen.get(id);
+    if (!before) {
+      const saved = await env.WC_STATE.get(id);
+      if (saved === null) {
+        // First look ever: nothing to compare with yet.
+        await env.WC_STATE.put(id, text);
+        seen.set(id, { map: now, text });
+        continue;
+      }
+      before = { map: new Map(JSON.parse(saved)), text: saved };
+    }
+    if (before.text === text) {
+      seen.set(id, before);
+      continue;
+    }
     const match = (k) => (!n.prefix || k.startsWith(n.prefix)) && (!n.suffix || k.endsWith(n.suffix));
     const msgs = [];
     const eventTime = new Date().toISOString();
     if (n.events.includes("object-create")) {
       for (const [k, o] of now) {
-        const b = before.get(k);
-        if ((!b || b.etag !== o.etag || b.uploaded.getTime() !== o.uploaded.getTime()) && match(k)) {
+        const b = before.map.get(k);
+        if ((!b || b.etag !== o.etag || b.uploaded !== o.uploaded) && match(k)) {
           msgs.push({ account: "local", action: "PutObject", bucket: n.name, object: { key: k, size: o.size, eTag: o.etag }, eventTime });
         }
       }
     }
     if (n.events.includes("object-delete")) {
-      for (const k of before.keys()) {
+      for (const k of before.map.keys()) {
         if (!now.has(k) && match(k)) msgs.push({ account: "local", action: "DeleteObject", bucket: n.name, object: { key: k }, eventTime });
       }
     }
     for (let i = 0; i < msgs.length; i += 100) {
       await env[n.queue].sendBatch(msgs.slice(i, i + 100).map((body) => ({ body })));
     }
+    await env.WC_STATE.put(id, text);
+    seen.set(id, { map: now, text });
     sent += msgs.length;
   }
   return sent;
@@ -406,6 +427,11 @@ export default {
         if (op === "batch") {
           await b.batch(body.statements.map((s) => b.prepare(s.sql).bind(...(s.params || []).map(inp))));
           return json({ ok: true });
+        }
+        if (op === "snapshot") {
+          // One batch is one transaction: every table read at the same moment.
+          const rs = await b.batch(body.statements.map((s) => b.prepare(s.sql).bind(...(s.params || []).map(inp))));
+          return json({ results: rs.map((r) => (r.results || []).map((row) => Object.values(row).map(out))) });
         }
         if (op === "exec") {
           await b.exec(body.sql);

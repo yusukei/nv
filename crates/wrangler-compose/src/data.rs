@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const MANIFEST: &str = "manifest.json";
-const FORMAT: u64 = 2;
+/// 3: D1 values that JSON cannot carry are marked (`tagged`), hidden rowids
+/// and AUTOINCREMENT counters are kept. 2 (without those) is still read.
+const FORMAT: u64 = 3;
 
 fn say(msg: String) {
     eprintln!("wrangler-compose: {msg}");
@@ -132,6 +134,24 @@ impl Client {
     }
 
     /// Statements run as one transaction.
+    /// Run read statements in one transaction; rows of each, in order.
+    pub fn snapshot(&self, db: &str, sqls: &[String]) -> Result<Vec<Vec<Vec<Value>>>> {
+        let st: Vec<Value> = sqls.iter().map(|s| json!({ "sql": s })).collect();
+        let v = self.post(&format!("d1/{db}/snapshot"), &json!({ "statements": st }))?;
+        Ok(v["results"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|rows| {
+                rows.as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_array().cloned())
+                    .collect()
+            })
+            .collect())
+    }
+
     pub fn batch(&self, db: &str, statements: Vec<(String, Vec<Value>)>) -> Result<()> {
         if statements.is_empty() {
             return Ok(());
@@ -402,6 +422,89 @@ fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// How one table is read for a backup.
+struct TablePlan {
+    name: String,
+    /// Column names as written to the backup (`rowid` first when the table
+    /// has a hidden rowid worth keeping).
+    cols: Vec<String>,
+    select: String,
+}
+
+/// A value the backup's JSON could not carry exactly is written as text
+/// with a mark (char 1): integers beyond 2^53 (`i:`), reals that JSON
+/// would turn into integers or null (`r:`), and text that starts with the
+/// mark itself (`t:`). Restore turns them back.
+fn tagged(col: &str, alias: &str) -> String {
+    format!(
+        "CASE WHEN typeof({c}) = 'integer' AND ({c} > 9007199254740991 OR {c} < -9007199254740991) THEN char(1) || 'i:' || {c} \
+         WHEN typeof({c}) = 'real' AND ({c} = CAST({c} AS INTEGER) OR {c} > 1.7976931348623157e308 OR {c} < -1.7976931348623157e308) THEN char(1) || 'r:' || printf('%!.17g', {c}) \
+         WHEN typeof({c}) = 'text' AND substr({c}, 1, 1) = char(1) THEN char(1) || 't:' || {c} \
+         ELSE {c} END AS \"{alias}\"",
+        c = col
+    )
+}
+
+fn table_plan(client: &Client, db: &str, name: &str, sql: &str) -> Result<TablePlan> {
+    // Stored columns only: generated ones are computed again on insert.
+    let (_, info) = client.query(
+        db,
+        "SELECT name, type, pk FROM pragma_table_xinfo(?) WHERE hidden = 0",
+        vec![json!(name)],
+    )?;
+    let names: Vec<String> = info
+        .iter()
+        .filter_map(|r| r.first().and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let pks: Vec<&Vec<Value>> = info
+        .iter()
+        .filter(|r| r.get(2).and_then(Value::as_i64).unwrap_or(0) > 0)
+        .collect();
+    let without_rowid = sql.to_uppercase().contains("WITHOUT ROWID");
+    let alias = pks.len() == 1
+        && pks[0]
+            .get(1)
+            .and_then(Value::as_str)
+            .is_some_and(|t| t.eq_ignore_ascii_case("INTEGER"));
+    // The hidden rowid (kept so rows keep their numbers), under a name no
+    // real column uses.
+    let rowid = (!without_rowid && !alias)
+        .then(|| {
+            ["rowid", "_rowid_", "oid"]
+                .into_iter()
+                .find(|r| !names.iter().any(|n| n.eq_ignore_ascii_case(r)))
+        })
+        .flatten();
+    let mut cols = Vec::new();
+    let mut exprs = Vec::new();
+    if let Some(r) = rowid {
+        cols.push(r.to_string());
+        exprs.push(format!("{r} AS \"c0\""));
+    }
+    for n in &names {
+        exprs.push(tagged(&quote(n), &format!("c{}", exprs.len())));
+        cols.push(n.clone());
+    }
+    let order = match rowid {
+        Some(r) => format!(" ORDER BY {r}"),
+        None if without_rowid && !pks.is_empty() => {
+            let mut p = pks.clone();
+            p.sort_by_key(|r| r.get(2).and_then(Value::as_i64).unwrap_or(0));
+            let keys: Vec<String> = p
+                .iter()
+                .filter_map(|r| r.first().and_then(Value::as_str).map(quote))
+                .collect();
+            format!(" ORDER BY {}", keys.join(", "))
+        }
+        None => String::new(),
+    };
+    Ok(TablePlan {
+        name: name.to_string(),
+        cols,
+        select: format!("SELECT {} FROM {}{order}", exprs.join(", "), quote(name)),
+    })
+}
+
 fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
     let objects = d1_objects(client, db)?;
     if let Some((_, name, _)) = objects.iter().find(|(t, _, sql)| {
@@ -415,39 +518,46 @@ fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
             "D1 {db}: table {name} is a virtual table (FTS etc.), which cannot be backed up"
         ));
     }
+    let mut plans = Vec::new();
+    for (_, name, sql) in objects.iter().filter(|(t, _, _)| t == "table") {
+        plans.push(table_plan(
+            client,
+            db,
+            name,
+            sql.as_deref().unwrap_or_default(),
+        )?);
+    }
+    let has_seq = !client
+        .query(
+            db,
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'",
+            vec![],
+        )?
+        .1
+        .is_empty();
+    // Every table (and the AUTOINCREMENT counters) in one read, so a backup
+    // taken while `up` runs is one moment of the database.
+    let mut sqls: Vec<String> = plans.iter().map(|p| p.select.clone()).collect();
+    if has_seq {
+        sqls.push("SELECT name AS \"c0\", seq AS \"c1\" FROM sqlite_sequence".to_string());
+    }
+    let results = client.snapshot(db, &sqls)?;
     let mut out = BufWriter::new(File::create(dest)?);
     let mut rows_written = 0u64;
-    for (_, name, sql) in objects.iter().filter(|(t, _, _)| t == "table") {
+    for ((plan, (_, _, sql)), rows) in plans
+        .iter()
+        .zip(objects.iter().filter(|(t, _, _)| t == "table"))
+        .zip(&results)
+    {
         writeln!(out, "{}", json!({ "schema": sql }))?;
-        // Stored columns only: generated ones are computed again on insert.
-        let (_, cols) = client.query(
-            db,
-            "SELECT name FROM pragma_table_xinfo(?) WHERE hidden = 0",
-            vec![json!(name)],
-        )?;
-        let cols: Vec<String> = cols
-            .iter()
-            .filter_map(|r| r.first().and_then(Value::as_str).map(quote))
-            .collect();
-        let mut offset = 0usize;
-        loop {
-            let (cols, rows) = client.query(
-                db,
-                &format!(
-                    "SELECT {} FROM {} LIMIT 500 OFFSET {offset}",
-                    cols.join(", "),
-                    quote(name)
-                ),
-                vec![],
-            )?;
-            for r in &rows {
-                writeln!(out, "{}", json!({ "t": name, "c": cols, "r": r }))?;
-            }
-            rows_written += rows.len() as u64;
-            if rows.len() < 500 {
-                break;
-            }
-            offset += 500;
+        for r in rows {
+            writeln!(out, "{}", json!({ "t": plan.name, "c": plan.cols, "r": r }))?;
+        }
+        rows_written += rows.len() as u64;
+    }
+    if has_seq && let Some(seq) = results.get(plans.len()) {
+        for r in seq {
+            writeln!(out, "{}", json!({ "seq": r.first(), "n": r.get(1) }))?;
         }
     }
     for (_, _, sql) in objects
@@ -458,6 +568,28 @@ fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
     }
     out.flush()?;
     Ok(rows_written)
+}
+
+/// A backed-up value as an insert placeholder and its parameter (see
+/// `tagged`).
+fn untag(v: &Value) -> (&'static str, Value) {
+    let Some(s) = v.as_str().and_then(|s| s.strip_prefix('\u{1}')) else {
+        return ("?", v.clone());
+    };
+    if let Some(n) = s.strip_prefix("i:") {
+        ("CAST(? AS INTEGER)", json!(n))
+    } else if let Some(r) = s.strip_prefix("r:") {
+        let r = match r {
+            "Inf" => "9e999",
+            "-Inf" => "-9e999",
+            other => other,
+        };
+        ("CAST(? AS REAL)", json!(r))
+    } else if let Some(t) = s.strip_prefix("t:") {
+        ("?", json!(t))
+    } else {
+        ("?", v.clone())
+    }
 }
 
 fn drop_d1(client: &Client, db: &str) -> Result<()> {
@@ -479,6 +611,7 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
     //    in the file; note where each table's rows are.
     let mut schema = Vec::new();
     let mut post = Vec::new();
+    let mut seq = Vec::new();
     let mut spans: Vec<(String, u64, u64)> = Vec::new();
     let mut reader = BufReader::new(File::open(src)?);
     let mut pos = 0u64;
@@ -494,6 +627,16 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
             schema.push((s.to_string(), vec![]));
         } else if let Some(s) = v["post"].as_str() {
             post.push((s.to_string(), vec![]));
+        } else if let Some(name) = v.get("seq").filter(|x| !x.is_null()) {
+            // AUTOINCREMENT counters, so new rows never reuse old numbers.
+            seq.push((
+                "DELETE FROM sqlite_sequence WHERE name = ?".to_string(),
+                vec![name.clone()],
+            ));
+            seq.push((
+                "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)".to_string(),
+                vec![name.clone(), v["n"].clone()],
+            ));
         } else if let Some(t) = v["t"].as_str() {
             match spans.last_mut() {
                 Some((name, _, end)) if name == t => *end = pos + n,
@@ -533,13 +676,15 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
                     .flatten()
                     .filter_map(|c| c.as_str().map(quote))
                     .collect();
-                let marks = vec!["?"; cols.len()].join(", ");
+                let (marks, params): (Vec<&str>, Vec<Value>) =
+                    v["r"].as_array().into_iter().flatten().map(untag).unzip();
                 let sql = format!(
-                    "INSERT INTO {} ({}) VALUES ({marks})",
+                    "INSERT INTO {} ({}) VALUES ({})",
                     quote(&table),
-                    cols.join(", ")
+                    cols.join(", "),
+                    marks.join(", ")
                 );
-                pending.push((sql, v["r"].as_array().cloned().unwrap_or_default()));
+                pending.push((sql, params));
                 rows += 1;
                 if pending.len() >= 50 {
                     flush(&mut pending)?;
@@ -549,7 +694,8 @@ fn load_d1(client: &Client, db: &str, src: &Path) -> Result<u64> {
         flush(&mut pending)?;
     }
 
-    // 3. Indexes, triggers and views last.
+    // 3. Counters, then indexes, triggers and views.
+    client.batch(db, seq)?;
     client.batch(db, post)?;
     Ok(rows)
 }
@@ -860,7 +1006,7 @@ pub fn read_manifest(dir: &Path) -> Result<Value> {
     }
     let v: Value = serde_json::from_slice(&fs::read(&path)?)
         .with_context(|| crate::tr!("{} が壊れています", "{} is damaged", path.display()))?;
-    if v["format"].as_u64() != Some(FORMAT) {
+    if !matches!(v["format"].as_u64(), Some(2..=FORMAT)) {
         bail!(crate::tr!(
             "{} はこの版の wrangler-compose では読めない形です",
             "{} has a format this version of wrangler-compose cannot read",

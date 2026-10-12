@@ -305,6 +305,17 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
             })?,
     };
     cfg.insert("main".into(), json!(main));
+    // Relative alias targets are relative to the Worker folder's config.
+    if let Some(Value::Object(a)) = cfg.get_mut("alias") {
+        for v in a.values_mut() {
+            if let Some(p) = v
+                .as_str()
+                .filter(|p| p.starts_with("./") || p.starts_with("../"))
+            {
+                *v = json!(w.build.join(p));
+            }
+        }
+    }
     for key in ["base_dir", "tsconfig"] {
         if let Some(p) = cfg.get(key).and_then(Value::as_str) {
             let abs = w.build.join(p);
@@ -318,9 +329,20 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
             .map(|c| w.build.join(c))
             .unwrap_or_else(|| w.build.clone());
         b.insert("cwd".into(), json!(cwd));
-        if let Some(wd) = b.get("watch_dir").and_then(Value::as_str) {
-            let abs = w.build.join(wd);
-            b.insert("watch_dir".into(), json!(abs));
+        match b.get("watch_dir") {
+            Some(Value::String(wd)) => {
+                let abs = w.build.join(wd);
+                b.insert("watch_dir".into(), json!(abs));
+            }
+            Some(Value::Array(list)) => {
+                let abs: Vec<Value> = list
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|wd| json!(w.build.join(wd)))
+                    .collect();
+                b.insert("watch_dir".into(), json!(abs));
+            }
+            _ => {}
         }
     }
     cfg.remove("$schema");

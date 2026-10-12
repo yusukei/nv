@@ -12,6 +12,8 @@ git init -q . # .env.local and backups must be ignored by git (AC-004)
 echo 'STRIPE_KEY=sk_test_local' > .env.local
 "$BIN/nv" run npm install --no-audit --no-fund >/dev/null
 
+# Whatever happens, nothing is left running.
+trap '"$WC" --env local down >/dev/null 2>&1 || true' EXIT
 fail() { echo "FAIL: $*"; tail -40 up.out || true; "$WC" --env local down >/dev/null 2>&1 || true; exit 1; }
 start() {
   "$WC" --env local up > up.out 2>&1 &
@@ -48,6 +50,8 @@ curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://elsewhere.test' -H 'Access-Contr
 K="wrangler-compose-local:wrangler-compose-local-secret"
 [[ $(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'hi' -H 'content-type: text/plain' "$U/pub.txt") == 200 ]] || fail "signed put"
 [[ $(curl -fsS -H 'Host: storage-files.localhost:9000' http://127.0.0.1:9000/pub.txt) == hi ]] || fail "public url"
+# A client waiting for 100 Continue still gets the bucket's CORS headers.
+curl -s -i --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'expect' -H 'Expect: 100-continue' -H 'Origin: http://localhost:8787' "$U/e.txt" | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "100-continue"
 # R2 event notifications reach the queue consumer (AC-009).
 curl -fsS -o /dev/null "localhost:8788/upload?k=n1"
 for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out && break; sleep 1; done
@@ -63,6 +67,8 @@ out=$(curl -s --path-as-is -H 'Host: storage-files.localhost:9000' "http://127.0
 [[ $(curl -fsS localhost:8788/seed) == seeded ]] || fail "seed"
 BLOG='{"name":"Ann","slug":"hello","c":1,"title":"café 日本","dot":"dot","e":null,"kv":{"note":"日本"}}'
 [[ $(curl -fsS localhost:8788/blog) == "$BLOG" ]] || fail "blog: $(curl -sS localhost:8788/blog)"
+VALUES='{"n":"9007199254740993","x":"real","id":42,"t":1}'
+[[ $(curl -fsS localhost:8788/values) == "$VALUES" ]] || fail "values: $(curl -sS localhost:8788/values)"
 # --purge of a service whose data another service uses stops first (AC-011).
 if "$WC" --env local down --purge api > purge.out 2>&1; then fail "purge of shared data"; fi
 grep -q 'storage-files (web)' purge.out || fail "purge message: $(cat purge.out)"
@@ -81,6 +87,11 @@ curl -fsS -o /dev/null localhost:8787/ || fail "broken compose stopped the servi
 cp compose.bak wrangler-compose.yaml
 for _ in $(seq 1 120); do [[ $(running) -ge 3 ]] && break; sleep 1; done
 [[ $(running) -ge 3 ]] || fail "restart after fix"
+# Notifications carry on across restarts: nothing repeated, nothing lost.
+curl -fsS -o /dev/null "localhost:8788/remove?k=n1"
+for _ in $(seq 1 30); do grep -q '"action":"DeleteObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out && break; sleep 1; done
+grep -q '"action":"DeleteObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out || fail "delete notification after restart"
+[[ $(grep -c '"action":"PutObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out) == 1 ]] || fail "notification repeated after restart"
 [[ $(curl -fsS localhost:8788/secret) == "$STRIPE_KEY" ]] || fail "secret changed: $(curl -sS localhost:8788/secret)"
 # A dry run says a real up would stop while one runs.
 if "$WC" --env local --dry-run up >/dev/null 2>&1; then fail "dry-run up while running"; fi
@@ -117,5 +128,27 @@ rm -rf .wrangler/compose/local/state
 start
 [[ $(curl -fsS localhost:8788/count) == '{"n":201}' ]] || fail "restored rows"
 [[ $(curl -fsS localhost:8788/blog) == "$BLOG" ]] || fail "restored blog: $(curl -sS localhost:8788/blog)"
+[[ $(curl -fsS localhost:8788/values) == "$VALUES" ]] || fail "restored values: $(curl -sS localhost:8788/values)"
+[[ $(curl -fsS localhost:8788/next) == '{"id":4}' ]] || fail "AUTOINCREMENT after restore: $(curl -sS localhost:8788/next)"
+# A restore that fails half-way puts the previous contents back (Linux:
+# --drop asks to retype the name, given here through a terminal).
+if [[ $(uname) == Linux ]]; then
+  BAD=badbackup && cp -R "$(ls -d backups/local/* | tail -1)" "$BAD"
+  python3 - "$BAD" <<'PY'
+import hashlib, json, sys
+d = sys.argv[1]
+m = json.load(open(f"{d}/manifest.json"))
+e = next(x for x in m["resources"] if x["type"] == "d1")
+lines = open(f"{d}/{e['file']}").read().splitlines()
+row = next(l for l in lines if '"t":"items"' in l)
+open(f"{d}/{e['file']}", "w").write("\n".join(lines + [row]) + "\n")  # a duplicate key
+e["sha256"] = hashlib.sha256(open(f"{d}/{e['file']}", "rb").read()).hexdigest()
+json.dump(m, open(f"{d}/manifest.json", "w"))
+PY
+  if printf 'local\n' | script -qec "$WC --env local restore --drop $BAD" /dev/null > bad.out 2>&1; then fail "bad restore succeeded"; fi
+  grep -q 'previous contents are back' bad.out || fail "no rollback: $(cat bad.out)"
+  [[ $(curl -fsS localhost:8788/count) == '{"n":201}' ]] || fail "rows after rollback"
+  [[ $(curl -fsS localhost:8788/values) == "$VALUES" ]] || fail "values after rollback"
+fi
 "$WC" --env local down
 echo "local smoke test passed"
