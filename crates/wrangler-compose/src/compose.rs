@@ -730,6 +730,14 @@ fn docker_forms(mut v: Value, file: &Path) -> Result<Value> {
                         }
                         o.insert(key.to_string(), Value::Object(m));
                     }
+                    // `NAME:` with no value is an empty value (REQ-002).
+                    Some(Value::Object(m)) if key == "environment" => {
+                        for val in m.values_mut() {
+                            if val.is_null() {
+                                *val = Value::String(String::new());
+                            }
+                        }
+                    }
                     Some(Value::Object(m)) if key == "secrets" => {
                         for (name, val) in m.iter() {
                             if !val.as_str().is_some_and(reads_variable) {
@@ -2285,6 +2293,17 @@ services:
             err.contains("WEB_DOMAIN") && err.contains("STRIPE_KEY"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn an_environment_name_without_a_value_is_empty() {
+        let yaml = format!("{ONE_WORKER}    environment:\n      EMPTY:\n      SET: x\n");
+        let c = project(&yaml, None).1.unwrap();
+        let Kind::Worker(w) = &c.service("web").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(w.vars["EMPTY"], "");
+        assert_eq!(w.vars["SET"], "x");
     }
 
     #[test]

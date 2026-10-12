@@ -103,10 +103,6 @@ pub fn names(c: &Compose, env: &str) -> Result<Names> {
             ));
         }
     }
-    let data = format!("{prefix}wc-data");
-    if let Some(why) = check_name("worker", &data) {
-        bad.push(format!("{data}: {why}"));
-    }
     if !bad.is_empty() {
         bail!(crate::tr!(
             "Cloudflare で使えない名前になります(何もしていません)。短い名前を name: に書いてください(プロジェクトの名前を短くしてもよい):\n  {}",
@@ -117,7 +113,9 @@ pub fn names(c: &Compose, env: &str) -> Result<Names> {
     Ok(Names {
         workers,
         resources,
-        data,
+        // Only looked for, to delete one an older version left (REQ-017):
+        // never deployed, so its length never stops anything.
+        data: format!("{prefix}wc-data"),
     })
 }
 
@@ -448,23 +446,37 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
             ctx.env
         ));
     }
+    // Durable Object classes gone from the compose file: deleted (with
+    // their data) or kept, as the user chooses on the spot (REQ-010).
     let mut dropped_classes: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut kept_classes: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for s in &services {
         if let Kind::Worker(w) = &s.kind {
             let script = &n.workers[&s.name];
             let now = seen.classes.get(script).cloned().unwrap_or_default();
-            let gone: Vec<String> = now
-                .into_iter()
-                .filter(|c| !w.durable_objects.contains(c))
-                .collect();
-            if !gone.is_empty() {
-                asks.push(crate::tr!(
-                    "{}: Durable Object のクラス {} を消します(中身も消えます)",
-                    "{}: Durable Object classes {} will be deleted with their data",
-                    s.name,
-                    gone.join(", ")
-                ));
-                dropped_classes.insert(s.name.clone(), gone);
+            for c in now.into_iter().filter(|c| !w.durable_objects.contains(c)) {
+                let what = crate::tr!(
+                    "{}: Durable Object のクラス {c} が compose ファイルにありません。消すと保存データも消えます。残すなら、コードからもクラスを消さないでください",
+                    "{}: Durable Object class {c} is not in the compose file. Deleting it deletes its data too; to keep it, keep the class in the code as well",
+                    s.name
+                );
+                let delete = if ctx.dry_run {
+                    say(crate::tr!(
+                        "{what}(up のときに、消すか残すかを聞きます)",
+                        "{what} (up asks whether to delete or keep it)"
+                    ));
+                    false
+                } else {
+                    let d = crate::confirm::delete_or_keep(&ctx.env, &what)?;
+                    say(if d {
+                        crate::tr!("{}: クラス {c} を消します", "{}: deleting class {c}", s.name)
+                    } else {
+                        crate::tr!("{}: クラス {c} を残します", "{}: keeping class {c}", s.name)
+                    });
+                    d
+                };
+                let to = if delete { &mut dropped_classes } else { &mut kept_classes };
+                to.entry(s.name.clone()).or_default().push(c);
             }
         }
     }
@@ -593,6 +605,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
                     w,
                     &builts[&s.name],
                     dropped_classes.get(&s.name),
+                    kept_classes.get(&s.name),
                     &mut records,
                 )?;
             }
@@ -1059,6 +1072,7 @@ fn deploy_worker(
     w: &crate::compose::Worker,
     built: &Built,
     dropped: Option<&Vec<String>>,
+    kept: Option<&Vec<String>>,
     records: &mut Value,
 ) -> Result<()> {
     let script = n.workers[&s.name].clone();
@@ -1069,7 +1083,13 @@ fn deploy_worker(
         .filter(|(sc, _)| *sc == script)
         .map(|(_, c)| c.clone())
         .collect();
-    let exports = do_exports(&w.durable_objects, dropped, &legacy);
+    let declared: Vec<String> = w
+        .durable_objects
+        .iter()
+        .chain(kept.into_iter().flatten())
+        .cloned()
+        .collect();
+    let exports = do_exports(&declared, dropped, &legacy);
     let cfg = configs::remote_worker(&s.name, w, built, ids, &cf.account, exports);
     let secrets = &w.secrets;
     let secret_text = serde_json::to_string(&secrets)?;
@@ -1326,6 +1346,15 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         .filter(|r| seen.has(r))
         .collect();
 
+    // R2 buckets cannot be emptied remotely for now, so `--purge` with one
+    // stops before anything, the dry run as well (REQ-014).
+    if let Some(r) = resources.iter().find(|r| r.kind == "r2") {
+        bail!(crate::tr!(
+            "R2 のバケット {} は、いまは --purge で消せません(作り直すまで止めています。何もしていません)",
+            "R2 bucket {} cannot be removed by --purge for now (stopped until it is rebuilt; nothing was done)",
+            r.name
+        ));
+    }
     if workers.is_empty() && resources.is_empty() && !data_too {
         say(crate::tr!(
             "環境 {} に下ろすものはありません",
@@ -1353,23 +1382,9 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
             );
         }
     }
-    // Counts of what goes, read in the environment itself.
-    let client = if resources.is_empty() {
-        None
-    } else {
-        None::<crate::data::Client>
-    };
+    // Names only: the contents are not counted remotely (REQ-011).
     for r in &resources {
-        let count = match (&client, r.kind) {
-            (Some(c), "d1" | "r2" | "kv") => crate::data::count(c, r.kind, &r.key)
-                .ok()
-                .map(|x| crate::data::describe_count(r.kind, &r.name, x)),
-            _ => None,
-        };
-        eprintln!(
-            "  {}",
-            count.unwrap_or_else(|| format!("{} {}", kind_label(r.kind), r.name))
-        );
+        eprintln!("  {} {}", kind_label(r.kind), r.name);
     }
     if data_too {
         eprintln!(
@@ -1403,20 +1418,6 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         },
     )?;
 
-    // R2 buckets must be empty to go.
-    for r in resources.iter().filter(|r| r.kind == "r2") {
-        let Some(c) = client.as_ref() else {
-            bail!(crate::tr!(
-                "バケット {} を空にできません。中身のあるバケットは、いまは --purge で消せません(何もしていません)",
-                "cannot empty bucket {}: a bucket with objects cannot be removed by --purge for now (nothing was done)",
-                r.name
-            ));
-        };
-        act.run(
-            crate::tr!("{} を空にする", "emptying {}", r.name),
-            || crate::data::empty(c, "r2", &r.key),
-        )?;
-    }
     let mut records = read_records(ctx);
     for (s, name) in &workers {
         act.run(

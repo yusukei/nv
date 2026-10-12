@@ -20,7 +20,7 @@ use std::time::Duration;
 
 pub const MANIFEST: &str = "manifest.json";
 /// 3: D1 values that JSON cannot carry are marked (`tagged`), hidden rowids
-/// and AUTOINCREMENT counters are kept. 2 (without those) is still read.
+/// and AUTOINCREMENT counters are kept.
 const FORMAT: u64 = 3;
 
 fn say(msg: String) {
@@ -1006,7 +1006,7 @@ pub fn read_manifest(dir: &Path) -> Result<Value> {
     }
     let v: Value = serde_json::from_slice(&fs::read(&path)?)
         .with_context(|| crate::tr!("{} が壊れています", "{} is damaged", path.display()))?;
-    if !matches!(v["format"].as_u64(), Some(2..=FORMAT)) {
+    if v["format"].as_u64() != Some(FORMAT) {
         bail!(crate::tr!(
             "{} はこの版の wrangler-compose では読めない形です",
             "{} has a format this version of wrangler-compose cannot read",

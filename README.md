@@ -92,11 +92,10 @@ wrangler-compose --env staging --dry-run up   # 何を作り・上げるかを�
 wrangler-compose --env staging up             # 資源を作り、移行を当て、Worker を上げる(初めての環境は打ち直しで確かめる)
 wrangler-compose --env staging ps
 wrangler-compose --env staging logs api
-wrangler-compose --env staging backup         # 控えは環境によらず同じ形。手元へ restore もできる
 wrangler-compose --env staging down
 ```
 
-リモートは本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
+リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
 
 ## 進め方
 

@@ -79,9 +79,16 @@ for line in ["    secrets: [STRIPE_KEY]\n", "    consumes: [jobs]\n", "    durab
     s = s.replace(line, "")
 open("wrangler-compose.yaml", "w").write(s)
 PY
-if wc --env staging up >/dev/null; then fail "class deletion without retype"; fi
+# A class gone from the compose file: deleted or kept, chosen on the spot;
+# without a terminal it stops.
+if wc --env staging up >/dev/null; then fail "class choice without a terminal"; fi
+out=$(printf '\n' | script -qec "$BIN/wrangler-compose --env staging up" /dev/null 2>&1)
+grep -q 'stopped; nothing was changed' <<<"$out" || fail "class choice did not stop: $out"
+out=$(printf 'keep\n' | script -qec "$BIN/wrangler-compose --env staging up" /dev/null 2>&1)
+grep -q 'keeping class Counter' <<<"$out" || fail "class not kept: $out"
+grep -a -q '"state": "deleted"' api.log && fail "kept class deleted"
 out=$(wc_yes --env staging up)
-grep -q 'Durable Object classes Counter will be deleted' <<<"$out" || fail "class deletion not announced"
+grep -q 'deleting class Counter' <<<"$out" || fail "class deletion not announced"
 [[ $(api 'DELETE .*/workers/scripts/shop-staging-api/secrets/STRIPE_KEY') == 1 ]] || fail "secret not deleted"
 [[ $(api 'DELETE .*/queues/.*/consumers/') == 1 ]] || fail "consumer not removed"
 grep -a -q '"Counter": {"type": "durable-object", "state": "deleted"}' api.log || fail "class tombstone"
@@ -119,6 +126,7 @@ wc_yes --env staging down web >/dev/null
 wc --env staging ps | grep -q '^web .*missing' || fail "down web"
 wc --env staging ps | grep -q '^api .*present' || fail "down web took api"
 wc_yes --env staging down >/dev/null
-wc --env staging ps | grep -q '^wc-data .*missing' || fail "data service left"
+# No tool Worker is shown: the remote has none since 0.1.11 (REQ-017).
+if wc --env staging ps | grep -q '^wc-data '; then fail "a data service is shown"; fi
 wc --env staging ps | grep -q '^db .*present' || fail "down deleted data"
 echo "remote smoke test passed"

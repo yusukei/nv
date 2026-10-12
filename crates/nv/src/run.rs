@@ -71,8 +71,13 @@ pub fn project_bins(project: &Project) -> Result<Vec<(String, PathBuf)>> {
     let path = project.lockfile();
     let text = fs::read_to_string(&path)
         .with_context(|| crate::tr!("{} を読めません", "cannot read {}", path.display()))?;
-    let json: Value = serde_json::from_str(&text)
-        .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    let json: Value = serde_json::from_str(&text).with_context(|| {
+        crate::tr!(
+            "{} の JSON が正しくありません",
+            "{} is not valid JSON",
+            path.display()
+        )
+    })?;
     Ok(bins_from_lock(&json, &project.dir))
 }
 
@@ -105,8 +110,13 @@ pub fn bins_from_package_json(pkg_dir: &Path, pkg_name: &str) -> Result<Vec<(Str
     let path = pkg_dir.join("package.json");
     let text = fs::read_to_string(&path)
         .with_context(|| crate::tr!("{} を読めません", "cannot read {}", path.display()))?;
-    let json: Value = serde_json::from_str(&text)
-        .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    let json: Value = serde_json::from_str(&text).with_context(|| {
+        crate::tr!(
+            "{} の JSON が正しくありません",
+            "{} is not valid JSON",
+            path.display()
+        )
+    })?;
     let short = pkg_name.rsplit('/').next().unwrap_or(pkg_name).to_string();
     Ok(match json.get("bin") {
         Some(Value::String(rel)) => vec![(short, pkg_dir.join(rel))],

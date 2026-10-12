@@ -124,6 +124,7 @@
   <li>同じ試験(R2・D1・KV・Queue・Durable Objects の機能を一つずつ使うもの)を、手元と試験用のリモートの環境の両方に流し、結果が同じになる。違う項目は、<a href="local-support.html">手元で使えないもの</a>に理由とともに書かれているものだけ</li>
   <li>r2 のサービスの <code>ports</code> の口で: <code>cors</code> に書いた送り元からの事前確認には許す答えが、ほかの送り元には 403 が返る。署名付きの要求の答えにも、書いた送り元にだけ CORS の見出しが付く。AWS SDK で作った署名付き URL で PUT・GET が通る。<code>public: true</code> のバケットのオブジェクトが <code>http://&lt;バケット名&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で内容の種類つきで返り、公開していないバケットは 404</li>
   <li>r2 のサービスの <code>ports</code> を <code>0.0.0.0</code> にした口に、その PC の LAN のアドレスでつなぐ: そのアドレスで作った署名付き URL の GET(範囲指定を含む)と、見出しで署名した PUT が通る。署名を 1 文字変えた URL・期限の切れた URL・違う鍵は拒まれる(403 か 401)。<code>cors</code> に書いた送り元の <code>Origin</code> を付けた GET には、その送り元の CORS の見出しが付く。<code>localhost</code> からの要求は今までと同じに通る。IP アドレスでなく名前(<code>evil.test</code> など)の <code>Host</code> で届いた要求は、正しい鍵で署名しても 403 で拒まれる</li>
+  <li><code>public: true</code> で <code>public_port</code> を書いたバケットは、r2 の <code>ports</code> が <code>0.0.0.0</code> のとき、ほかの機械から <code>http://&lt;PC の LAN のアドレス&gt;:&lt;public_port&gt;/&lt;キー&gt;</code> で GET できる。<code>public</code> でないバケットは、どのポートからも署名なしでは読めない</li>
   <li>R2 のイベント通知: 通知を設定したバケットにオブジェクトを置くと <code>PutObject</code>、消すと <code>DeleteObject</code> のメッセージが、本物と同じ形で数秒のうちに Queue の受け手に届く</li>
   <li>R2 の試験は、バインディングの API(分割アップロード・条件つき・範囲指定・メタデータを含む)、S3 互換の API(AWS SDK での一覧・書き込み・読み出し・署名付き URL の PUT と GET・署名を変えると拒まれること)、CORS(ブラウザからの署名付き URL での PUT を含む)、公開の URL、イベント通知を含む。ライフサイクル・ロック・保管の種類は、リモートのバケットに設定が入っていることだけを確かめる</li>
   <li>Queue に 25 件送ると、手元でも本物と同じく、受け手に 10 件ずつ(最大 5 秒待って)届く。受け手が失敗し続けると、手元でも本物と同じく 3 回やり直したあとで止まる</li>
@@ -141,6 +142,7 @@
   <li>何も変えずにもう 1 度 <code>up</code> しても何も変わらない。<code>api</code> のコードだけ変えると <code>api</code> だけが展開される</li>
   <li>失敗する移行を足すと、その D1 を使う Worker は展開されず、どこで止まったかが出る</li>
   <li>compose ファイルから消したサービスの Worker は示され、<code>--remove-orphans</code> のときだけ消える。データは消えない</li>
+  <li>compose ファイルから Durable Object のクラスを消して <code>up</code> すると、消す・残す・やめるを選ばせる。環境名を打てば保存データごと消え、<code>keep</code> なら残り、何も打たずに Enter なら何も変えずに止まる。端末が無ければ何も変えずに止まる</li>
 </ul>
 
 <h3 id="ac-011"><span class="id">AC-011</span>down <span class="refs">REQ-011</span></h3>
@@ -167,12 +169,15 @@
 <h3 id="ac-014"><span class="id">AC-014</span>dry-run <span class="refs">REQ-014</span></h3>
 <ul>
   <li><code>--dry-run up</code> のあと、何も変わっていない。作るもの・展開するもの・当てる移行・入れるシークレットの名前・展開した値が出る(シークレットの値は出ない)</li>
-  <li>本番の操作が止まる条件では dry-run も止まる</li>
+  <li>リモートの <code>--dry-run up</code> は、作るもの(+)・変えるもの(~。項目ごとに前と後の値)・消すもの(-)・変わらないもの(=)と、それぞれの数を出す。environment・routes・crons・bindings・バケットの設定・コード・当てる移行の違いが出る。シークレットは名前の増減だけが出る</li>
+  <li>別の PC から同じ環境に <code>--dry-run up</code> を打っても、同じ表示になる(変わっていなければ、すべて「変わらない」)</li>
+  <li>本番の操作がエラーで止まる条件では、dry-run も同じエラーで止まる</li>
 </ul>
 
 <h3 id="ac-015"><span class="id">AC-015</span>安全 <span class="refs">REQ-015</span></h3>
 <ul>
   <li>まだ無い環境への初めての <code>up</code> で、新しく作ることが出て確かめを求められ、「いいえ」なら何もできない</li>
+  <li>初めての環境でも消すものも無いリモートの <code>up</code> は、確かめを求めずに進む(入力を流し込めない CI でも動く)</li>
   <li>どの操作でも、画面・ログ・控えにシークレットの値が出ない(失敗したときも)</li>
 </ul>
 

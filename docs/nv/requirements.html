@@ -42,7 +42,7 @@
 <h1>nv 要求仕様</h1>
 <p class="lead">Node・npm を uv のように扱う道具。</p>
 <p>コマンドの名前は <code>nv</code>(利用者の決定)。uv が Python 本体の取得・版の固定・依存の導入・実行を 1 つのコマンドにまとめているのと同じく、Node について同じことをする。
-利用者とエージェントは <code>nv</code> だけを打ち、<code>node</code>・<code>npm</code>・<code>npx</code> を直接打たない。Windows でも macOS でも同じ動きをする。</p>
+利用者とエージェントは <code>nv</code> だけを打ち、<code>node</code>・<code>npm</code>・<code>npx</code> を直接打たない。Windows・macOS・Linux で同じ動きをする。</p>
 
 <h2 id="commands">コマンド体系</h2>
 <table>
@@ -91,7 +91,7 @@
 <h3 id="req-001"><span class="id">REQ-001</span>Node の版の固定</h3>
 <ul>
   <li>使う Node の版は、プロジェクトの <code>.node-version</code> の 1 か所で決める(fnm など、ほかの道具も読む書式)</li>
-  <li>版は 3 つの数で書く(<code>24</code> や <code>lts</code> のような幅のある書き方は受けない。誰の PC でも同じ版にするため)</li>
+  <li>版は 3 つの数で書く(先頭の <code>v</code> は受ける。fnm などが書く形。<code>24</code> や <code>lts</code> のような幅のある書き方は受けない。誰の PC でも同じ版にするため)</li>
   <li><code>.node-version</code> が無い・書式が違うときは、何もせずに止まり、書き方を示す</li>
 </ul>
 
@@ -108,21 +108,21 @@
 <ul>
   <li><code>nv sync</code> は、Node を揃え(REQ-002)、その版に付いている npm で、プロジェクトの <code>package-lock.json</code> のとおりに依存を入れる(<code>npm ci</code>)</li>
   <li><code>package-lock.json</code> が無ければ、何もせずに止まる(ロックファイルを書き換える導入はしない)</li>
-  <li>nv が動かす npm(<code>nv sync</code>・<code>nv run npm …</code>・<code>nv x</code>)は、キャッシュに <code>~/.nv/cache/npm</code> を使う(利用者の決定)</li>
+  <li>nv が動かす npm(<code>nv sync</code>・<code>nv run</code>・<code>nv x</code>・<code>nv add</code>・<code>nv remove</code>)は、キャッシュに <code>~/.nv/cache/npm</code> を使う(利用者の決定)</li>
 </ul>
 
 <h3 id="req-004"><span class="id">REQ-004</span>run(揃えた環境で動かす)</h3>
 <ul>
   <li><code>nv run &lt;コマンド&gt; [引数…]</code> は、揃えた Node・npm と、プロジェクトの依存に入れた道具(<code>node_modules/.bin</code>)を、利用者の環境にあるほかの Node・npm・道具より優先してコマンドを動かす(<code>nv run node script.js</code>・<code>nv run npm run build</code>・<code>nv run wrangler deploy</code> など)。動かしたコマンドがさらに起こす <code>node</code>・<code>npm</code> も、揃えたものになる</li>
   <li>動かす前に、Node が無い・依存が <code>package-lock.json</code> と合っていなければ、先に揃える(REQ-003)。合っていれば入れ直さない(<code>nv run</code> のたびに依存を入れ直して遅くしない)</li>
-  <li>引数はシェルに解釈させず、そのまま渡す(<code>*</code>・<code>&amp;</code>・<code>|</code> などの記号も文字のまま)。Windows で <code>.cmd</code> などの形のコマンドも、同じ書き方で動く</li>
+  <li>引数はシェルに解釈させず、そのまま渡す(<code>*</code>・<code>&amp;</code>・<code>|</code> などの記号も文字のまま)。Windows で <code>.cmd</code> などの形のコマンドも、同じ書き方で動く(ただし <code>package-lock.json</code> に入口の無い <code>.cmd</code> では、安全に渡せない引数(<code>%</code> など)は渡さずに止まる)</li>
   <li>標準の入出力(標準入力を含む)と終了コードは、動かしたコマンドのものをそのまま返す</li>
 </ul>
 
 <h3 id="req-005"><span class="id">REQ-005</span>x(プロジェクトに入れずに道具を動かす)</h3>
 <ul>
   <li><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code> は、そのパッケージをプロジェクトに入れず、置き場に入れて 1 回動かす(uv の <code>uvx</code> に当たる)</li>
-  <li>版は 3 つの数で書く。同じパッケージと版は、置き場のものを使い回す</li>
+  <li>版は 3 つの数で書く。同じパッケージと版は、同じ Node の版では置き場のものを使い回す</li>
   <li>Node の版は、プロジェクトの <code>.node-version</code>、無ければ <code>--node &lt;版&gt;</code> で決める。どちらも無ければ止まる</li>
 </ul>
 
@@ -142,7 +142,7 @@
 
 <h3 id="req-007"><span class="id">REQ-007</span>利用者の環境に手を出さない</h3>
 <ul>
-  <li>利用者の PATH、シェルの設定、ほかの道具(fnm・Homebrew・グローバルの npm)で入れたものに、何もしない。例外は、利用者が <code>nv install skill</code> / <code>nv uninstall skill</code> を打ったときの、エージェントのスキルの置き場だけ(REQ-008)と、<code>nv self update</code> を打ったときの nv と wrangler-compose の実行ファイルだけ(REQ-010)</li>
+  <li>利用者の PATH、シェルの設定、ほかの道具(fnm・Homebrew・グローバルの npm)で入れたものに、何もしない。例外は、利用者が <code>nv install skill</code> / <code>nv uninstall skill</code> を打ったときの、エージェントのスキルの置き場だけ(REQ-008)と、<code>nv self update</code> を打ったときの nv と wrangler-compose の実行ファイルと、更新が残した古い実行ファイルの片付け(次に nv を起動したときに行う)だけ(REQ-010)</li>
   <li>揃えた Node は、nv が起動する処理の中だけで使う</li>
 </ul>
 
@@ -179,7 +179,7 @@
 
 <h3 id="req-011"><span class="id">REQ-011</span>表示の言語</h3>
 <ul>
-  <li>nv が自分で出すメッセージ(進み具合・結果・エラー)と <code>--help</code> の説明は、OS の言語が日本語なら日本語、それ以外は英語で出す(利用者の決定)</li>
+  <li>nv が自分で出すメッセージ(進み具合・結果・エラー)と <code>--help</code> の説明は、OS の言語が日本語なら日本語、それ以外は英語で出す(利用者の決定)。OS の言語は、ロケールの環境変数(<code>LC_ALL</code>・<code>LC_MESSAGES</code>・<code>LANG</code>。<code>C</code>・<code>POSIX</code> は除く)を先に見て、無ければ OS の設定で決める</li>
   <li>環境変数 <code>NV_LANG</code>(<code>ja</code> / <code>en</code>)があれば、OS の言語より優先する(エージェントが出力を読むときなどに言語を固定できる)</li>
   <li>nv が動かしたコマンド(Node・npm・道具)の出力は、そのまま出す(訳さない)。エージェント用のスキルの中身は英語のまま</li>
 </ul>

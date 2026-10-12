@@ -40,7 +40,7 @@
 
 <h2>境目</h2>
 <ul>
-  <li>wrangler-compose は Node のことを何も知らず、Wrangler を <code>nv run wrangler …</code> で動かす</li>
+  <li>wrangler-compose は Node・npm を自分で取らず、版も持たない。Wrangler と、Wrangler の版を調べる短いスクリプトを <code>nv run wrangler …</code> / <code>nv run node …</code> で動かす</li>
   <li>nv は Cloudflare に触れず、Wrangler を自分で動かさない。wrangler-compose は、一緒に配る実行ファイルとスキルとしてだけ扱う</li>
   <li>2 つは同じフォルダに置き、wrangler-compose は同じフォルダの nv を使う</li>
   <li>どちらも OS ごとの単体の実行ファイルで、1 つのリポジトリの同じ Release から同じ版で配る</li>

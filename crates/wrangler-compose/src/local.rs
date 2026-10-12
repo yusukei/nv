@@ -1467,6 +1467,11 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
             ));
             let dir =
                 crate::data::backup(ctx, c, Some(Paths::new(ctx).dir.join("before-restore")))?;
+            say(crate::tr!(
+                "いまの中身を {} に控えました",
+                "the current contents are kept in {}",
+                dir.display()
+            ));
             crate::data::drop_targets(c, &plan)?;
             Some(dir)
         } else {
@@ -1479,10 +1484,26 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
                 "戻せませんでした: {e:#}。元の中身に戻します",
                 "the restore failed: {e:#}; putting the previous contents back"
             ));
-            crate::data::drop_targets(c, &plan)?;
+            // Putting back can fail too: then say where the previous
+            // contents are and how to restore them by hand.
+            let put_back = crate::data::drop_targets(c, &plan).and_then(|_| match &before {
+                Some(dir) => crate::data::plan_restore(&ctx.compose, dir)
+                    .and_then(|back| crate::data::load(c, &back, dir)),
+                None => Ok(()),
+            });
+            if let Err(e2) = put_back {
+                match &before {
+                    Some(dir) => bail!(crate::tr!(
+                        "元の中身にも戻せませんでした: {e2:#}。元の中身は {} にあります。`wrangler-compose --env {} restore --drop {}` で戻せます",
+                        "putting the previous contents back failed too: {e2:#}. They are in {}; `wrangler-compose --env {} restore --drop {}` restores them",
+                        dir.display(),
+                        ctx.env,
+                        dir.display()
+                    )),
+                    None => return Err(e2),
+                }
+            }
             if let Some(dir) = &before {
-                let back = crate::data::plan_restore(&ctx.compose, dir)?;
-                crate::data::load(c, &back, dir)?;
                 say(crate::tr!(
                     "元の中身に戻しました(控え: {})",
                     "the previous contents are back (kept in {})",
