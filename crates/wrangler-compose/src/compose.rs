@@ -229,10 +229,146 @@ struct Vars(BTreeMap<String, String>);
 
 impl Lookup for Vars {
     fn get(&self, name: &str) -> Option<String> {
+        // The tool's own variables come first (WC_ is the tool's prefix);
+        // they are filled in once the services are read (r2_endpoints).
+        if is_r2_var(name) {
+            return Some(format!("{MARK}{name}{MARK}"));
+        }
         std::env::var(name)
             .ok()
             .or_else(|| self.0.get(name).cloned())
     }
+}
+
+/// Stands for a tool variable until its value is known.
+const MARK: char = '\u{1}';
+
+/// `WC_R2_<SERVICE>[_<BUCKET>]_S3`: the S3-compatible endpoint of a bucket
+/// (REQ-004).
+fn is_r2_var(name: &str) -> bool {
+    name.len() > "WC_R2__S3".len() && name.starts_with("WC_R2_") && name.ends_with("_S3")
+}
+
+fn r2_var_name(service: &str, sub: Option<&str>) -> String {
+    let up = |x: &str| x.to_ascii_uppercase().replace('-', "_");
+    match sub {
+        None => format!("WC_R2_{}_S3", up(service)),
+        Some(b) => format!("WC_R2_{}_{}_S3", up(service), up(b)),
+    }
+}
+
+/// The S3-compatible endpoint (path style, the bucket in the path) of every
+/// bucket: locally the r2 service's own port, remotely
+/// `https://<account>[.<jurisdiction>].r2.cloudflarestorage.com/<actual name>`.
+fn r2_endpoints(c: &Compose, env: &str) -> BTreeMap<String, Result<String, String>> {
+    let mut out = BTreeMap::new();
+    for svc in &c.services {
+        let Kind::R2(list) = &svc.kind else { continue };
+        for r in list {
+            let v = if env == "local" {
+                match svc.ports.first() {
+                    Some(p) => Ok(format!(
+                        "http://127.0.0.1:{}/cdn-cgi/local/r2/s3/{}",
+                        p.port, r.key
+                    )),
+                    None => Err(crate::tr!(
+                        "services.{} に ports を書いてください(手元の S3 互換の口の場所が決まりません)",
+                        "add ports to services.{} (the local S3-compatible API has no fixed place without them)",
+                        svc.name
+                    )),
+                }
+            } else {
+                match &c.account_id {
+                    Some(acct) => {
+                        let name = r
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("{}-{env}-{}", c.name, r.key));
+                        let host = match r.spec.jurisdiction.as_deref() {
+                            Some(j) if j != "default" => format!("{acct}.{j}"),
+                            _ => acct.clone(),
+                        };
+                        Ok(format!("https://{host}.r2.cloudflarestorage.com/{name}"))
+                    }
+                    None => Err(crate::tr!(
+                        ".env.{env} に CLOUDFLARE_ACCOUNT_ID を書いてください(R2 の接続先にアカウントの ID が入ります)",
+                        "write CLOUDFLARE_ACCOUNT_ID in .env.{env} (the R2 endpoint holds the account id)"
+                    )),
+                }
+            };
+            out.insert(r2_var_name(&svc.name, r.sub.as_deref()), v);
+        }
+    }
+    out
+}
+
+/// Tool variables may stand only in a Worker's `environment` values; every
+/// other place is checked here, before the services are read.
+fn tool_vars_outside_environment(v: &Value, at: &str, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) if s.contains(MARK) => out.push(at.to_string()),
+        Value::Array(a) => {
+            for (i, x) in a.iter().enumerate() {
+                tool_vars_outside_environment(x, &format!("{at}[{i}]"), out);
+            }
+        }
+        Value::Object(o) => {
+            for (k, x) in o {
+                let here = if at.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{at}.{k}")
+                };
+                let is_env = at.starts_with("services.")
+                    && at.matches('.').count() == 1
+                    && k == "environment";
+                if !is_env {
+                    tool_vars_outside_environment(x, &here, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Puts the tool variables' values into the Workers' `environment`.
+fn fill_tool_vars(c: &mut Compose, env: &str) -> Vec<String> {
+    let endpoints = r2_endpoints(c, env);
+    let mut errors = Vec::new();
+    for svc in &mut c.services {
+        let Kind::Worker(w) = &mut svc.kind else {
+            continue;
+        };
+        for (k, v) in w.vars.iter_mut() {
+            let Value::String(text) = v else { continue };
+            if !text.contains(MARK) {
+                continue;
+            }
+            let mut filled = String::new();
+            for (i, part) in text.split(MARK).enumerate() {
+                if i % 2 == 0 {
+                    filled.push_str(part);
+                    continue;
+                }
+                match endpoints.get(part) {
+                    Some(Ok(e)) => filled.push_str(e),
+                    Some(Err(why)) => errors.push(format!("services.{}.environment.{k}: {why}", svc.name)),
+                    None => errors.push(crate::tr!(
+                        "services.{}.environment.{k}: {part} という R2 のバケットはありません(あるもの: {})",
+                        "services.{}.environment.{k}: no R2 bucket for {part} (there are: {})",
+                        svc.name,
+                        if endpoints.is_empty() {
+                            "-".to_string()
+                        } else {
+                            endpoints.keys().cloned().collect::<Vec<_>>().join(", ")
+                        }
+                    )),
+                }
+            }
+            *text = filled;
+        }
+    }
+    errors
 }
 
 /// The compose file from `start` upwards.
@@ -307,6 +443,26 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     if !missing.is_empty() {
         bail!(missing_message(&missing, env, &env_file));
     }
+    let mut outside = Vec::new();
+    tool_vars_outside_environment(&expanded, "", &mut outside);
+    if !outside.is_empty() {
+        bail!(
+            "{}\n{}",
+            crate::tr!(
+                "{} に誤りがあります(何もしていません):",
+                "{} has errors (nothing was done):",
+                file.display()
+            ),
+            outside
+                .iter()
+                .map(|at| crate::tr!(
+                    "  - {at}: WC_ で始まる道具の変数は、Worker の environment の値でだけ使えます",
+                    "  - {at}: the tool's WC_ variables can only be used in a Worker's environment values"
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
     let dir_name = root
         .canonicalize()
         .ok()
@@ -332,6 +488,22 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     let mut compose = compose.expect("no errors means a compose file");
     compose.env_file = env_file;
     compose.account_id = account_id;
+    let errors = fill_tool_vars(&mut compose, env);
+    if !errors.is_empty() {
+        bail!(
+            "{}\n{}",
+            crate::tr!(
+                "{} に誤りがあります(何もしていません):",
+                "{} has errors (nothing was done):",
+                file.display()
+            ),
+            errors
+                .iter()
+                .map(|e| format!("  - {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
     Ok(compose)
 }
 
@@ -2020,6 +2192,90 @@ services:
         assert_eq!(w("web").secrets["STRIPE_KEY"], "sk");
         assert_eq!(w("api").vars["MODE"], "dev");
         assert_eq!(w("api").secrets["SIGNING"], "k1");
+    }
+
+    const R2_ENDPOINTS: &str = r#"
+name: shop
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    environment:
+      FILES: ${WC_R2_STORAGE_S3}
+      LOGS: prefix ${WC_R2_ARCHIVE_LOGS_S3}
+      PUBLIC: ${PUBLIC_S3:-${WC_R2_STORAGE_S3}}
+  storage:
+    type: r2
+    ports: ["9050:9050"]
+  archive:
+    type: r2
+    ports: ["9051:9051"]
+    buckets:
+      logs:
+        name: shop-logs
+        jurisdiction: eu
+"#;
+
+    fn web_vars(c: &Compose) -> &Map<String, Value> {
+        match &c.service("web").unwrap().kind {
+            Kind::Worker(w) => &w.vars,
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn the_r2_endpoint_variable_is_the_local_port_or_the_account() {
+        let c = project(R2_ENDPOINTS, None).1.unwrap();
+        let v = web_vars(&c);
+        assert_eq!(
+            v["FILES"],
+            "http://127.0.0.1:9050/cdn-cgi/local/r2/s3/storage"
+        );
+        assert_eq!(
+            v["PUBLIC"],
+            "http://127.0.0.1:9050/cdn-cgi/local/r2/s3/storage"
+        );
+
+        let d = tempdir::Dir::new();
+        std::fs::create_dir_all(d.0.join("web")).unwrap();
+        std::fs::write(d.0.join("wrangler-compose.yaml"), R2_ENDPOINTS).unwrap();
+        std::fs::write(
+            d.0.join(".env.staging"),
+            "CLOUDFLARE_ACCOUNT_ID=acc\nPUBLIC_S3=https://cdn.example\n",
+        )
+        .unwrap();
+        let c = load(&d.0.join("wrangler-compose.yaml"), "staging").unwrap();
+        let v = web_vars(&c);
+        assert_eq!(
+            v["FILES"],
+            "https://acc.r2.cloudflarestorage.com/shop-staging-storage"
+        );
+        assert_eq!(
+            v["LOGS"],
+            "prefix https://acc.eu.r2.cloudflarestorage.com/shop-logs"
+        );
+        assert_eq!(v["PUBLIC"], "https://cdn.example");
+    }
+
+    #[test]
+    fn the_r2_endpoint_variable_stops_where_it_cannot_be_known() {
+        // No ports locally, an unknown bucket, and a place other than environment.
+        let yaml = R2_ENDPOINTS
+            .replace("    ports: [\"9050:9050\"]\n", "")
+            .replace("${WC_R2_ARCHIVE_LOGS_S3}", "${WC_R2_NOPE_S3}");
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(
+            err.contains("services.web.environment.FILES") && err.contains("ports"),
+            "{err}"
+        );
+        assert!(
+            err.contains("WC_R2_NOPE_S3") && err.contains("WC_R2_STORAGE_S3"),
+            "{err}"
+        );
+        let yaml = format!("{ONE_WORKER}    routes: [\"${{WC_R2_STORAGE_S3}}\"]\n");
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(err.contains("services.web.routes[0]"), "{err}");
     }
 
     #[test]

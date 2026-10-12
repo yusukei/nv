@@ -83,6 +83,7 @@
 
 <h3 id="des-003"><span class="id">DES-003</span>値の展開 <span class="refs">REQ-004・REQ-005</span></h3>
 <ul>
+  <li>道具の変数(<code>WC_R2_…_S3</code>)は、展開の時点ではまだ実際の名前が決まらないので、目印の文字で囲んだ仮の値にしておく。サービスを読み終えたあと、Worker の <code>environment</code> の値の中の目印だけを接続先に置き換える。目印が <code>environment</code> の外に残っていれば止める。リモートの実際の名前は DES-004 と同じ決め方(<code>name</code>、無ければ <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>)、アカウントは <code>.env.&lt;環境&gt;</code> の <code>CLOUDFLARE_ACCOUNT_ID</code></li>
   <li>docker compose の展開の決まり(<code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR-既定}</code>・<code>${VAR:?説明}</code>・<code>${VAR?説明}</code>・<code>$VAR</code>・<code>$$</code>)を自前で書く。展開するのは文字列の値だけで、型の確かめの前に行う</li>
   <li>値は環境変数 → <code>.env.&lt;環境&gt;</code>。無い変数は集めてからまとめて示す(シークレットの変数も同じ一覧に入れる)。<code>$5</code>・<code>${}</code>・閉じていない <code>${</code> など書き方の誤りは、docker compose と同じく止める(<code>$</code> そのものは <code>$$</code>)</li>
   <li><code>x-</code> で始まるキーは、どの階層でも展開の前に取り除く。真偽・数の欄は、展開で文字列になった <code>"true"</code>・<code>"600"</code> も受ける</li>

@@ -80,6 +80,7 @@
   <li><code>${WEB_DOMAIN}</code> が <code>--env</code> ごとにその <code>.env.&lt;環境&gt;</code> の値になる。同じ名前の環境変数があればそちらになる</li>
   <li><code>${VAR:-既定}</code>・<code>${VAR:?説明}</code>・<code>$$</code> が docker compose と同じに展開される</li>
   <li>無い変数が 2 つあると、2 つまとめて出て止まる</li>
+  <li><code>environment</code> の <code>${WC_R2_STORAGE_S3}</code> が、手元では <code>http://127.0.0.1:9050/cdn-cgi/local/r2/s3/storage</code>、<code>--env staging</code> では <code>https://&lt;アカウントの ID&gt;.r2.cloudflarestorage.com/&lt;プロジェクト&gt;-staging-storage</code> になる(複数形・<code>name</code>・<code>jurisdiction</code> も実際の名前と管轄に合う)。<code>environment</code> の外に書く・無いバケットを指す・手元で r2 に <code>ports</code> が無いと、場所と理由が出て止まる</li>
   <li>git の中で <code>.env.staging</code> が外れていない・すでに入っていると止まる</li>
 </ul>
 

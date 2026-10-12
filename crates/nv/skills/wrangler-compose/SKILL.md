@@ -34,6 +34,8 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
 - A Worker's non-secret values go in its `environment` and its secrets in its `secrets`, both as in docker
   compose (`NAME: value` or a list). A secret's value must be `${VAR}`; values come from `.env.<env>`.
   Never print, commit or copy secret values.
+- `${WC_R2_<SERVICE>_S3}` in a Worker's `environment` is the bucket's S3-compatible endpoint, filled in by
+  the tool for local and remote; do not write endpoints per environment by hand.
 - A remote environment needs `CLOUDFLARE_ACCOUNT_ID=<account id>` in its `.env.<env>`; every remote command,
   even `--dry-run`, stops without it or when the environment variable differs. Ask the user for the ID;
   do not pick an account yourself.

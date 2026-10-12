@@ -246,6 +246,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>compose ファイルの文字列の中の <code>${VAR}</code> を展開する。書き方は docker compose と同じ: <code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR:?説明}</code>・<code>$$</code></li>
   <li>値は環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む</li>
   <li>既定の無い変数が無ければ、何もせずに止まり、無い変数をまとめて示す</li>
+  <li>道具が値を決める変数(<code>WC_</code> で始まる)がある。<code>WC_R2_&lt;サービス&gt;_S3</code>(複数形のバケットは <code>WC_R2_&lt;サービス&gt;_&lt;名前&gt;_S3</code>。名前は英大文字にし <code>-</code> は <code>_</code>)は、その R2 のバケットの S3 互換の API の接続先(パス形式でバケット名まで): 手元は <code>http://127.0.0.1:&lt;ports&gt;/cdn-cgi/local/r2/s3/&lt;資源の名前&gt;</code>(r2 のサービスに <code>ports</code> が要る)、リモートは <code>https://&lt;CLOUDFLARE_ACCOUNT_ID&gt;[.&lt;jurisdiction&gt;].r2.cloudflarestorage.com/&lt;実際の名前&gt;</code>。Worker が S3 互換の API で R2 を読み書きするとき、接続先を人が環境ごとに書かずに済むようにする(利用者の決定。2026-10-12)。使えるのは Worker の <code>environment</code> の値だけで、ほかの場所・無いバケット・決まらないとき(手元で <code>ports</code> が無い、リモートでアカウントの ID が無い)は止まる。<code>${X:-${WC_R2_STORAGE_S3}}</code> のように既定にも使える</li>
   <li><code>.env.&lt;環境&gt;</code> は git に入れない。git の中で <code>.gitignore</code> で外れていない、またはすでに git に入っていれば止まる</li>
 </ul>
 
