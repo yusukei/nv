@@ -98,6 +98,13 @@ grep -q '^api  *| second line' up.out || fail "multi-line log"
 # Logs carry the service name (AC-012).
 grep -q '^api  *| api handled /' up.out || fail "tagged logs"
 "$WC" --env local ps | grep -q 'running' || fail "ps"
+# down <service> takes only that service down; up brings it back (AC-011).
+"$WC" --env local down web >/dev/null 2>&1 || fail "down web"
+if curl -s -m 2 localhost:8787/ >/dev/null; then fail "web still answers after down web"; fi
+curl -fsS -o /dev/null localhost:8788/count || fail "api stopped with web"
+"$WC" --env local ps | grep -q '^web .* stopped' || fail "ps after down web: $("$WC" --env local ps)"
+"$WC" --env local up web >/dev/null 2>&1 || fail "up web"
+curl -fsS -o /dev/null localhost:8787/shared || fail "web did not come back"
 # A second up refuses; down from elsewhere stops it (AC-009).
 if "$WC" --env local up >/dev/null 2>&1; then fail "second up started"; fi
 "$WC" --env local backup

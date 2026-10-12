@@ -160,7 +160,7 @@
 <ul>
   <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる</li>
   <li>消す前の数え(表・オブジェクト・キーの数)もデータのサービスと Wrangler で行う。打ち直しは 0.1 系のものを引き継ぐ</li>
-  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す。サービスを名前で指すと、そのサービスの資源とつなぐ資源(Durable Object の保存先を含む)だけを空にし、名前に無い Worker もつながる資源があれば、何も止めず何も消さずに止まる</li>
+  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>down web</code> のように名前を付けると、動いている <code>up</code> がその Worker を外して動かし直し、ほかは動き続ける(データのサービスは手元では止めるものが無い)。下ろした Worker は、もう一度 <code>up</code>(<code>up web</code>)を打つと動いている <code>up</code> に戻る。下ろしたものが無いときの 2 つ目の <code>up</code> は止まる。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す。サービスを名前で指すと、そのサービスの資源とつなぐ資源(Durable Object の保存先を含む)だけを空にし、名前に無い Worker もつながる資源があれば、何も止めず何も消さずに止まる</li>
 </ul>
 
 <h3 id="des-013"><span class="id">DES-013</span>ps・logs <span class="refs">REQ-012</span></h3>

@@ -44,6 +44,26 @@ impl Paths {
     fn log(&self) -> PathBuf {
         self.dir.join("logs").join("up.log")
     }
+    /// Workers taken down with `down <service>` while `up` runs.
+    fn stopped(&self) -> PathBuf {
+        self.dir.join("stopped.json")
+    }
+}
+
+fn read_stopped(p: &Paths) -> Vec<String> {
+    std::fs::read_to_string(p.stopped())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn write_stopped(p: &Paths, names: &[String]) -> Result<()> {
+    if names.is_empty() {
+        let _ = std::fs::remove_file(p.stopped());
+        return Ok(());
+    }
+    std::fs::write(p.stopped(), serde_json::to_vec(names)?)?;
+    Ok(())
 }
 
 /// Holds the project's local lock while `up` (or a data operation) runs.
@@ -72,6 +92,35 @@ fn read_record(p: &Paths) -> Option<Value> {
         .and_then(|t| serde_json::from_str(&t).ok())
 }
 
+/// Wait until the running `up` has restarted with the Workers `ok` wants
+/// (or has stopped, when no Worker is left).
+fn wait_for_record(p: &Paths, ok: impl Fn(&[String]) -> bool) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(300) {
+        std::thread::sleep(Duration::from_millis(250));
+        if try_lock(p)?.is_some() {
+            return Ok(());
+        }
+        if let Some(r) = read_record(p)
+            && r["gateway"].as_u64().unwrap_or(0) != 0
+        {
+            let running: Vec<String> = r["services"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s["service"].as_str().map(str::to_string))
+                .collect();
+            if ok(&running) {
+                return Ok(());
+            }
+        }
+    }
+    bail!(crate::tr!(
+        "動いている up が 5 分たっても動き直しません。その端末の出力を見てください",
+        "the running up did not restart within 5 minutes; see its terminal"
+    ))
+}
+
 // ---------------------------------------------------------------- up
 
 pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
@@ -83,6 +132,35 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
     }
     tool_dir_ignored(ctx)?;
     let Some(_lock) = try_lock(&p)? else {
+        // Services taken down with `down <service>` come back into the
+        // running `up` (REQ-011); otherwise a second `up` stops (REQ-009).
+        let stopped = read_stopped(&p);
+        let back: Vec<String> = if names.is_empty() {
+            stopped.clone()
+        } else {
+            let wanted: Vec<String> = ctx
+                .compose
+                .closure(names)?
+                .iter()
+                .map(|s| s.name.clone())
+                .collect();
+            stopped
+                .iter()
+                .filter(|s| wanted.contains(s))
+                .cloned()
+                .collect()
+        };
+        if !back.is_empty() {
+            let rest: Vec<String> = stopped.into_iter().filter(|s| !back.contains(s)).collect();
+            write_stopped(&p, &rest)?;
+            wait_for_record(&p, |running| back.iter().all(|b| running.contains(b)))?;
+            say(crate::tr!(
+                "動いている up に {} を戻しました",
+                "{} is back in the running up",
+                back.join(", ")
+            ));
+            return Ok(());
+        }
         let urls = read_record(&p).map(|r| urls_text(&r)).unwrap_or_default();
         bail!(crate::tr!(
             "このプロジェクトでは、ほかの端末で --env local up が動いています{urls}。止めるには --env local down を打ってください",
@@ -92,9 +170,25 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
     // A restart re-reads the compose file in this process, keeping the lock.
     let mut reopened: Option<Ctx> = None;
     let mut rebuild = rebuild;
+    write_stopped(&p, &[])?;
     loop {
         let c = reopened.as_ref().unwrap_or(ctx);
-        let services = c.compose.closure(names)?;
+        let stopped = read_stopped(&p);
+        let services: Vec<&Service> = c
+            .compose
+            .closure(names)?
+            .into_iter()
+            .filter(|s| !stopped.contains(&s.name))
+            .collect();
+        if !services.iter().any(|s| matches!(s.kind, Kind::Worker(_))) {
+            let _ = std::fs::remove_file(p.record());
+            write_stopped(&p, &[])?;
+            say(crate::tr!(
+                "動かす Worker が無くなったので止めました",
+                "no Worker is left to run, so up stopped"
+            ));
+            return Ok(());
+        }
         notices(&services);
         // Who holds the lock is known from the start, so `down` can stop an
         // `up` that is still building or applying migrations.
@@ -103,7 +197,10 @@ pub fn up(ctx: &Ctx, rebuild: bool, names: &[String]) -> Result<()> {
             &serde_json::to_string_pretty(&record(std::process::id(), 0, "", &[]))?,
         )?;
         let next = match run_once(c, &p, &services, rebuild)? {
-            Stop::Done => return Ok(()),
+            Stop::Done => {
+                write_stopped(&p, &[])?;
+                return Ok(());
+            }
             Stop::Restart => Ctx::open(&ctx.env, false)?,
         };
         reopened = Some(next);
@@ -355,6 +452,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     //    the bundle); restart when the compose file or .env.local changes.
     let compose_files = [ctx.compose.file.clone(), ctx.root().join(".env.local")];
     let mut compose_stamp = stamps(&compose_files);
+    let stopped_then = read_stopped(p);
     let mut seen: BTreeMap<String, Option<SystemTime>> = workers
         .iter()
         .map(|(s, w)| (s.name.clone(), build::newest_change(ctx, &s.name, w)))
@@ -389,6 +487,13 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
                 "Wrangler が止まりました({status})",
                 "Wrangler stopped ({status})"
             ));
+        }
+        if read_stopped(p) != stopped_then {
+            say(crate::tr!(
+                "止めるサービスが変わったので、動かし直します",
+                "the services to run changed; restarting"
+            ));
+            break Stop::Restart;
         }
         let now_stamp = stamps(&compose_files);
         if now_stamp != compose_stamp {
@@ -864,13 +969,6 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
     } else {
         None
     };
-    if !names.is_empty() {
-        // Locally everything runs as one process.
-        say(crate::tr!(
-            "手元ではすべてのサービスが 1 つにまとまって動くので、まとめて止めます",
-            "locally all services run together, so all of them are stopped"
-        ));
-    }
     if purge {
         let state = p.state();
         match &targets {
@@ -916,13 +1014,25 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
             &crate::tr!("手元のデータを消す", "delete the local data"),
         )?;
     } else if ctx.dry_run {
-        say(crate::tr!(
-            "動いている up を止めます。dry-run なので何も変えていません",
-            "would stop the running up; dry run: nothing was changed"
-        ));
+        if names.is_empty() {
+            say(crate::tr!(
+                "動いている up を止めます。dry-run なので何も変えていません",
+                "would stop the running up; dry run: nothing was changed"
+            ));
+        } else {
+            say(crate::tr!(
+                "動いている up から {} を下ろします。dry-run なので何も変えていません",
+                "would take {} out of the running up; dry run: nothing was changed",
+                names.join(", ")
+            ));
+        }
         return Ok(());
     }
-    stop_running(&p)?;
+    if names.is_empty() {
+        stop_running(&p)?;
+    } else {
+        stop_services(ctx, &p, names)?;
+    }
     if !purge {
         return Ok(());
     }
@@ -1030,6 +1140,51 @@ fn purge_targets(
     Ok(targets)
 }
 
+/// Take the named Workers out of the running `up` (the rest keep running);
+/// data services have nothing to stop locally (their data stays).
+fn stop_services(ctx: &Ctx, p: &Paths, names: &[String]) -> Result<()> {
+    let workers: Vec<String> = names
+        .iter()
+        .filter(|n| {
+            matches!(
+                ctx.compose.service(n).map(|s| &s.kind),
+                Some(Kind::Worker(_))
+            )
+        })
+        .cloned()
+        .collect();
+    for n in names.iter().filter(|n| !workers.contains(n)) {
+        say(crate::tr!(
+            "{n} はデータの資源なので、手元では止めるものがありません(データは残ります)",
+            "{n} holds data, so locally there is nothing to stop (the data stays)"
+        ));
+    }
+    if workers.is_empty() {
+        return Ok(());
+    }
+    if try_lock(p)?.is_some() {
+        say(crate::tr!(
+            "--env local up は動いていません",
+            "--env local up is not running"
+        ));
+        return Ok(());
+    }
+    let mut stopped = read_stopped(p);
+    for w in &workers {
+        if !stopped.contains(w) {
+            stopped.push(w.clone());
+        }
+    }
+    write_stopped(p, &stopped)?;
+    wait_for_record(p, |running| !workers.iter().any(|w| running.contains(w)))?;
+    say(crate::tr!(
+        "{} を下ろしました(ほかのサービスは動いています。戻すには up)",
+        "took down {} (the other services keep running; up brings it back)",
+        workers.join(", ")
+    ));
+    Ok(())
+}
+
 /// Stop a running `up` (from another terminal) and wait until it is gone.
 fn stop_running(p: &Paths) -> Result<()> {
     if try_lock(p)?.is_some() {
@@ -1091,7 +1246,12 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
     for s in &ctx.compose.services {
         match &s.kind {
             Kind::Worker(_) => {
-                let state = if running {
+                // Running only when the up runs it (not taken down by name).
+                let listed = rec
+                    .as_ref()
+                    .and_then(|r| r["services"].as_array())
+                    .is_some_and(|l| l.iter().any(|x| x["service"] == s.name.as_str()));
+                let state = if running && listed {
                     crate::tr!("動作中", "running")
                 } else {
                     crate::tr!("停止", "stopped")
@@ -1429,8 +1589,6 @@ fn stamps(files: &[PathBuf]) -> Vec<Option<SystemTime>> {
         .collect()
 }
 
-/// Copy bytes both ways between each accepted connection and the gateway.
-/// Nothing is parsed, so WebSockets and streams pass through unchanged.
 #[cfg(unix)]
 fn own_group(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;
