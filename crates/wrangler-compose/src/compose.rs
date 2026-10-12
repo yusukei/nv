@@ -93,6 +93,21 @@ pub enum Kind {
     Queue(Vec<Resource<()>>),
 }
 
+impl Service {
+    /// The last part of its name on Cloudflare: `name:`, else the service
+    /// name (REQ-006).
+    pub fn cloud_name(&self) -> &str {
+        let explicit = match &self.kind {
+            Kind::Worker(w) => w.name.as_deref(),
+            Kind::D1(l) => l.first().and_then(|r| r.name.as_deref()),
+            Kind::R2(l) => l.first().and_then(|r| r.name.as_deref()),
+            Kind::Kv(l) => l.first().and_then(|r| r.name.as_deref()),
+            Kind::Queue(l) => l.first().and_then(|r| r.name.as_deref()),
+        };
+        explicit.unwrap_or(&self.name)
+    }
+}
+
 impl Kind {
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -128,6 +143,9 @@ pub struct D1 {
 #[derive(Debug, Default)]
 pub struct Bucket {
     pub public: bool,
+    /// A port of its own for the public URL, reached by address from the
+    /// LAN (`http://<address>:<public_port>/<key>`, REQ-009).
+    pub public_port: Option<u16>,
     pub cors: Vec<Cors>,
     pub lifecycle: Vec<Value>,
     pub notifications: Vec<Notification>,
@@ -369,10 +387,9 @@ fn r2_endpoints(c: &Compose, env: &str) -> BTreeMap<String, Result<String, Strin
             } else {
                 match &c.account_id {
                     Some(acct) => {
-                        let name = r
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| format!("{}-{env}-{}", c.name, r.key));
+                        // The name on Cloudflare (REQ-006).
+                        let name =
+                            format!("{}--{env}--{}", c.name, r.name.as_deref().unwrap_or(&r.key));
                         let host = match r.spec.jurisdiction.as_deref() {
                             Some(j) if j != "default" => format!("{acct}.{j}"),
                             _ => acct.clone(),
@@ -834,6 +851,7 @@ const D1_KEYS: &[&str] = &["name", "migrations"];
 const BUCKET_KEYS: &[&str] = &[
     "name",
     "public",
+    "public_port",
     "cors",
     "lifecycle",
     "notifications",
@@ -890,14 +908,26 @@ impl Checker {
                 );
                 String::new()
             }
-            None => dir_name.to_lowercase(),
+            // Required: a folder name differs from PC to PC, and the
+            // project is part of every name on Cloudflare (REQ-001).
+            None => {
+                self.err(
+                    "name",
+                    crate::tr!(
+                        "プロジェクトの名前(一番上の name:)を書いてください",
+                        "write the project name (name: at the top)"
+                    ),
+                );
+                String::new()
+            }
         };
-        if !valid_name(&name) {
+        let _ = dir_name;
+        if !name.is_empty() && (!valid_name(&name) || name.len() < 3) {
             self.err(
                 "name",
                 crate::tr!(
-                    "プロジェクトの名前「{name}」には英小文字・数字・- だけを使ってください(省くとフォルダ名になります)",
-                    "project name \"{name}\" may only use lowercase letters, digits and - (it defaults to the folder name)"
+                    "プロジェクトの名前「{name}」は、英小文字・数字・- の 3 文字以上にしてください(-- と、先頭・末尾の - は使えません)",
+                    "project name \"{name}\" must be 3 or more lowercase letters, digits and - (no --, and no - at either end)"
                 ),
             );
         }
@@ -919,8 +949,8 @@ impl Checker {
                 self.err(
                     &at,
                     crate::tr!(
-                        "サービスの名前には英小文字・数字・- だけを使ってください",
-                        "service names may only use lowercase letters, digits and -"
+                        "サービスの名前には英小文字・数字・- だけを使ってください(-- と、先頭・末尾の - は使えません)",
+                        "service names may only use lowercase letters, digits and - (no --, and no - at either end)"
                     ),
                 );
             }
@@ -1030,11 +1060,27 @@ impl Checker {
         }
         let mut used: BTreeMap<u16, String> = BTreeMap::new();
         for s in &services {
-            let ports = match &s.kind {
-                Kind::Worker(w) => &w.ports,
-                _ => &s.ports,
+            let mut ports: Vec<Port> = match &s.kind {
+                Kind::Worker(w) => w.ports.clone(),
+                _ => s.ports.clone(),
             };
-            for p in ports {
+            // The public port listens on the r2 service's address.
+            if let Kind::R2(list) = &s.kind {
+                for b in list {
+                    let Some(pp) = b.spec.public_port else { continue };
+                    match s.ports.first() {
+                        Some(base) => ports.push(Port { ip: base.ip.clone(), port: pp }),
+                        None => self.err(
+                            &format!("services.{}.public_port", s.name),
+                            crate::tr!(
+                                "public_port には、この r2 のサービスの ports も要ります(待ち受けるアドレスを ports から取ります)",
+                                "public_port needs this r2 service's ports too (the address to listen on comes from ports)"
+                            ),
+                        ),
+                    }
+                }
+            }
+            for p in &ports {
                 if let Some(other) = used.insert(p.port, s.name.clone()) {
                     self.err(
                         &format!("services.{}.ports", s.name),
@@ -1064,6 +1110,20 @@ impl Checker {
     /// Checks that need every service: names of resources, Durable Object
     /// classes, queue consumers.
     fn across(&mut self, services: &[Service]) {
+        // Names on Cloudflare: `name:`, else the service name (REQ-006).
+        let mut names: BTreeMap<String, String> = BTreeMap::new();
+        for s in services {
+            let n = s.cloud_name().to_string();
+            if let Some(other) = names.insert(n.clone(), s.name.clone()) {
+                self.err(
+                    &format!("services.{}", s.name),
+                    crate::tr!(
+                        "名前「{n}」が {other} と重なります。name: を変えてください",
+                        "name \"{n}\" is also {other}'s; change name:"
+                    ),
+                );
+            }
+        }
         let mut keys: BTreeMap<String, String> = BTreeMap::new();
         for s in services {
             for k in resource_keys(s) {
@@ -1131,6 +1191,21 @@ impl Checker {
         }
     }
 
+    /// `name:` is the last part of the name on Cloudflare (REQ-006).
+    fn check_name_part(&mut self, at: &str, name: Option<&str>) {
+        if let Some(n) = name
+            && !valid_name(n)
+        {
+            self.err(
+                at,
+                crate::tr!(
+                    "名前「{n}」には英小文字・数字・- だけを使ってください(-- と、先頭・末尾の - は使えません。Cloudflare では <プロジェクト>--<環境>--{n} になります)",
+                    "name \"{n}\" may only use lowercase letters, digits and - (no --, and no - at either end; on Cloudflare it becomes <project>--<env>--{n})"
+                ),
+            );
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn resources<T>(
         &mut self,
@@ -1144,58 +1219,13 @@ impl Checker {
     ) -> Vec<Resource<T>> {
         let mut out = Vec::new();
         match o.get(plural) {
-            Some(Value::Object(items)) => {
-                let mut allowed = vec!["type", plural];
-                allowed.extend_from_slice(service_keys);
-                self.unknown_keys(at, o, &allowed);
-                if items.is_empty() {
-                    self.err(
-                        &format!("{at}.{plural}"),
-                        crate::tr!("1 つ以上書いてください", "define at least one"),
-                    );
-                }
-                for (sub, iv) in items {
-                    let iat = format!("{at}.{plural}.{sub}");
-                    if !valid_name(sub) {
-                        self.err(
-                            &iat,
-                            crate::tr!(
-                                "名前には英小文字・数字・- だけを使ってください",
-                                "names may only use lowercase letters, digits and -"
-                            ),
-                        );
-                    }
-                    let empty = Map::new();
-                    let m = match iv {
-                        Value::Object(m) => m,
-                        Value::Null => &empty,
-                        _ => {
-                            self.err(
-                                &iat,
-                                crate::tr!(
-                                    "対応表にしてください(設定が無ければ {{}})",
-                                    "must be a mapping ({{}} when it has no settings)"
-                                ),
-                            );
-                            continue;
-                        }
-                    };
-                    self.unknown_keys(&iat, m, keys);
-                    let name = self.opt_string(&format!("{iat}.name"), m.get("name"));
-                    let spec = spec(self, &iat, m);
-                    out.push(Resource {
-                        sub: Some(sub.clone()),
-                        key: format!("{service}-{sub}"),
-                        name,
-                        spec,
-                    });
-                }
-            }
+            // One service is one resource (REQ-002): more resources are more
+            // services, each named.
             Some(_) => self.err(
                 &format!("{at}.{plural}"),
                 crate::tr!(
-                    "名前をキーにした対応表にしてください",
-                    "must be a mapping keyed by name"
+                    "{plural} はなくなりました。1 つのサービスが資源 1 つです。資源ごとにサービスを分けて書き、名前は name: で付けてください",
+                    "{plural} is gone: one service is one resource. Write a service per resource and name it with name:"
                 ),
             ),
             None => {
@@ -1204,6 +1234,7 @@ impl Checker {
                 allowed.extend_from_slice(service_keys);
                 self.unknown_keys(at, o, &allowed);
                 let name = self.opt_string(&format!("{at}.name"), o.get("name"));
+                self.check_name_part(&format!("{at}.name"), name.as_deref());
                 let spec = spec(self, at, o);
                 out.push(Resource {
                     sub: None,
@@ -1245,6 +1276,22 @@ impl Checker {
             public: self.boolean(&format!("{at}.public"), m.get("public")),
             ..Bucket::default()
         };
+        if let Some(p) = self.number(&format!("{at}.public_port"), m.get("public_port")) {
+            match u16::try_from(p) {
+                Ok(p) if p > 0 && b.public => b.public_port = Some(p),
+                Ok(p) if p > 0 => self.err(
+                    &format!("{at}.public_port"),
+                    crate::tr!(
+                        "public_port は public: true のときだけ書けます",
+                        "public_port needs public: true"
+                    ),
+                ),
+                _ => self.err(
+                    &format!("{at}.public_port"),
+                    crate::tr!("1〜65535 のポート番号にしてください", "must be a port number (1-65535)"),
+                ),
+            }
+        }
         for (i, rule) in self
             .list_of_maps(&format!("{at}.cors"), m.get("cors"))
             .into_iter()
@@ -1436,6 +1483,7 @@ impl Checker {
             ),
         }
         w.name = self.opt_string(&format!("{at}.name"), o.get("name"));
+        self.check_name_part(&format!("{at}.name"), w.name.as_deref());
         w.ports = self.ports(&format!("{at}.ports"), o.get("ports"));
         w.depends_on = match o.get("depends_on") {
             Some(Value::Object(m)) => {
@@ -1906,7 +1954,8 @@ fn resolve_resource(t: &str, want: &str, types: &Types) -> std::result::Result<S
 }
 
 /// `"8787:8787"` or `"127.0.0.1:8787:8787"` (docker's short syntax; a
-/// Worker has no inner port, so both numbers must match).
+/// Worker has no inner port, so both numbers must match). Without an
+/// address it listens on every address, as docker does (REQ-009).
 fn parse_port(s: &str) -> std::result::Result<Port, String> {
     let s = s.strip_suffix("/tcp").unwrap_or(s);
     let (ip, rest) = if let Some(r) = s.strip_prefix('[') {
@@ -1917,7 +1966,7 @@ fn parse_port(s: &str) -> std::result::Result<Port, String> {
     } else {
         let parts: Vec<&str> = s.split(':').collect();
         match parts.len() {
-            2 => ("127.0.0.1".to_string(), s.to_string()),
+            2 => ("0.0.0.0".to_string(), s.to_string()),
             3 => (parts[0].to_string(), format!("{}:{}", parts[1], parts[2])),
             _ => return Err(bad_port(s)),
         }
@@ -1947,12 +1996,15 @@ fn bad_port(s: &str) -> String {
     )
 }
 
+/// Lowercase letters, digits and `-`, never `--` (the separator of names
+/// on Cloudflare, REQ-006) nor a `-` at either end.
 fn valid_name(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !s.starts_with('-')
         && !s.ends_with('-')
+        && !s.contains("--")
 }
 
 fn valid_binding(s: &str) -> bool {
@@ -2048,7 +2100,7 @@ services:
     routes: ["${WEB_DOMAIN}"]
     bindings:
       API: api
-      FILES: storage.files
+      FILES: files
   api:
     type: worker
     build: ./api
@@ -2056,7 +2108,7 @@ services:
     ports: ["127.0.0.1:8788:8788"]
     bindings:
       DB: db
-      FILES: storage.files
+      FILES: files
       CACHE: cache
       JOBS: jobs
     consumes: [jobs]
@@ -2066,18 +2118,18 @@ services:
   db:
     type: d1
     migrations: ./api/migrations
-  storage:
+  files:
     type: r2
-    buckets:
-      files:
-        public: true
-        cors:
-          - origins: ["https://${WEB_DOMAIN}"]
-            methods: [GET, PUT]
-      uploads:
-        notifications:
-          - queue: jobs
-            events: [object-create]
+    public: true
+    cors:
+      - origins: ["https://${WEB_DOMAIN}"]
+        methods: [GET, PUT]
+  uploads:
+    type: r2
+    name: incoming
+    notifications:
+      - queue: jobs
+        events: [object-create]
   cache:
     type: kv
   jobs:
@@ -2093,22 +2145,22 @@ x-anything: 1
         let order: Vec<&str> = c.services.iter().map(|s| s.name.as_str()).collect();
         let pos = |n| order.iter().position(|x| *x == n).unwrap();
         assert!(pos("api") < pos("web"));
-        assert!(pos("db") < pos("api") && pos("jobs") < pos("storage"));
+        assert!(pos("db") < pos("api") && pos("jobs") < pos("uploads"));
         let web = c.services.iter().find(|s| s.name == "web").unwrap();
         let Kind::Worker(w) = &web.kind else { panic!() };
         assert_eq!(w.routes, ["x.example"]);
         assert_eq!(
             w.bindings[1],
-            ("FILES".to_string(), Target::R2("storage-files".into()))
+            ("FILES".to_string(), Target::R2("files".into()))
         );
-        let storage = c.services.iter().find(|s| s.name == "storage").unwrap();
-        let Kind::R2(b) = &storage.kind else { panic!() };
-        assert_eq!(
-            b.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(),
-            ["storage-files", "storage-uploads"]
-        );
-        assert_eq!(b[0].spec.cors[0].origins, ["https://x.example"]);
-        assert_eq!(b[1].spec.notifications[0].queue, "jobs");
+        let r2 = |n: &str| match &c.service(n).unwrap().kind {
+            Kind::R2(b) => &b[0],
+            _ => panic!(),
+        };
+        assert_eq!(r2("files").spec.cors[0].origins, ["https://x.example"]);
+        assert_eq!(r2("uploads").spec.notifications[0].queue, "jobs");
+        assert_eq!(c.service("uploads").unwrap().cloud_name(), "incoming");
+        assert_eq!(c.service("files").unwrap().cloud_name(), "files");
         let api = c.services.iter().find(|s| s.name == "api").unwrap();
         let Kind::Worker(w) = &api.kind else { panic!() };
         assert_eq!(w.secrets["STRIPE_KEY"], "sk");
@@ -2121,6 +2173,7 @@ x-anything: 1
     }
 
     const ONE_WORKER: &str = r#"
+name: shop
 services:
   web:
     type: worker
@@ -2164,6 +2217,7 @@ services:
     #[test]
     fn stops_with_where_and_why() {
         let yaml = r#"
+name: shop
 services:
   web:
     type: worker
@@ -2197,6 +2251,7 @@ services:
     #[test]
     fn stops_on_mistakes_that_would_fail_later() {
         let yaml = r#"
+name: shop
 services:
   web:
     type: worker
@@ -2222,8 +2277,12 @@ services:
     type: r2
     buckets:
       files: {}
-  storage-files:
+  files:
     type: r2
+    name: same
+  more-files:
+    type: r2
+    name: same
   cache:
     type: kv
   jobs:
@@ -2238,7 +2297,8 @@ services:
             "services.web.bindings.__WC_DO_Counter",
             "services.api.consumes",
             "services.wc-gateway",
-            "services.storage-files",
+            "services.storage.buckets",
+            "services.more-files",
         ] {
             assert!(err.contains(want), "{want} missing in:\n{err}");
         }
@@ -2247,6 +2307,7 @@ services:
     #[test]
     fn skips_x_keys_and_reads_interpolated_types() {
         let yaml = r#"
+name: shop
 x-common: &date "2026-09-01"
 services:
   x-template:
@@ -2279,6 +2340,7 @@ services:
     #[test]
     fn reports_missing_secrets_with_missing_variables() {
         let yaml = r#"
+name: shop
 services:
   web:
     type: worker
@@ -2309,6 +2371,7 @@ services:
     #[test]
     fn environment_and_secrets_take_both_docker_forms() {
         let yaml = r#"
+name: shop
 services:
   web:
     type: worker
@@ -2347,7 +2410,7 @@ services:
     compatibility_date: "2026-09-01"
     environment:
       FILES: ${WC_R2_STORAGE_S3}
-      LOGS: prefix ${WC_R2_ARCHIVE_LOGS_S3}
+      LOGS: prefix ${WC_R2_ARCHIVE_S3}
       PUBLIC: ${PUBLIC_S3:-${WC_R2_STORAGE_S3}}
   storage:
     type: r2
@@ -2355,10 +2418,8 @@ services:
   archive:
     type: r2
     ports: ["9051:9051"]
-    buckets:
-      logs:
-        name: shop-logs
-        jurisdiction: eu
+    name: logs
+    jurisdiction: eu
 "#;
 
     fn web_vars(c: &Compose) -> &Map<String, Value> {
@@ -2393,11 +2454,11 @@ services:
         let v = web_vars(&c);
         assert_eq!(
             v["FILES"],
-            "https://acc.r2.cloudflarestorage.com/shop-staging-storage"
+            "https://acc.r2.cloudflarestorage.com/shop--staging--storage"
         );
         assert_eq!(
             v["LOGS"],
-            "prefix https://acc.eu.r2.cloudflarestorage.com/shop-logs"
+            "prefix https://acc.eu.r2.cloudflarestorage.com/shop--staging--logs"
         );
         assert_eq!(v["PUBLIC"], "https://cdn.example");
     }
@@ -2407,7 +2468,7 @@ services:
         // No ports locally, an unknown bucket, and a place other than environment.
         let yaml = R2_ENDPOINTS
             .replace("    ports: [\"9050:9050\"]\n", "")
-            .replace("${WC_R2_ARCHIVE_LOGS_S3}", "${WC_R2_NOPE_S3}");
+            .replace("${WC_R2_ARCHIVE_S3}", "${WC_R2_NOPE_S3}");
         let err = project(&yaml, None).1.unwrap_err().to_string();
         assert!(
             err.contains("services.web.environment.FILES") && err.contains("ports"),
@@ -2551,6 +2612,7 @@ services:
     #[test]
     fn depends_on_cycle_stops_but_binding_cycle_does_not() {
         let base = r#"
+name: shop
 services:
   a:
     type: worker
@@ -2580,11 +2642,30 @@ services:
     }
 
     #[test]
+    fn names_tell_the_project_and_environment_apart() {
+        // The project name is required and 3 or more characters; no part of
+        // a name may hold `--`, the separator on Cloudflare.
+        let without = ONE_WORKER.replace("name: shop\n", "");
+        let err = project(&without, None).1.unwrap_err().to_string();
+        assert!(err.contains("name:"), "{err}");
+        for bad in ["ab", "a--b", "-ab"] {
+            let yaml = ONE_WORKER.replace("name: shop", &format!("name: \"{bad}\""));
+            assert!(project(&yaml, None).1.is_err(), "{bad}");
+        }
+        let yaml = format!("{ONE_WORKER}    name: my--api\n");
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(err.contains("services.web.name"), "{err}");
+        let yaml = ONE_WORKER.replace("  web:", "  my--web:");
+        assert!(project(&yaml, None).1.is_err());
+        assert!(valid_name("staging-eu") && !valid_name("staging--eu"));
+    }
+
+    #[test]
     fn parses_ports_like_docker_short_syntax() {
         assert_eq!(
             parse_port("8787:8787").unwrap(),
             Port {
-                ip: "127.0.0.1".into(),
+                ip: "0.0.0.0".into(),
                 port: 8787
             }
         );

@@ -23,8 +23,9 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
 
 - `up` stays in the foreground; run it in the background when you need the terminal, and stop it with `down`.
 - For a remote environment, run `--dry-run up` first and show the user what it would create and deploy.
-  The first `up` of a new environment, `--remove-orphans` and dropping a Durable Object class ask the user to
-  retype the environment name; deploying is visible to others, so confirm before `up` to an environment the
+  The first `up` of a new environment and `up --purge` ask the user to retype the environment name; a dropped
+  Durable Object class (or a dropped Worker that has one) asks to delete, keep or stop. `up` deletes this
+  environment's Workers the compose file no longer has; deploying is visible to others, so confirm before `up` to an environment the
   user did not name.
 - `down --purge` and `restore --drop` delete data and ask the user to retype the environment name.
   They refuse to run without a terminal, so do not try to pipe an answer in. You may run them with

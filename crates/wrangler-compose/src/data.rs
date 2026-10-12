@@ -27,14 +27,31 @@ fn say(msg: String) {
     eprintln!("wrangler-compose: {msg}");
 }
 
-/// Talks to the local data service of one environment (127.0.0.1).
+/// Talks to one environment's data: locally its data service (127.0.0.1),
+/// remotely Cloudflare's own APIs for D1, KV and R2 (REQ-013).
 pub struct Client {
     base: String,
     token: String,
     agent: ureq::Agent,
+    remote: Option<Remote>,
+}
+
+/// A remote environment's data, by compose key: D1 and KV ids, and R2
+/// buckets (name, jurisdiction).
+pub struct Remote {
+    pub cf: crate::cf::Cf,
+    pub d1: BTreeMap<String, String>,
+    pub kv: BTreeMap<String, String>,
+    pub r2: BTreeMap<String, (String, String)>,
 }
 
 impl Client {
+    pub fn remote(remote: Remote) -> Client {
+        let mut c = Client::new(String::new(), String::new());
+        c.remote = Some(remote);
+        c
+    }
+
     pub fn new(base: String, token: String) -> Client {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -44,7 +61,12 @@ impl Client {
             .proxy(None)
             .build()
             .into();
-        Client { base, token, agent }
+        Client {
+            base,
+            token,
+            agent,
+            remote: None,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -114,6 +136,9 @@ impl Client {
         sql: &str,
         params: Vec<Value>,
     ) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
+        if let Some(r) = &self.remote {
+            return r.query(db, sql, params);
+        }
         let v = self.post(
             &format!("d1/{db}/query"),
             &json!({ "sql": sql, "params": params }),
@@ -136,6 +161,9 @@ impl Client {
     /// Statements run as one transaction.
     /// Run read statements in one transaction; rows of each, in order.
     pub fn snapshot(&self, db: &str, sqls: &[String]) -> Result<Vec<Vec<Vec<Value>>>> {
+        if let Some(r) = &self.remote {
+            return r.snapshot(db, sqls);
+        }
         let st: Vec<Value> = sqls.iter().map(|s| json!({ "sql": s })).collect();
         let v = self.post(&format!("d1/{db}/snapshot"), &json!({ "statements": st }))?;
         Ok(v["results"]
@@ -156,6 +184,9 @@ impl Client {
         if statements.is_empty() {
             return Ok(());
         }
+        if let Some(r) = &self.remote {
+            return r.batch(db, statements);
+        }
         let st: Vec<Value> = statements
             .into_iter()
             .map(|(s, p)| json!({ "sql": s, "params": p }))
@@ -169,6 +200,9 @@ impl Client {
         bucket: &str,
         cursor: Option<&str>,
     ) -> Result<(Vec<Value>, Option<String>)> {
+        if let Some(r) = &self.remote {
+            return r.r2_list(bucket, cursor);
+        }
         let q = cursor
             .map(|c| format!("?cursor={}", enc(c)))
             .unwrap_or_default();
@@ -181,6 +215,9 @@ impl Client {
 
     /// Download one object into `dest`; returns (sha256, size, metadata).
     pub fn r2_get(&self, bucket: &str, key: &str, dest: &Path) -> Result<(String, u64, Value)> {
+        if let Some(r) = &self.remote {
+            return r.r2_get(bucket, key, dest);
+        }
         let res = self
             .agent
             .get(self.url(&format!("r2/{bucket}/object?key={}", enc(key))))
@@ -199,6 +236,9 @@ impl Client {
     }
 
     pub fn r2_put(&self, bucket: &str, key: &str, src: &Path, meta: &Value) -> Result<()> {
+        if let Some(r) = &self.remote {
+            return r.r2_put(bucket, key, src, meta);
+        }
         let file = File::open(src)
             .with_context(|| crate::tr!("{} を開けません", "cannot open {}", src.display()))?;
         let len = file.metadata()?.len();
@@ -220,11 +260,17 @@ impl Client {
     }
 
     pub fn r2_delete(&self, bucket: &str, keys: &[String]) -> Result<()> {
+        if let Some(r) = &self.remote {
+            return r.r2_delete(bucket, keys);
+        }
         self.post(&format!("r2/{bucket}/delete"), &json!({ "keys": keys }))?;
         Ok(())
     }
 
     pub fn kv_list(&self, ns: &str, cursor: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
+        if let Some(r) = &self.remote {
+            return r.kv_list(ns, cursor);
+        }
         let q = cursor
             .map(|c| format!("?cursor={}", enc(c)))
             .unwrap_or_default();
@@ -236,6 +282,9 @@ impl Client {
     }
 
     pub fn kv_get(&self, ns: &str, key: &str) -> Result<Option<(Vec<u8>, Value)>> {
+        if let Some(r) = &self.remote {
+            return r.kv_get(ns, key);
+        }
         let res = self
             .agent
             .get(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
@@ -256,6 +305,9 @@ impl Client {
     }
 
     pub fn kv_put(&self, ns: &str, key: &str, value: &[u8], meta: &Value) -> Result<()> {
+        if let Some(r) = &self.remote {
+            return r.kv_put(ns, key, value, meta);
+        }
         let mut res = self
             .agent
             .put(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
@@ -273,6 +325,9 @@ impl Client {
     }
 
     pub fn kv_delete(&self, ns: &str, key: &str) -> Result<()> {
+        if let Some(r) = &self.remote {
+            return r.kv_delete(ns, key);
+        }
         let res = self
             .agent
             .delete(self.url(&format!("kv/{ns}/value?key={}", enc(key))))
@@ -286,6 +341,281 @@ impl Client {
         }
         Ok(())
     }
+}
+
+/// Cloudflare's APIs for a remote environment's data (REQ-013): the same
+/// ones Wrangler's d1, kv and r2 commands call with the login.
+impl Remote {
+    fn d1_id(&self, db: &str) -> Result<&str> {
+        self.d1
+            .get(db)
+            .map(String::as_str)
+            .ok_or_else(|| anyhow!(crate::tr!("D1 {db} がありません", "no D1 {db}")))
+    }
+
+    fn kv_id(&self, ns: &str) -> Result<&str> {
+        self.kv
+            .get(ns)
+            .map(String::as_str)
+            .ok_or_else(|| anyhow!(crate::tr!("KV {ns} がありません", "no KV {ns}")))
+    }
+
+    fn bucket(&self, b: &str) -> Result<(&str, &str)> {
+        self.r2
+            .get(b)
+            .map(|(n, j)| (n.as_str(), j.as_str()))
+            .ok_or_else(|| anyhow!(crate::tr!("R2 {b} がありません", "no R2 {b}")))
+    }
+
+    fn raw_results(v: &Value) -> Vec<(Vec<String>, Vec<Vec<Value>>)> {
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let res = &r["results"];
+                let cols = res["columns"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c.as_str().map(str::to_string))
+                    .collect();
+                let rows = res["rows"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_array().cloned())
+                    .collect();
+                (cols, rows)
+            })
+            .collect()
+    }
+
+    fn query(&self, db: &str, sql: &str, params: Vec<Value>) -> Result<(Vec<String>, Vec<Vec<Value>>)> {
+        let id = self.d1_id(db)?;
+        let v = self
+            .cf
+            .post(&format!("/d1/database/{id}/raw"), &json!({ "sql": sql, "params": params }))?;
+        Ok(Self::raw_results(&v).into_iter().next().unwrap_or_default())
+    }
+
+    /// The statements in one request, which D1 runs as one batch.
+    fn snapshot(&self, db: &str, sqls: &[String]) -> Result<Vec<Vec<Vec<Value>>>> {
+        let id = self.d1_id(db)?;
+        let v = self
+            .cf
+            .post(&format!("/d1/database/{id}/raw"), &json!({ "sql": sqls.join(";\n") }))?;
+        Ok(Self::raw_results(&v).into_iter().map(|(_, rows)| rows).collect())
+    }
+
+    /// Statements with their values written in as SQL literals, so a whole
+    /// batch goes as one request (D1 runs it as one batch, the deferred
+    /// foreign keys included). A statement too long for D1 (100 KB) goes on
+    /// its own with bound values.
+    fn batch(&self, db: &str, statements: Vec<(String, Vec<Value>)>) -> Result<()> {
+        const LIMIT: usize = 90_000;
+        let id = self.d1_id(db)?;
+        let path = format!("/d1/database/{id}/query");
+        let mut group: Vec<String> = Vec::new();
+        let mut size = 0;
+        let send = |group: &mut Vec<String>| -> Result<()> {
+            if !group.is_empty() {
+                self.cf.post(&path, &json!({ "sql": group.join(";\n") }))?;
+                group.clear();
+            }
+            Ok(())
+        };
+        for (sql, params) in statements {
+            match inline(&sql, &params) {
+                Some(one) if one.len() <= LIMIT => {
+                    if size + one.len() > 900_000 {
+                        send(&mut group)?;
+                        size = 0;
+                    }
+                    size += one.len();
+                    group.push(one);
+                }
+                _ => {
+                    send(&mut group)?;
+                    size = 0;
+                    self.cf.post(&path, &json!({ "sql": sql, "params": params }))?;
+                }
+            }
+        }
+        send(&mut group)
+    }
+
+    fn r2_list(&self, bucket: &str, cursor: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
+        let (name, jur) = self.bucket(bucket)?;
+        let q = match cursor {
+            Some(c) => format!("?per_page=1000&cursor={}", enc(c)),
+            None => "?per_page=1000".to_string(),
+        };
+        let v = self
+            .cf
+            .get_full(&format!("/r2/buckets/{name}/objects{q}"), &[("cf-r2-jurisdiction", jur)])?;
+        let items = match &v["result"] {
+            Value::Array(a) => a.clone(),
+            other => other["objects"].as_array().cloned().unwrap_or_default(),
+        };
+        let objects = items
+            .iter()
+            .map(|o| json!({ "key": o["key"], "size": o["size"], "etag": o["etag"] }))
+            .collect();
+        let next = v["result_info"]["cursor"]
+            .as_str()
+            .filter(|c| !c.is_empty() && v["result_info"]["is_truncated"] != false)
+            .map(str::to_string);
+        Ok((objects, next))
+    }
+
+    fn object_path(name: &str, key: &str) -> String {
+        let parts: Vec<String> = key.split('/').map(enc).collect();
+        format!("/r2/buckets/{name}/objects/{}", parts.join("/"))
+    }
+
+    fn r2_get(&self, bucket: &str, key: &str, dest: &Path) -> Result<(String, u64, Value)> {
+        let (name, jur) = self.bucket(bucket)?;
+        let (bytes, headers) = self
+            .cf
+            .raw("GET", &Self::object_path(name, key), None, &[("cf-r2-jurisdiction", jur)])?
+            .ok_or_else(|| anyhow!(crate::tr!("{bucket} の {key} を読めません", "cannot read {key} from {bucket}")))?;
+        let mut http = serde_json::Map::new();
+        for (field, header) in HTTP_FIELDS {
+            if let Some((_, v)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(header)) {
+                http.insert(field.to_string(), json!(v));
+            }
+        }
+        let (hash, size) = copy_hashing(&mut bytes.as_slice(), dest)?;
+        Ok((hash, size, json!({ "http": http, "custom": {} })))
+    }
+
+    fn r2_put(&self, bucket: &str, key: &str, src: &Path, meta: &Value) -> Result<()> {
+        let (name, jur) = self.bucket(bucket)?;
+        let body = fs::read(src)
+            .with_context(|| crate::tr!("{} を開けません", "cannot open {}", src.display()))?;
+        let mut h: Vec<(&str, &str)> = vec![("cf-r2-jurisdiction", jur)];
+        for (field, header) in HTTP_FIELDS {
+            if let Some(v) = meta["http"][field].as_str() {
+                h.push((header, v));
+            }
+        }
+        self.cf.raw("PUT", &Self::object_path(name, key), Some(&body), &h)?;
+        Ok(())
+    }
+
+    fn r2_delete(&self, bucket: &str, keys: &[String]) -> Result<()> {
+        let (name, jur) = self.bucket(bucket)?;
+        for k in keys {
+            self.cf.r2_delete_object(name, jur, k)?;
+        }
+        Ok(())
+    }
+
+    fn kv_list(&self, ns: &str, cursor: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
+        let id = self.kv_id(ns)?;
+        let q = match cursor {
+            Some(c) => format!("?limit=1000&cursor={}", enc(c)),
+            None => "?limit=1000".to_string(),
+        };
+        let v = self
+            .cf
+            .get_full(&format!("/storage/kv/namespaces/{id}/keys{q}"), &[])?;
+        let keys = v["result"].as_array().cloned().unwrap_or_default();
+        let next = v["result_info"]["cursor"]
+            .as_str()
+            .filter(|c| !c.is_empty())
+            .map(str::to_string);
+        Ok((keys, next))
+    }
+
+    fn kv_get(&self, ns: &str, key: &str) -> Result<Option<(Vec<u8>, Value)>> {
+        let id = self.kv_id(ns)?;
+        let Some((value, _)) = self.cf.raw(
+            "GET",
+            &format!("/storage/kv/namespaces/{id}/values/{}", enc(key)),
+            None,
+            &[],
+        )?
+        else {
+            return Ok(None);
+        };
+        let metadata = match self
+            .cf
+            .get(&format!("/storage/kv/namespaces/{id}/metadata/{}", enc(key)))
+        {
+            Ok(m) => m,
+            Err(e) if crate::cf::is_missing(&e) => Value::Null,
+            Err(e) => return Err(e),
+        };
+        Ok(Some((value, json!({ "metadata": metadata }))))
+    }
+
+    fn kv_put(&self, ns: &str, key: &str, value: &[u8], meta: &Value) -> Result<()> {
+        let id = self.kv_id(ns)?;
+        let mut one = json!({ "key": key, "value": base64_lite::encode(value), "base64": true });
+        if !meta["metadata"].is_null() {
+            one["metadata"] = meta["metadata"].clone();
+        }
+        if let Some(x) = meta["expiration"].as_u64() {
+            one["expiration"] = json!(x);
+        }
+        self.cf
+            .put_with(&format!("/storage/kv/namespaces/{id}/bulk"), &json!([one]), &[])?;
+        Ok(())
+    }
+
+    fn kv_delete(&self, ns: &str, key: &str) -> Result<()> {
+        let id = self.kv_id(ns)?;
+        self.cf
+            .delete(&format!("/storage/kv/namespaces/{id}/values/{}", enc(key)))
+    }
+}
+
+/// R2's HTTP metadata, as the binding names it and as headers.
+const HTTP_FIELDS: [(&str, &str); 5] = [
+    ("contentType", "content-type"),
+    ("cacheControl", "cache-control"),
+    ("contentDisposition", "content-disposition"),
+    ("contentEncoding", "content-encoding"),
+    ("contentLanguage", "content-language"),
+];
+
+/// `sql` with each `?` outside quotes replaced by its value as an SQL
+/// literal. None when a value has no literal form.
+fn inline(sql: &str, params: &[Value]) -> Option<String> {
+    let mut out = String::with_capacity(sql.len() + 16 * params.len());
+    let mut values = params.iter();
+    let mut quote: Option<char> = None;
+    for c in sql.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => {
+                quote = None;
+                out.push(c);
+            }
+            (Some(_), c) => out.push(c),
+            (None, '\'' | '"' | '`') => {
+                quote = Some(c);
+                out.push(c);
+            }
+            (None, '[') => {
+                quote = Some(']');
+                out.push(c);
+            }
+            (None, '?') => out.push_str(&literal(values.next()?)?),
+            (None, c) => out.push(c),
+        }
+    }
+    values.next().is_none().then_some(out)
+}
+
+fn literal(v: &Value) -> Option<String> {
+    Some(match v {
+        Value::Null => "NULL".into(),
+        Value::Bool(b) => if *b { "1" } else { "0" }.into(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+        _ => return None,
+    })
 }
 
 /// The metadata the data service sends with a value (percent-encoded JSON,
@@ -440,6 +770,7 @@ fn tagged(col: &str, alias: &str) -> String {
         "CASE WHEN typeof({c}) = 'integer' AND ({c} > 9007199254740991 OR {c} < -9007199254740991) THEN char(1) || 'i:' || {c} \
          WHEN typeof({c}) = 'real' AND ({c} = CAST({c} AS INTEGER) OR {c} > 1.7976931348623157e308 OR {c} < -1.7976931348623157e308) THEN char(1) || 'r:' || printf('%!.17g', {c}) \
          WHEN typeof({c}) = 'text' AND substr({c}, 1, 1) = char(1) THEN char(1) || 't:' || {c} \
+         WHEN typeof({c}) = 'blob' THEN char(1) || 'b:' || hex({c}) \
          ELSE {c} END AS \"{alias}\"",
         c = col
     )
@@ -587,6 +918,8 @@ fn untag(v: &Value) -> (&'static str, Value) {
         ("CAST(? AS REAL)", json!(r))
     } else if let Some(t) = s.strip_prefix("t:") {
         ("?", json!(t))
+    } else if let Some(b) = s.strip_prefix("b:") {
+        ("unhex(?)", json!(b))
     } else {
         ("?", v.clone())
     }
@@ -1287,6 +1620,19 @@ mod base64_lite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_values_into_sql_outside_quotes() {
+        let sql = "INSERT INTO \"a?b\" ('?', x, y, z) VALUES (?, CAST(? AS INTEGER), unhex(?), ?)";
+        let got = inline(sql, &[json!("it's"), json!("9007199254740993"), json!("00FF"), Value::Null]).unwrap();
+        assert_eq!(
+            got,
+            "INSERT INTO \"a?b\" ('?', x, y, z) VALUES ('it''s', CAST('9007199254740993' AS INTEGER), unhex('00FF'), NULL)"
+        );
+        // Too few or too many values: not inlined.
+        assert!(inline("SELECT ?", &[]).is_none());
+        assert!(inline("SELECT 1", &[json!(1)]).is_none());
+    }
 
     #[test]
     fn formats_utc_timestamps() {

@@ -53,9 +53,9 @@ enum Cmd {
         /// Build again before starting
         #[arg(long)]
         build: bool,
-        /// Remove Workers of services no longer in the compose file
+        /// Also delete this environment's D1, KV, R2 and queues no longer in the compose file
         #[arg(long)]
-        remove_orphans: bool,
+        purge: bool,
         /// Services to start, with what they depend on (default: all)
         services: Vec<String>,
     },
@@ -134,8 +134,8 @@ const JA_ARGS: &[(&str, &str, &str)] = &[
     ("up", "build", "組み立て直してから動かす"),
     (
         "up",
-        "remove_orphans",
-        "compose ファイルから消えたサービスの Worker を消す",
+        "purge",
+        "compose ファイルから消えた、この環境の D1・KV・R2・Queue も消す",
     ),
     (
         "up",
@@ -256,19 +256,30 @@ fn dispatch(cli: Cli) -> Result<()> {
         (
             Cmd::Up {
                 build,
-                remove_orphans: _,
+                purge,
                 services,
             },
             true,
-        ) => local::up(&ctx, build, &services),
+        ) => {
+            if purge {
+                eprintln!(
+                    "wrangler-compose: {}",
+                    crate::tr!(
+                        "--purge はリモートの環境のためのものです。手元では何もしません",
+                        "--purge is for remote environments; it does nothing locally"
+                    )
+                );
+            }
+            local::up(&ctx, build, &services)
+        }
         (
             Cmd::Up {
                 build,
-                remove_orphans,
+                purge,
                 services,
             },
             false,
-        ) => remote::up(&ctx, build, &services, remove_orphans),
+        ) => remote::up(&ctx, build, &services, purge),
         (Cmd::Down { purge, services }, true) => local::down(&ctx, purge, &services),
         (Cmd::Down { purge, services }, false) => remote::down(&ctx, purge, &services),
         (Cmd::Ps, true) => local::ps(&ctx),

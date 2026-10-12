@@ -37,6 +37,9 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// A non-JSON answer: its body and headers.
+pub type RawAnswer = (Vec<u8>, Vec<(String, String)>);
+
 /// Whether an error is Cloudflare saying the thing is not there.
 pub fn is_missing(e: &anyhow::Error) -> bool {
     e.downcast_ref::<ApiError>()
@@ -215,12 +218,107 @@ impl Cf {
         Ok(v)
     }
 
+    /// A call whose body is not JSON (KV values, R2 objects): the body and
+    /// headers of the answer, or None when Cloudflare says there is no such
+    /// thing (404).
+    pub fn raw(
+        &self,
+        method: &str,
+        rest: &str,
+        body: Option<&[u8]>,
+        headers: &[(&str, &str)],
+    ) -> Result<Option<RawAnswer>> {
+        let base = std::env::var("CLOUDFLARE_API_BASE_URL")
+            .ok()
+            .filter(|b| !b.is_empty())
+            .unwrap_or_else(|| API.to_string());
+        let path = self.account_path(rest);
+        let url = format!("{}{path}", base.trim_end_matches('/'));
+        let (name, value) = match &self.auth {
+            Auth::Bearer(t) => ("authorization", format!("Bearer {t}")),
+            Auth::Key { key, .. } => ("x-auth-key", key.clone()),
+        };
+        let email = match &self.auth {
+            Auth::Key { email, .. } => Some(email.clone()),
+            _ => None,
+        };
+        let res = match (method, body) {
+            ("GET" | "DELETE", _) => {
+                let mut b = if method == "GET" {
+                    self.agent.get(&url)
+                } else {
+                    self.agent.delete(&url)
+                };
+                for (k, v) in headers {
+                    b = b.header(*k, *v);
+                }
+                b = b.header(name, &value);
+                if let Some(e) = &email {
+                    b = b.header("x-auth-email", e);
+                }
+                b.call()
+            }
+            (_, body) => {
+                let mut b = self.agent.put(&url);
+                for (k, v) in headers {
+                    b = b.header(*k, *v);
+                }
+                b = b.header(name, &value);
+                if let Some(e) = &email {
+                    b = b.header("x-auth-email", e);
+                }
+                b.send(body.unwrap_or_default())
+            }
+        };
+        let mut res = res.context(crate::tr!(
+            "Cloudflare につながりません",
+            "cannot reach Cloudflare"
+        ))?;
+        let status = res.status().as_u16();
+        if status == 404 {
+            return Ok(None);
+        }
+        let got: Vec<(String, String)> = res
+            .headers()
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
+            .collect();
+        let mut bytes = Vec::new();
+        use std::io::Read as _;
+        res.body_mut().as_reader().read_to_end(&mut bytes)?;
+        if status >= 300 {
+            let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let message = v["errors"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|e| e["message"].as_str().unwrap_or("?").to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(ApiError {
+                status,
+                message: if message.is_empty() {
+                    format!("{method} {path}")
+                } else {
+                    message
+                },
+            }
+            .into());
+        }
+        Ok(Some((bytes, got)))
+    }
+
     fn account_path(&self, rest: &str) -> String {
         format!("/accounts/{}{rest}", self.account)
     }
 
     pub fn get(&self, rest: &str) -> Result<Value> {
         Ok(self.call("GET", &self.account_path(rest), None, &[])?["result"].take())
+    }
+
+    /// The whole answer (`result` and `result_info`), for cursor paging.
+    pub fn get_full(&self, rest: &str, headers: &[(&str, &str)]) -> Result<Value> {
+        self.call("GET", &self.account_path(rest), None, headers)
     }
 
     pub fn get_with(&self, rest: &str, headers: &[(&str, &str)]) -> Result<Value> {
@@ -307,6 +405,73 @@ impl Cf {
             }
         }
         Ok(out)
+    }
+
+    /// One page of a bucket's object keys (cursor paging), and the cursor of
+    /// the next page. Wrangler has no list of objects; this is the same R2
+    /// API its object commands use, with the login's own token.
+    pub fn r2_object_keys(
+        &self,
+        bucket: &str,
+        jurisdiction: &str,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<String>, Option<String>)> {
+        let q = match cursor {
+            Some(c) => format!("?per_page=1000&cursor={}", crate::data::enc(c)),
+            None => "?per_page=1000".to_string(),
+        };
+        let v = self.call(
+            "GET",
+            &self.account_path(&format!("/r2/buckets/{bucket}/objects{q}")),
+            None,
+            &[("cf-r2-jurisdiction", jurisdiction)],
+        )?;
+        let items = match &v["result"] {
+            Value::Array(a) => a.clone(),
+            other => other["objects"].as_array().cloned().unwrap_or_default(),
+        };
+        let keys = items
+            .iter()
+            .filter_map(|o| o["key"].as_str().map(str::to_string))
+            .collect();
+        let next = match (
+            v["result_info"]["cursor"].as_str(),
+            v["result_info"]["is_truncated"].as_bool(),
+        ) {
+            (Some(c), Some(true)) if !c.is_empty() => Some(c.to_string()),
+            (Some(c), None) if !c.is_empty() => Some(c.to_string()),
+            _ => None,
+        };
+        Ok((keys, next))
+    }
+
+    /// Deletes one object (each part of the key encoded, `/` kept).
+    pub fn r2_delete_object(&self, bucket: &str, jurisdiction: &str, key: &str) -> Result<()> {
+        let path: Vec<String> = key.split('/').map(crate::data::enc).collect();
+        self.call(
+            "DELETE",
+            &self.account_path(&format!("/r2/buckets/{bucket}/objects/{}", path.join("/"))),
+            None,
+            &[("cf-r2-jurisdiction", jurisdiction)],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes every object of a bucket, page by page, so the bucket itself
+    /// can go (Cloudflare refuses to delete a bucket that has objects).
+    pub fn r2_empty(&self, bucket: &str, jurisdiction: &str) -> Result<usize> {
+        let mut n = 0;
+        loop {
+            // Always the first page: deleted keys no longer show.
+            let (keys, _) = self.r2_object_keys(bucket, jurisdiction, None)?;
+            if keys.is_empty() {
+                return Ok(n);
+            }
+            for k in &keys {
+                self.r2_delete_object(bucket, jurisdiction, k)?;
+            }
+            n += keys.len();
+        }
     }
 
     /// The account's workers.dev subdomain, if it has one.

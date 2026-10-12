@@ -46,7 +46,7 @@ done
 for p in "${pids[@]}"; do wait "$p" || fail "write request"; done
 [[ $(curl -fsS localhost:8788/count) == '{"n":200}' ]] || fail "concurrent writes"
 # R2 port: CORS from the compose file, not "allow everything" (AC-009).
-U=http://127.0.0.1:9000/cdn-cgi/local/r2/s3/storage-files
+U=http://127.0.0.1:9000/cdn-cgi/local/r2/s3/files
 curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://localhost:8787' -H 'Access-Control-Request-Method: PUT' | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "allowed preflight"
 curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://elsewhere.test' -H 'Access-Control-Request-Method: PUT' | grep -q ' 403 ' || fail "refused preflight"
 # The S3 keys are random per project, kept where only the user can read them,
@@ -58,13 +58,26 @@ K="$(sed -n 's/.*"key": *"\([^"]*\)".*/\1/p' "$KF"):$(sed -n 's/.*"secret": *"\(
 ! grep -q "${K#*:}" up.out || fail "s3 secret printed"
 [[ $(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user wrangler-compose-local:wrangler-compose-local-secret "$U/x") == 401 ]] || fail "old fixed keys accepted"
 [[ $(curl -s -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'hi' -H 'content-type: text/plain' "$U/pub.txt") == 200 ]] || fail "signed put"
-[[ $(curl -fsS -H 'Host: storage-files.localhost:9000' http://127.0.0.1:9000/pub.txt) == hi ]] || fail "public url"
+[[ $(curl -fsS -H 'Host: files.localhost:9000' http://127.0.0.1:9000/pub.txt) == hi ]] || fail "public url"
+# The bucket's own public port answers by address, from the LAN too, and
+# follows HTTP's rules: ranges, ETag and conditions (REQ-009).
+P=http://127.0.0.1:9100
+[[ $(curl -fsS "$P/pub.txt") == hi ]] || fail "public port"
+[[ $(curl -fsS --connect-to 192.0.2.10:9100:127.0.0.1:9100 http://192.0.2.10:9100/pub.txt) == hi ]] || fail "public port from the LAN"
+[[ $(curl -s -r 1-1 -o r.out -w '%{http_code}' "$P/pub.txt") == 206 && $(cat r.out) == i ]] || fail "range"
+curl -s -r 1-1 -D - -o /dev/null "$P/pub.txt" | grep -qi '^content-range: bytes 1-1/2' || fail "content-range"
+[[ $(curl -s -r 5-9 -o /dev/null -w '%{http_code}' "$P/pub.txt") == 416 ]] || fail "unsatisfiable range"
+E=$(curl -sI "$P/pub.txt" | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: //p')
+[[ -n "$E" ]] || fail "no etag"
+[[ $(curl -s -H "If-None-Match: $E" -o /dev/null -w '%{http_code}' "$P/pub.txt") == 304 ]] || fail "if-none-match"
+[[ $(curl -s -H 'If-Match: "nope"' -o /dev/null -w '%{http_code}' "$P/pub.txt") == 412 ]] || fail "if-match"
+[[ $(curl -s -I -o /dev/null -w '%{http_code}' "$P/pub.txt") == 200 ]] || fail "head"
 # A client waiting for 100 Continue still gets the bucket's CORS headers.
 curl -s -i --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'expect' -H 'Expect: 100-continue' -H 'Origin: http://localhost:8787' "$U/e.txt" | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "100-continue"
 # From another machine (AC-009): requests signed for the PC's LAN address
 # (192.0.2.10 here, reached through --connect-to) pass like local ones, and a
 # wrong signature is still refused.
-L=http://192.0.2.10:9000/cdn-cgi/local/r2/s3/storage-files
+L=http://192.0.2.10:9000/cdn-cgi/local/r2/s3/files
 C=(--connect-to 192.0.2.10:9000:127.0.0.1:9000)
 [[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'lan' "$L/lan.txt") == 200 ]] || fail "LAN signed put"
 [[ $(curl -s "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -r 0-1 "$L/lan.txt") == la ]] || fail "LAN signed range get"
@@ -73,16 +86,16 @@ curl -s -i "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -H 'Origin: http://
 # A host name is never signed again, even with the right keys: that is what a
 # web page rebinding its name to 127.0.0.1 would send (DES-019).
 N=(--connect-to evil.test:9000:127.0.0.1:9000)
-[[ $(curl -s "${N[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K "http://evil.test:9000/cdn-cgi/local/r2/s3/storage-files/lan.txt") == 403 ]] || fail "host name signed again"
+[[ $(curl -s "${N[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K "http://evil.test:9000/cdn-cgi/local/r2/s3/files/lan.txt") == 403 ]] || fail "host name signed again"
 # R2 event notifications reach the queue consumer (AC-009).
 curl -fsS -o /dev/null "localhost:8788/upload?k=n1"
-for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out && break; sleep 1; done
-grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out || fail "notification"
+for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"uploads"' up.out && break; sleep 1; done
+grep -q '"action":"PutObject","bucket":"uploads"' up.out || fail "notification"
 # A Worker's port has no S3 API for buckets with their own port, so their
 # CORS rules cannot be skipped (REQ-009).
-[[ $(curl -s -o /dev/null -w '%{http_code}' localhost:8787/cdn-cgi/local/r2/s3/storage-files/x) == 404 ]] || fail "S3 API on a Worker port"
+[[ $(curl -s -o /dev/null -w '%{http_code}' localhost:8787/cdn-cgi/local/r2/s3/files/x) == 404 ]] || fail "S3 API on a Worker port"
 # A public URL stays inside its bucket.
-out=$(curl -s --path-as-is -H 'Host: storage-files.localhost:9000' "http://127.0.0.1:9000/../../../kv/cache/list")
+out=$(curl -s --path-as-is -H 'Host: files.localhost:9000' "http://127.0.0.1:9000/../../../kv/cache/list")
 [[ "$out" != *keys* ]] || fail "public URL left its bucket: $out"
 # Data that a careless restore loses: parents after children, generated
 # columns, odd table names, non-ASCII metadata, keys with "..".
@@ -93,7 +106,7 @@ VALUES='{"n":"9007199254740993","x":"real","id":42,"t":1}'
 [[ $(curl -fsS localhost:8788/values) == "$VALUES" ]] || fail "values: $(curl -sS localhost:8788/values)"
 # --purge of a service whose data another service uses stops first (AC-011).
 if "$WC" --env local down --purge api > purge.out 2>&1; then fail "purge of shared data"; fi
-grep -q 'storage-files (web)' purge.out || fail "purge message: $(cat purge.out)"
+grep -q 'files (web)' purge.out || fail "purge message: $(cat purge.out)"
 curl -fsS -o /dev/null localhost:8787/ || fail "purge refusal stopped the services"
 # Editing the compose file restarts on the same ports; a broken edit keeps
 # the services running until it is fixed (REQ-009).
@@ -111,9 +124,9 @@ for _ in $(seq 1 120); do [[ $(running) -ge 3 ]] && break; sleep 1; done
 [[ $(running) -ge 3 ]] || fail "restart after fix"
 # Notifications carry on across restarts: nothing repeated, nothing lost.
 curl -fsS -o /dev/null "localhost:8788/remove?k=n1"
-for _ in $(seq 1 30); do grep -q '"action":"DeleteObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out && break; sleep 1; done
-grep -q '"action":"DeleteObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out || fail "delete notification after restart"
-[[ $(grep -c '"action":"PutObject","bucket":"storage-uploads","object":{"key":"up/n1"' up.out) == 1 ]] || fail "notification repeated after restart"
+for _ in $(seq 1 30); do grep -q '"action":"DeleteObject","bucket":"uploads","object":{"key":"up/n1"' up.out && break; sleep 1; done
+grep -q '"action":"DeleteObject","bucket":"uploads","object":{"key":"up/n1"' up.out || fail "delete notification after restart"
+[[ $(grep -c '"action":"PutObject","bucket":"uploads","object":{"key":"up/n1"' up.out) == 1 ]] || fail "notification repeated after restart"
 [[ $(curl -fsS localhost:8788/secret) == "$STRIPE_KEY" ]] || fail "secret changed: $(curl -sS localhost:8788/secret)"
 # A dry run says a real up would stop while one runs.
 if "$WC" --env local --dry-run up >/dev/null 2>&1; then fail "dry-run up while running"; fi
@@ -151,6 +164,7 @@ start
 [[ $(curl -fsS localhost:8788/count) == '{"n":201}' ]] || fail "restored rows"
 [[ $(curl -fsS localhost:8788/blog) == "$BLOG" ]] || fail "restored blog: $(curl -sS localhost:8788/blog)"
 [[ $(curl -fsS localhost:8788/values) == "$VALUES" ]] || fail "restored values: $(curl -sS localhost:8788/values)"
+[[ $(curl -fsS localhost:8788/blob) == '{"h":"00FF10","t":"blob"}' ]] || fail "restored blob: $(curl -sS localhost:8788/blob)"
 [[ $(curl -fsS localhost:8788/next) == '{"id":4}' ]] || fail "AUTOINCREMENT after restore: $(curl -sS localhost:8788/next)"
 # A restore that fails half-way puts the previous contents back (Linux:
 # --drop asks to retype the name, given here through a terminal).

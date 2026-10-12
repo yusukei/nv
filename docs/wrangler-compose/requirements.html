@@ -97,18 +97,18 @@ services:
     depends_on: [api]
     bindings:
       API: api                      # 相手が worker なら、その Worker を呼べる
-      FILES: storage.files          # &lt;サービス&gt;.&lt;バケット&gt;
+      FILES: files                  # 相手はサービスの名前
 
   api:
     type: worker
     build: ./api
     compatibility_date: "2026-09-01"
     ports: ["8788:8788"]
-    depends_on: [db, storage, cache, jobs]
+    depends_on: [db, files, uploads, cache, jobs]
     bindings:
       DB: db                        # 相手の型で、つながり方が決まる
-      FILES: storage.files
-      UPLOADS: storage.uploads
+      FILES: files
+      UPLOADS: uploads
       CACHE: cache
       JOBS: jobs                    # queue へ送る
     consumes: [jobs]                # queue から受け取る
@@ -121,25 +121,26 @@ services:
     type: d1
     migrations: ./api/migrations
 
-  storage:
-    type: r2
+  files:
+    type: r2                        # 1 つのサービスが資源 1 つ。R2 を 2 つ使うならサービスを 2 つ書く
     ports: ["9000:9000"]            # 手元の R2 の口(S3 互換の API・公開の URL)
-    buckets:                        # 複数のバケット。1 つなら省略形でもよい(REQ-002)
-      files:
-        public: true                # 公開の URL で配る
-        cors:
-          - origins: ["${WEB_ORIGIN}"]
-            methods: [GET, PUT]
-      uploads:
-        lifecycle:
-          - prefix: tmp/
-            expire_after_days: 7
-        notifications:
-          - queue: jobs
-            events: [object-create]
+    public: true                    # 公開の URL で配る
+    cors:
+      - origins: ["${WEB_ORIGIN}"]
+        methods: [GET, PUT]
+
+  uploads:
+    type: r2
+    name: incoming                  # Cloudflare では shop--&lt;環境&gt;--incoming(省けば shop--&lt;環境&gt;--uploads)
+    lifecycle:
+      - prefix: tmp/
+        expire_after_days: 7
+    notifications:
+      - queue: jobs
+        events: [object-create]
 
   cache:
-    type: kv                        # 省略形: このサービスが KV 名前空間 1 つ
+    type: kv
 
   jobs:
     type: queue</code></pre>
@@ -154,7 +155,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <tr><th style="width:24%">docker compose</th><th style="width:28%">wrangler-compose</th><th>すること</th><th style="width:9%">条項</th></tr>
   <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>どの組み合わせを扱うかを選ぶ。compose ファイルは 1 つで、<code>-f</code> は持たない</td><td><a href="#req-006">REQ-006</a></td></tr>
   <tr><td><code>build</code></td><td><code>build [サービス…]</code></td><td>Worker を組み立てるだけ。組み立てたものは環境によらず同じ</td><td><a href="#req-008">REQ-008</a></td></tr>
-  <tr><td><code>up</code></td><td><code>up [--build] [--remove-orphans] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
+  <tr><td><code>up</code></td><td><code>up [--build] [--purge] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
   <tr><td><code>down</code>・<code>down -v</code></td><td><code>down [サービス…]</code>・<code>down --purge [サービス…]</code></td><td>下ろす。<code>--purge</code> ならデータも消す</td><td><a href="#req-011">REQ-011</a></td></tr>
   <tr><td><code>ps</code>・<code>logs [-f]</code></td><td><code>ps</code>・<code>logs [-f] [サービス…]</code>(<code>ps</code> はサービスを受けない)</td><td>状態とログを見る</td><td><a href="#req-012">REQ-012</a></td></tr>
   <tr><td><code>--dry-run</code></td><td><code>--dry-run</code></td><td>何も変えずに、何が変わるかを示す</td><td><a href="#req-014">REQ-014</a></td></tr>
@@ -179,9 +180,9 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
   <li>r2 のサービスにも <code>ports</code> を書ける。そのポートが手元の R2 の口(S3 互換の API とバケットの CORS・公開の URL)になる</li>
-  <li>実際の名前は既定では道具が環境の名前を付けて決め(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、複数形は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;-&lt;名前&gt;</code>)、<code>name</code> に書けばそれを使う</li>
-  <li>D1・R2・KV・Queue は、1 つのサービスに複数を名前つきで定義できる。1 つなら省略形で書いてよく、そのときの名前はサービスの名前から決まる</li>
-  <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルにバケットごとに書き、手元にもリモートにも同じに入れる</li>
+  <li>実際の名前は、道具がプロジェクトと環境の名前を前に付けて決める(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code>)。名前は <code>name</code> に書き、省けばサービスの名前(利用者の決定 2026-10-13)</li>
+  <li>1 つのサービスは 1 つの Worker か 1 つの資源。同じ型の資源を増やすときはサービスを足す(利用者の決定 2026-10-13「名前で指定すれば良いだけ」)</li>
+  <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルの r2 のサービスに書き、手元にもリモートにも同じに入れる</li>
   <li><code>down</code> はデータを残し、データは <code>--purge</code> のときだけ消す。手元の <code>--purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
   <li>Queue の受け手の細かい設定は今は持たず、Cloudflare の既定に任せる</li>
   <li>Node・npm の扱いは nv が受け持つ。GitHub の Release で nv と一緒に配り、更新とエージェント用のスキルは nv に寄せる</li>
@@ -207,7 +208,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>名前は <code>wrangler-compose.yaml</code>(<code>.yml</code> も読む。両方あれば止まる)。いまのフォルダから上へたどって最初に見つかったものを使う。見つからなければ止まり、書き始め方を示す</li>
   <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>context</code>・<code>services</code></li>
   <li><code>context</code> は、Wrangler と Node の版を決める <code>package.json</code> のあるフォルダ(compose ファイルから見た相対)。省くと compose ファイルのあるフォルダ。compose ファイルを展開用のフォルダに置き、コードと依存は別のフォルダに置けるようにする(docker compose の <code>build.context</code> と同じ考え)。<code>package.json</code> が無ければ止まる。ほかのパス(<code>build</code>・<code>assets</code>・<code>migrations</code>)はこれまでどおり compose ファイルから見た相対で、<code>.env.&lt;環境&gt;</code>・<code>.wrangler/compose/</code>・<code>backups/</code> も compose ファイルのあるフォルダに置く</li>
-  <li><code>name</code> を省くと、compose ファイルのあるフォルダ名を英小文字にしたもの。プロジェクトとサービスの名前は、英小文字・数字・<code>-</code> だけ</li>
+  <li>一番上の <code>name</code>(プロジェクトの名前)は必須。無ければ止まる(PC ごとのフォルダ名で別のプロジェクトにならないため。利用者の決定 2026-10-13)。プロジェクトとサービスの名前は、英小文字・数字・<code>-</code> だけ(REQ-006 の決まりも守る)</li>
   <li><code>x-</code> で始まるキーは、どの階層でも読み飛ばす(docker と同じ)</li>
   <li>知らないキー、型に合わないキー、無いサービスを指すもの、<code>depends_on</code> の輪は、何もせずに止まり、どこ(<code>services.web.image</code> など)の何がいけないかを示す</li>
   <li>compose ファイルは環境によらず 1 つ。環境の違いは変数の展開(<a href="#req-004">REQ-004</a>)だけで表す</li>
@@ -217,16 +218,14 @@ STRIPE_KEY=sk_test_...</code></pre>
 <table>
   <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:26%">建つもの</th></tr>
   <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>compatibility_date</code>(必須)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>environment</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
-  <tr><td><code>d1</code></td><td>省略形: <code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)。複数形: <code>databases.&lt;名前&gt;</code> の下に同じキー</td><td>D1 データベース 1 つ以上</td></tr>
-  <tr><td><code>r2</code></td><td><code>ports</code>(手元の R2 の口)。省略形: バケットのキー。複数形: <code>buckets.&lt;名前&gt;</code> の下にバケットのキー。バケットのキーは <code>name</code>・<code>public</code>・<code>public_port</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ以上</td></tr>
-  <tr><td><code>kv</code></td><td>省略形: <code>name</code>。複数形: <code>namespaces.&lt;名前&gt;</code> の下に <code>name</code></td><td>KV 名前空間 1 つ以上</td></tr>
-  <tr><td><code>queue</code></td><td>省略形: <code>name</code>。複数形: <code>queues.&lt;名前&gt;</code> の下に <code>name</code></td><td>Queue 1 つ以上</td></tr>
+  <tr><td><code>d1</code></td><td><code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
+  <tr><td><code>r2</code></td><td><code>name</code>・<code>ports</code>(手元の R2 の口)・<code>public</code>・<code>public_port</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ</td></tr>
+  <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
+  <tr><td><code>queue</code></td><td><code>name</code></td><td>Queue 1 つ</td></tr>
 </table>
 <ul>
-  <li><strong>省略形と複数形</strong>: <code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code> は、1 つのサービスに資源を複数定義できる(複数形。<code>buckets</code>・<code>databases</code>・<code>namespaces</code>・<code>queues</code> の下に名前を付けて並べる)。1 つだけなら、サービスそのものを 1 つの資源として書いてよい(省略形。資源の名前はサービスの名前)。1 つのサービスで両方は書けない</li>
-  <li>複数形で並べる名前は、そのサービスの中で重ならなければよい(サービスの名前はプロジェクトの中で重ならないので、<code>&lt;サービス&gt;.&lt;名前&gt;</code> の組で必ず 1 つに決まる)。英小文字・数字・<code>-</code> だけ</li>
-  <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
-  <li>R2 のバケットのキーは、本物の R2 のバケットの設定と同じ意味を持つ: <code>public</code>(公開の URL で配る)・<code>cors</code>(CORS の決まり)・<code>lifecycle</code>(期限で消す・保管の種類を変える)・<code>notifications</code>(変化を同じプロジェクトの Queue へ送る)・<code>lock</code>(消せない期間)・<code>storage_class</code>(保管の種類)・<code>jurisdiction</code>(置き場の管轄)。<code>public</code>・<code>cors</code>・<code>notifications</code> は手元でも同じに効く(REQ-009)。<code>lifecycle</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> はリモートにだけ効き、手元では効かないことを <code>up</code> が知らせる</li>
+  <li><code>name</code> は Cloudflare での名前の最後の部分(<a href="#req-006">REQ-006</a>)。道具が前に <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> を付ける。省けばサービスの名前。同じプロジェクトの中で重なると止まる</li>
+  <li>r2 のキーは、本物の R2 のバケットの設定と同じ意味を持つ: <code>public</code>(公開の URL で配る)・<code>cors</code>(CORS の決まり)・<code>lifecycle</code>(期限で消す・保管の種類を変える)・<code>notifications</code>(変化を同じプロジェクトの Queue へ送る)・<code>lock</code>(消せない期間)・<code>storage_class</code>(保管の種類)・<code>jurisdiction</code>(置き場の管轄)。<code>public</code>・<code>cors</code>・<code>notifications</code> は手元でも同じに効く(REQ-009)。<code>lifecycle</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> はリモートにだけ効き、手元では効かないことを <code>up</code> が知らせる</li>
   <li><code>environment</code> は Worker に渡す秘密でない値(Wrangler の <code>vars</code>)。docker compose と同じく「名前: 値」の対応表か <code>NAME=値</code> の並びで書き、並びに名前だけを書けば同じ名前の変数から取る。対応表で値を書かない(<code>NAME:</code>)と空の値になる(利用者の決定 2026-10-13)。<code>routes</code> はルート・カスタムドメイン(変数が空で空になった要素は書かなかったことにする。<code>ports</code> があって <code>routes</code> が空の Worker は workers.dev で公開されるので、<code>["${DOMAIN:-}"]</code> と書けば、ドメインを書いた環境はそのドメイン、書かない環境は workers.dev になる)、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_flags</code> は Workers の互換の指定</li>
   <li><code>compatibility_date</code> は、Worker をどの日付の時点の Workers の動き方で動かすかを決める日付(例 <code>"2026-09-01"</code>)。Cloudflare は動き方の変更を日付ごとに区切り、Worker はその日までの変更だけを受ける。省くと動かした日の日付になり、手元とリモート・動かした日ごとに動き方が変わりうるので、必須とする(利用者の決定)。無ければ止まる</li>
   <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧(Durable Objects は Worker の中のものなので、型にはしない)</li>
@@ -236,7 +235,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-003"><span class="id">REQ-003</span>つながり</h3>
 <ul>
   <li>Worker の <code>bindings</code> は「名前: 相手」。Worker のコードからは <code>env.&lt;名前&gt;</code> で見える</li>
-  <li>相手の書き方: 省略形のサービスはサービスの名前(<code>cache</code>)、複数形のサービスの資源は <code>&lt;サービス&gt;.&lt;資源の名前&gt;</code>(<code>storage.files</code>)、Worker の Durable Object は <code>&lt;worker&gt;.&lt;クラス&gt;</code>(<code>api.Counter</code>)。複数形のサービスを名前だけで指すと止まる</li>
+  <li>相手の書き方: サービスの名前(<code>cache</code>)。Worker の Durable Object は <code>&lt;worker&gt;.&lt;クラス&gt;</code>(<code>api.Counter</code>)</li>
   <li>相手の型でつながり方が決まる: <code>worker</code> → その Worker を呼べる、<code>d1</code>・<code>r2</code>・<code>kv</code> → その資源を読み書きできる、<code>queue</code> → その Queue へ送れる、Durable Object → それを使える</li>
   <li><code>consumes</code> は、その Worker が受け取る Queue の一覧(書き方は上と同じ)</li>
   <li>つながる相手は、<code>depends_on</code> に書かなくても先に建てる。<code>depends_on</code> はそれに足す順。つながりが輪になる(互いに呼び合う Worker など)ときは、<code>depends_on</code> の順だけを守る</li>
@@ -246,9 +245,9 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-004"><span class="id">REQ-004</span>環境ごとの値</h3>
 <ul>
   <li>compose ファイルの文字列の中の <code>${VAR}</code> を展開する。書き方は docker compose と同じ(<code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR:?説明}</code>・<code>$$</code> など、docker compose の書き方すべて)</li>
-  <li>値は環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む</li>
+  <li>値は環境変数、次にプロジェクトの <code>.env.&lt;環境&gt;</code>(<code>--env</code> で選んだもの)から読む。<code>.env.&lt;環境&gt;</code> の読み方(引用符・複数行・注釈・前に書いた値の展開)は docker compose と同じ(利用者の決定 2026-10-13)</li>
   <li>既定の無い変数が無ければ、何もせずに止まり、無い変数をまとめて示す</li>
-  <li>道具が値を決める変数(<code>WC_</code> で始まる)がある。<code>WC_R2_&lt;サービス&gt;_S3</code>(複数形のバケットは <code>WC_R2_&lt;サービス&gt;_&lt;名前&gt;_S3</code>。名前は英大文字にし <code>-</code> は <code>_</code>)は、その R2 のバケットの S3 互換の API の接続先(パス形式でバケット名まで): 手元は <code>http://127.0.0.1:&lt;ports&gt;/cdn-cgi/local/r2/s3/&lt;資源の名前&gt;</code>(r2 のサービスに <code>ports</code> が要る)、リモートは <code>https://&lt;CLOUDFLARE_ACCOUNT_ID&gt;[.&lt;jurisdiction&gt;].r2.cloudflarestorage.com/&lt;実際の名前&gt;</code>。Worker が S3 互換の API で R2 を読み書きするとき、接続先を人が環境ごとに書かずに済むようにする(利用者の決定。2026-10-12)。使えるのは Worker の <code>environment</code> の値だけで、ほかの場所・無いバケット・決まらないとき(手元で <code>ports</code> が無い、リモートでアカウントの ID が無い)は止まる。<code>${X:-${WC_R2_STORAGE_S3}}</code> のように既定にも使える</li>
+  <li>道具が値を決める変数(<code>WC_</code> で始まる)がある。<code>WC_R2_&lt;サービス&gt;_S3</code>(サービスの名前は英大文字にし <code>-</code> は <code>_</code>)は、その R2 のバケットの S3 互換の API の接続先(パス形式でバケット名まで): 手元は <code>http://127.0.0.1:&lt;ports&gt;/cdn-cgi/local/r2/s3/&lt;資源の名前&gt;</code>(r2 のサービスに <code>ports</code> が要る)、リモートは <code>https://&lt;CLOUDFLARE_ACCOUNT_ID&gt;[.&lt;jurisdiction&gt;].r2.cloudflarestorage.com/&lt;実際の名前&gt;</code>。Worker が S3 互換の API で R2 を読み書きするとき、接続先を人が環境ごとに書かずに済むようにする(利用者の決定。2026-10-12)。使えるのは Worker の <code>environment</code> の値だけで、ほかの場所・無いバケット・決まらないとき(手元で <code>ports</code> が無い、リモートでアカウントの ID が無い)は止まる。<code>${X:-${WC_R2_STORAGE_S3}}</code> のように既定にも使える</li>
   <li><code>WC_R2_&lt;サービス&gt;_S3_KEY</code>・<code>WC_R2_&lt;サービス&gt;_S3_SECRET</code> は、手元の S3 互換の API の鍵。鍵はプロジェクトごとの乱数で、道具が作って <code>.wrangler/compose/local/s3-keys.json</code>(本人だけが読める)に置き、画面には出さない。秘密の値なので、使えるのは Worker の <code>secrets</code> の値だけ。リモートの鍵(R2 の API トークン)は道具が用意せず、アプリの側で扱う(利用者の決定 2026-10-13)。リモートでこの変数を使うと止まる(<code>${R2_KEY:-${WC_R2_STORAGE_S3_KEY}}</code> のように既定として書けば、<code>.env.&lt;環境&gt;</code> の値が入る)(利用者の決定 2026-10-12。決まった鍵は誰でも知っているので、LAN に開いた口が誰にでも読み書き・削除される)</li>
   <li><code>.env.&lt;環境&gt;</code> は git に入れない。git の中で <code>.gitignore</code> で外れていない、またはすでに git に入っていれば止まる</li>
 </ul>
@@ -266,10 +265,11 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-006"><span class="id">REQ-006</span>環境</h3>
 <ul>
   <li>環境は <code>--env</code> で選ぶ。<code>local</code> は手元、それ以外はリモート(名前は自由。<code>pr-123</code> のように並べて建てられる)</li>
-  <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>。資源の名前は、省略形はサービスの名前、複数形は <code>&lt;サービス&gt;-&lt;名前&gt;</code>(例: 省略形の <code>cache</code> は <code>shop-staging-cache</code>、<code>storage</code> の <code>files</code> は <code>shop-staging-storage-files</code>)。同じアカウントに環境を並べても名前がぶつからない(利用者の決定)</li>
+  <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker も資源も <code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code>。名前は <code>name</code>、省けばサービスの名前(例: <code>cache</code> は <code>shop--staging--cache</code>、<code>name: incoming</code> の <code>uploads</code> は <code>shop--staging--incoming</code>)。同じアカウントに複数のプロジェクトと環境を並べても名前がぶつからない(利用者の決定)</li>
+  <li>名前から、どのプロジェクトのどの環境のものかが必ず分かる(以前の版の名前(<code>-</code> 1 つの区切り)で作った環境は扱わない。利用者の決定 2026-10-13): 区切りは <code>--</code> で、プロジェクト名・環境名・サービス名・<code>name</code> には <code>--</code> を使えない(先頭と末尾の <code>-</code> も使えない)。プロジェクト名は 3 文字以上(Worker の名前が URL になるとき、3〜4 文字目の <code>--</code> は予約されているため)。道具が作る・使う・消すのは、名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる、その環境のものだけ。ほかの名前のものには触らない(利用者の決定 2026-10-13「必ず名前から誰の持ち主か判断をできるようにして下さい。削除も同様です」)</li>
   <li>決めた名前が Cloudflare の名前の決まり(長さなど)に合わなければ、何もせずに止まり、<code>name</code> で短い名前を書くよう示す</li>
-  <li><code>name</code> を書けば、その名前を使う(既存のものを使う、環境ごとに <code>${VAR}</code> で変えるなど)。同じ名前のものがすでにあれば、それを使う(作り直さない)</li>
-  <li>手元では、資源の名前(<code>cache</code>・<code>storage-files</code> など)をそのまま使う</li>
+  <li>同じ名前のものがすでにあれば、それを使う(作り直さない)。名前がこの環境のものなので、ほかのプロジェクト・環境のものを使うことは無い</li>
+  <li>手元では、サービスの名前(<code>cache</code>・<code>files</code> など)をそのまま使う</li>
   <li>リモートの環境は、<code>.env.&lt;環境&gt;</code> に <code>CLOUDFLARE_ACCOUNT_ID=&lt;アカウントの ID&gt;</code> を書いたアカウントでだけ操作する(<code>--dry-run</code> も含む、Cloudflare に触れるすべての操作。<code>build</code> は触れないので確かめない)。書いていなければ、何もせずに止まり、ログインで使えるアカウントを示す。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> がそれと違うとき、ログインがそのアカウントを使えないときも止まる。意図しないアカウントへの展開・削除を防ぐため(利用者の決定。2026-10-12)。手元では要らない</li>
   <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
   <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
@@ -313,7 +313,8 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>依存の順に: 資源が無ければ作る → 移行を当てる → Worker をシークレットとともに展開する(compose ファイルから消えたシークレットは展開のあとで消す)</li>
   <li>何度打っても同じ結果になる。変わっていないものは変えない</li>
   <li>移行が失敗したら、その D1 を使う Worker は展開しない。どこまで済み、どこでなぜ止まったかを示し、それより後は行わない</li>
-  <li>この PC から展開した Worker のうち、compose ファイルから消えたサービスのものは示すだけで、<code>--remove-orphans</code> のときだけ消す(docker と同じ)。データは消さない</li>
+  <li>名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)で、compose ファイルに無い Worker は、<code>up</code> が消す(Cloudflare には切り離しが無く、残った Worker は公開の URL で動き続けるため。利用者の決定 2026-10-13)。どの PC から打っても同じものを消す。Durable Object を持つ Worker は、消すと保存データも消えるので、Durable Object のクラスと同じく、消す・残す・やめるを選ばせる(端末で選べない場では止まる)</li>
+  <li><code>up --purge</code> は、さらに、名前がこの環境のもので compose ファイルに無い D1・KV・R2・Queue も消す。データが消えるので、消すものを示して環境名の打ち直しで確かめる(端末で打ち直せない場では止まる)。<code>--purge</code> の無い <code>up</code> は、それらを示すだけで消さない(利用者の決定 2026-10-13)</li>
   <li>compose ファイルから消えた Durable Object のクラスは、<code>up</code> がその場で、消す・残す・やめるのどれかを選ばせる。消すと保存データも消える(消すときは環境名を打つ)。残すときは、コードからもクラスを消さない。やめると何も変えずに止まる。端末で選べない場(CI)では止まる。保存データの形の移行はアプリの側で扱う(利用者の決定 2026-10-13)</li>
   <li>移行を当てるときに確認を求めない</li>
 </ul>
@@ -322,6 +323,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <ul>
   <li><code>down [サービス…]</code> は Worker を依存の逆の順に下ろし、データは残す。そのあとの <code>up</code> で元に戻る</li>
   <li><code>down --purge [サービス…]</code> はデータも消す。下ろさないサービスがつながる資源は消さずに止まる</li>
+  <li>サービスを指定しない <code>down --purge</code> は、名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker と資源をすべて消す。compose ファイルから消したものも含み、環境に何も残らない(利用者の決定 2026-10-13)</li>
   <li>消す前に消すもの(Worker・資源の名前。手元は中身の数も。リモートは中身の数を出さない(利用者の決定 2026-10-13))を示し、環境名を打ち直して確かめる(手元の <code>--purge</code> も)。打ち直しを受けられない場では止まる。リモートの <code>down</code> は Worker を消すので、<code>--purge</code> が無くても確かめる。手元の <code>down</code>(データを消さない)は確かめない</li>
 </ul>
 
@@ -366,7 +368,6 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-017"><span class="id">REQ-017</span>道具のサービス</h3>
 <ul>
   <li>道具のサービスは手元(<code>--env local</code>)だけに置く。リモートの環境には置かない</li>
-  <li>以前の版がリモートに置いた道具の Worker(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>)は、<code>up</code> と、サービスを指定しない <code>down</code> が消す</li>
 </ul>
 
 <h3 id="req-018"><span class="id">REQ-018</span>手元と本番の違いの知らせ</h3>

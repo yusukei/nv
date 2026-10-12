@@ -9,6 +9,19 @@ pub fn is_ja() -> bool {
     *JAPANESE.get_or_init(detect)
 }
 
+/// `println!` for what a command prints as its result: a reader that stops
+/// early (`ps | head`, `ps | grep -q`) ends the command quietly instead of
+/// a panic on the broken pipe.
+#[macro_export]
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if writeln!(std::io::stdout(), $($arg)*).is_err() {
+            std::process::exit(0);
+        }
+    }};
+}
+
 /// `tr!("日本語 {x}", "English {x}")`: pick the message for the display language.
 #[macro_export]
 macro_rules! tr {

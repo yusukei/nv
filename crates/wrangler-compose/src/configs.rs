@@ -108,7 +108,7 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     if !dos.is_empty() {
         cfg.insert("durable_objects".into(), json!({ "bindings": dos }));
     }
-    if let Some(e) = crate::remote::do_exports(&w.durable_objects, None, &[]) {
+    if let Some(e) = crate::remote::do_exports(&w.durable_objects, None) {
         cfg.insert("exports".into(), e);
     }
     if let Some(dir) = &w.assets {
@@ -666,6 +666,66 @@ export default {
             objects: r.objects.map((o) => ({ key: o.key, size: o.size, etag: o.etag, http: o.httpMetadata || {}, custom: o.customMetadata || {} })),
             cursor: r.truncated ? r.cursor : null,
           });
+        }
+        if (op === "public" && (request.method === "GET" || request.method === "HEAD")) {
+          // A public URL follows HTTP's own rules (RFC 9110): ETag and
+          // Last-Modified, conditional requests (412 / 304) and one byte
+          // range (206 / 416), as R2's public URLs do.
+          const head = await b.head(name);
+          if (!head) return json({ error: "not found" }, 404);
+          const size = head.size;
+          const base = {
+            ...sendMeta({ http: head.httpMetadata || {}, custom: {} }),
+            etag: head.httpEtag,
+            "last-modified": head.uploaded.toUTCString(),
+            "accept-ranges": "bytes",
+          };
+          const h = request.headers;
+          const sec = (ms) => Math.floor(ms / 1000);
+          const modified = sec(head.uploaded.getTime());
+          const dateOf = (v) => { const t = Date.parse(v || ""); return isNaN(t) ? null : sec(t); };
+          const tags = (v) => v.split(",").map((t) => t.trim()).filter(Boolean);
+          const strong = (v) => v.trim() === "*" || tags(v).some((t) => t === head.httpEtag);
+          const weak = (v) => v.trim() === "*" || tags(v).some((t) => t.replace(/^W\//, "") === head.httpEtag);
+          const im = h.get("if-match"), ius = dateOf(h.get("if-unmodified-since"));
+          const inm = h.get("if-none-match"), ims = dateOf(h.get("if-modified-since"));
+          if (im !== null ? !strong(im) : ius !== null && modified > ius) {
+            return new Response(null, { status: 412, headers: base });
+          }
+          if (inm !== null ? weak(inm) : ims !== null && modified <= ims) {
+            return new Response(null, { status: 304, headers: base });
+          }
+          let range = null;
+          const rh = h.get("range");
+          const ir = h.get("if-range");
+          const rangeHolds = ir === null || (ir.startsWith('"') || ir.startsWith("W/") ? ir === head.httpEtag : dateOf(ir) === modified);
+          const m = rh && rangeHolds ? /^bytes=(\d*)-(\d*)$/.exec(rh.trim()) : null;
+          if (m && (m[1] !== "" || m[2] !== "")) {
+            let start, end;
+            if (m[1] === "") {
+              start = Math.max(0, size - Number(m[2]));
+              end = size - 1;
+              if (Number(m[2]) === 0) start = size;
+            } else {
+              start = Number(m[1]);
+              end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+              if (m[2] !== "" && Number(m[2]) < start) start = size;
+            }
+            if (start >= size || end < start) {
+              return new Response(null, { status: 416, headers: { ...base, "content-range": `bytes */${size}` } });
+            }
+            range = { start, end };
+          }
+          const len = range ? range.end - range.start + 1 : size;
+          const headers = { ...base, "content-length": String(len) };
+          if (range) headers["content-range"] = `bytes ${range.start}-${range.end}/${size}`;
+          const status = range ? 206 : 200;
+          if (request.method === "HEAD" || len === 0) return new Response(null, { status, headers });
+          const o = range
+            ? await b.get(name, { range: { offset: range.start, length: len } })
+            : await b.get(name);
+          if (!o) return json({ error: "not found" }, 404);
+          return new Response(o.body, { status, headers });
         }
         if (op === "object" && request.method === "GET") {
           const o = await b.get(name);

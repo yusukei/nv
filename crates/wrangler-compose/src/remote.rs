@@ -26,7 +26,7 @@ pub struct Res {
     pub kind: &'static str,
     pub key: String,
     pub service: String,
-    /// Its name on Cloudflare (`name:`, or `<project>-<env>-<key>`).
+    /// Its name on Cloudflare: `<project>--<env>--<name: or service>`.
     pub name: String,
     pub jurisdiction: Option<String>,
     pub storage_class: Option<String>,
@@ -38,8 +38,6 @@ pub struct Names {
     /// Worker service → script name.
     pub workers: BTreeMap<String, String>,
     pub resources: Vec<Res>,
-    /// The data service older versions deployed (deleted when found).
-    pub data: String,
 }
 
 impl Names {
@@ -48,18 +46,21 @@ impl Names {
     }
 }
 
+/// `<project>--<env>--`: every name of this environment starts with it, and
+/// nothing else does (REQ-006), so the name alone tells whose a thing is.
+pub fn env_prefix(c: &Compose, env: &str) -> String {
+    format!("{}--{env}--", c.name)
+}
+
 pub fn names(c: &Compose, env: &str) -> Result<Names> {
-    let prefix = format!("{}-{env}-", c.name);
+    let prefix = env_prefix(c, env);
     let mut workers = BTreeMap::new();
     let mut resources = Vec::new();
     let mut bad = Vec::new();
     for s in &c.services {
         match &s.kind {
-            Kind::Worker(w) => {
-                let name = w
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("{prefix}{}", s.name));
+            Kind::Worker(_) => {
+                let name = format!("{prefix}{}", s.cloud_name());
                 if let Some(why) = check_name("worker", &name) {
                     bad.push(format!("services.{}: {name}: {why}", s.name));
                 }
@@ -113,9 +114,6 @@ pub fn names(c: &Compose, env: &str) -> Result<Names> {
     Ok(Names {
         workers,
         resources,
-        // Only looked for, to delete one an older version left (REQ-017):
-        // never deployed, so its length never stops anything.
-        data: format!("{prefix}wc-data"),
     })
 }
 
@@ -132,7 +130,7 @@ fn res(
         kind,
         key: key.to_string(),
         service: s.name.clone(),
-        name: name.clone().unwrap_or_else(|| format!("{prefix}{key}")),
+        name: format!("{prefix}{}", name.as_deref().unwrap_or(&s.name)),
         jurisdiction,
         storage_class,
     }
@@ -182,7 +180,6 @@ struct Seen {
     /// Script name → its Durable Object classes on Cloudflare.
     classes: BTreeMap<String, Vec<String>>,
     /// (script, class) of namespaces on the old key-value storage.
-    legacy_kv: BTreeSet<(String, String)>,
     subdomain: Option<String>,
 }
 
@@ -248,16 +245,12 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
         .filter_map(|q| Some((q["queue_name"].as_str()?.to_string(), q)))
         .collect();
     let mut classes: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut legacy_kv = BTreeSet::new();
     for ns in cf.list("/workers/durable_objects/namespaces")? {
         if let (Some(script), Some(class)) = (ns["script"].as_str(), ns["class"].as_str()) {
             classes
                 .entry(script.to_string())
                 .or_default()
                 .push(class.to_string());
-            if ns["use_sqlite"] == false {
-                legacy_kv.insert((script.to_string(), class.to_string()));
-            }
         }
     }
     Ok(Seen {
@@ -267,12 +260,58 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
         r2,
         queues,
         classes,
-        legacy_kv,
         subdomain: cf.workers_subdomain()?,
     })
 }
 
+/// Something on Cloudflare whose name says it is this environment's
+/// (REQ-006): only these are ever deleted.
+struct Found {
+    kind: &'static str,
+    name: String,
+    /// D1 uuid, KV id or queue id; the bucket name for R2.
+    id: String,
+    /// R2 only: the jurisdiction ("default" for none).
+    jurisdiction: String,
+}
+
 impl Seen {
+    /// Workers named `<project>--<env>--…`.
+    fn env_workers(&self, prefix: &str) -> Vec<String> {
+        self.scripts
+            .keys()
+            .filter(|n| n.starts_with(prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// D1, KV, R2 and queues named `<project>--<env>--…`.
+    fn env_resources(&self, prefix: &str) -> Vec<Found> {
+        let mut out = Vec::new();
+        for (name, id) in &self.d1 {
+            if name.starts_with(prefix) {
+                out.push(Found { kind: "d1", name: name.clone(), id: id.clone(), jurisdiction: String::new() });
+            }
+        }
+        for (name, id) in &self.kv {
+            if name.starts_with(prefix) {
+                out.push(Found { kind: "kv", name: name.clone(), id: id.clone(), jurisdiction: String::new() });
+            }
+        }
+        for (j, name) in &self.r2 {
+            if name.starts_with(prefix) {
+                out.push(Found { kind: "r2", name: name.clone(), id: name.clone(), jurisdiction: j.clone() });
+            }
+        }
+        for (name, q) in &self.queues {
+            if name.starts_with(prefix) {
+                let id = q["queue_id"].as_str().unwrap_or_default().to_string();
+                out.push(Found { kind: "queue", name: name.clone(), id, jurisdiction: String::new() });
+            }
+        }
+        out
+    }
+
     fn has(&self, r: &Res) -> bool {
         match r.kind {
             "d1" => self.d1.contains_key(&r.name),
@@ -368,11 +407,35 @@ fn hash_of(parts: &[&[u8]]) -> String {
 /// either way, so a dry run stops where the real one would).
 struct Act {
     dry: bool,
+    /// Collects what would be done instead of saying it (the plan).
+    sink: Option<std::cell::RefCell<Vec<String>>>,
 }
 
 impl Act {
+    fn new(dry: bool) -> Act {
+        Act { dry, sink: None }
+    }
+
+    /// Changes nothing; what would be done is kept for the plan.
+    fn collect() -> Act {
+        Act {
+            dry: true,
+            sink: Some(std::cell::RefCell::new(Vec::new())),
+        }
+    }
+
+    fn taken(&self) -> Vec<String> {
+        self.sink
+            .as_ref()
+            .map(|s| s.borrow_mut().drain(..).collect())
+            .unwrap_or_default()
+    }
+
     fn run(&self, what: String, f: impl FnOnce() -> Result<()>) -> Result<()> {
-        if self.dry {
+        if let Some(sink) = &self.sink {
+            sink.borrow_mut().push(what);
+            Ok(())
+        } else if self.dry {
             say(crate::tr!("(dry-run) {what}", "(dry run) {what}"));
             Ok(())
         } else {
@@ -407,10 +470,10 @@ fn run_wrangler(mut cmd: std::process::Command, what: String) -> Result<()> {
 
 // ---------------------------------------------------------------- up
 
-pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Result<()> {
+pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> {
     let services = ctx.compose.closure(only)?;
     let n = names(&ctx.compose, &ctx.env)?;
-    let act = Act { dry: ctx.dry_run };
+    let act = Act::new(ctx.dry_run);
 
     // 1. The same bundles as locally (REQ-010, DES-007), before anything on
     //    Cloudflare.
@@ -480,19 +543,66 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
             }
         }
     }
-    let orphans = orphans(ctx, &n, &seen, &records);
-    if !orphans.is_empty() {
-        if remove_orphans {
+    // This environment's Workers the compose file no longer has (by name,
+    // REQ-006): they would keep answering on their URLs, so up deletes them.
+    // One with Durable Objects takes their data along: delete, keep or stop.
+    let prefix = env_prefix(&ctx.compose, &ctx.env);
+    let known: BTreeSet<&String> = n.workers.values().collect();
+    let mut orphans = Vec::new();
+    for w in seen.env_workers(&prefix) {
+        if known.contains(&w) {
+            continue;
+        }
+        let classes = seen.classes.get(&w).cloned().unwrap_or_default();
+        let delete = if classes.is_empty() {
+            say(crate::tr!(
+                "compose ファイルに無い Worker {w} を消します",
+                "Worker {w} is not in the compose file; it will be deleted"
+            ));
+            true
+        } else {
+            let what = crate::tr!(
+                "compose ファイルに無い Worker {w} は Durable Object {} を持っています。消すと保存データも消えます",
+                "Worker {w} is not in the compose file and has Durable Objects {}; deleting it deletes their data",
+                classes.join(", ")
+            );
+            if ctx.dry_run {
+                say(crate::tr!(
+                    "{what}(up のときに、消すか残すかを聞きます)",
+                    "{what} (up asks whether to delete or keep it)"
+                ));
+                false
+            } else {
+                crate::confirm::delete_or_keep(&ctx.env, &what)?
+            }
+        };
+        if delete {
+            orphans.push(w);
+        }
+    }
+    // Its D1, KV, R2 and queues the compose file no longer has: shown, and
+    // deleted only with --purge (REQ-010).
+    let in_compose: BTreeSet<&str> = n.resources.iter().map(|r| r.name.as_str()).collect();
+    let ours = seen.env_resources(&prefix);
+    let gone: Vec<&Found> = ours
+        .iter()
+        .filter(|f| !in_compose.contains(f.name.as_str()))
+        .collect();
+    if !gone.is_empty() {
+        let list = gone
+            .iter()
+            .map(|f| format!("{} {}", kind_label(f.kind), f.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if purge {
             asks.push(crate::tr!(
-                "compose ファイルに無い Worker を消します: {}(データは残ります)",
-                "Workers not in the compose file will be deleted: {} (data stays)",
-                orphans.join(", ")
+                "compose ファイルに無い資源を、データごと消します: {list}",
+                "resources not in the compose file will be deleted with their data: {list}"
             ));
         } else {
             say(crate::tr!(
-                "compose ファイルに無い Worker があります: {}(消すには --remove-orphans)",
-                "Workers not in the compose file remain: {} (--remove-orphans deletes them)",
-                orphans.join(", ")
+                "compose ファイルに無い資源があります: {list}(データごと消すには up --purge)",
+                "resources not in the compose file remain: {list} (up --purge deletes them with their data)"
             ));
         }
     }
@@ -508,8 +618,121 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
         }
     }
 
-    // 4. Resources: make what is missing (REQ-010).
+    // The plan (REQ-014): what changes against what Cloudflare has now,
+    // the same from every PC. A dry run ends with it.
     let mut ids = seen.ids(&n);
+    let mut plan = Plan::default();
+    for s in &services {
+        let in_service: Vec<&Res> = n.resources.iter().filter(|r| r.service == s.name).collect();
+        for r in in_service {
+            let exists = seen.has(r);
+            let mut details = Vec::new();
+            if let Kind::R2(list) = &s.kind {
+                for b in list {
+                    let collect = Act::collect();
+                    bucket_settings(&cf, &collect, r, &b.spec, &n, exists)?;
+                    details.extend(collect.taken());
+                }
+            }
+            if let Kind::D1(list) = &s.kind {
+                for d in list {
+                    let Some(dir) = &d.spec.migrations else { continue };
+                    let pending = match ids.d1.get(&d.key) {
+                        Some((_, id)) => pending_remote(&cf, id, dir)?,
+                        None => migration_files(dir)?,
+                    };
+                    if !pending.is_empty() {
+                        details.push(crate::tr!(
+                            "移行を当てる: {}",
+                            "migrations to apply: {}",
+                            pending.join(", ")
+                        ));
+                    }
+                }
+            }
+            let sign = if !exists {
+                '+'
+            } else if details.is_empty() {
+                '='
+            } else {
+                '~'
+            };
+            plan.add(sign, format!("{} {}", kind_label(r.kind), r.name), details);
+        }
+        if let Kind::Worker(w) = &s.kind {
+            let script = n.workers[&s.name].clone();
+            let declared: Vec<String> = w
+                .durable_objects
+                .iter()
+                .chain(kept_classes.get(&s.name).into_iter().flatten())
+                .cloned()
+                .collect();
+            let cfg = configs::remote_worker(
+                &s.name,
+                w,
+                &builts[&s.name],
+                &ids,
+                &cf.account,
+                do_exports(&declared, dropped_classes.get(&s.name)),
+            );
+            let want = wanted_shape(&cfg, &w.secrets);
+            let tag = code_tag(&builts[&s.name], &cfg);
+            if !seen.scripts.contains_key(&script) {
+                let mut d = shape_changes(&Shape::default(), &want);
+                d.retain(|x| !x.starts_with("compatibility_flags: [] → []"));
+                plan.add('+', format!("Worker {script}"), d);
+                continue;
+            }
+            let (now, deployed) = current_shape(&cf, &script)?;
+            let mut d = shape_changes(&now, &want);
+            if deployed.as_deref() != Some(tag.as_str()) {
+                d.push(crate::tr!("コード: 変わる", "code: changes"));
+            }
+            for c in dropped_classes.get(&s.name).into_iter().flatten() {
+                d.push(crate::tr!(
+                    "Durable Object のクラス {c}: 消す(保存データも消える)",
+                    "Durable Object class {c}: delete (with its data)"
+                ));
+            }
+            if d.is_empty() {
+                plan.add('=', format!("Worker {script}"), d);
+            } else {
+                plan.changed.insert(s.name.clone());
+                plan.add('~', format!("Worker {script}"), d);
+            }
+        }
+    }
+    for o in &orphans {
+        plan.add('-', format!("Worker {o}"), vec![]);
+    }
+    for g in &gone {
+        if purge {
+            plan.add(
+                '-',
+                format!("{} {}", kind_label(g.kind), g.name),
+                vec![crate::tr!("データも消える", "with its data")],
+            );
+        } else {
+            plan.add(
+                '=',
+                format!("{} {}", kind_label(g.kind), g.name),
+                vec![crate::tr!(
+                    "compose ファイルに無い(消すには up --purge)",
+                    "not in the compose file (up --purge deletes it)"
+                )],
+            );
+        }
+    }
+    plan.show();
+    if ctx.dry_run {
+        say(crate::tr!(
+            "dry-run なので何も変えていません",
+            "dry run: nothing was changed"
+        ));
+        return Ok(());
+    }
+
+    // 4. Resources: make what is missing (REQ-010).
     let wanted: BTreeSet<&str> = services
         .iter()
         .flat_map(|s| crate::compose::resource_keys(s))
@@ -539,9 +762,6 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
         }
     }
 
-    // 6. Nothing of the tool runs in a remote environment (REQ-017): a data
-    //    service an older version deployed goes, with its token here.
-    remove_old_data_service(ctx, &cf, &act, &n, &seen, &mut records)?;
 
     // 7. In dependency order: migrations, then Workers (REQ-010). A failed
     //    migration stops everything after it.
@@ -606,6 +826,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
                     &builts[&s.name],
                     dropped_classes.get(&s.name),
                     kept_classes.get(&s.name),
+                    plan.changed.contains(&s.name),
                     &mut records,
                 )?;
             }
@@ -613,17 +834,21 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
         }
     }
 
-    // 8. Dropped Workers, only when asked (REQ-010).
-    if remove_orphans {
-        for o in &orphans {
-            act.run(
-                crate::tr!("消す: Worker {o}", "deleting Worker {o}"),
-                || {
-                    delete_worker(&cf, &seen, o)?;
-                    remove_record(&mut records, o);
-                    Ok(())
-                },
-            )?;
+    // 8. This environment's Workers and (with --purge) resources the compose
+    //    file no longer has (REQ-010).
+    for o in &orphans {
+        act.run(
+            crate::tr!("消す: Worker {o}", "deleting Worker {o}"),
+            || {
+                delete_worker(&cf, &seen, o)?;
+                remove_record(&mut records, o);
+                Ok(())
+            },
+        )?;
+    }
+    if purge {
+        for r in &gone {
+            delete_found(&cf, &act, &seen, &ours, r)?;
         }
     }
     if ctx.dry_run {
@@ -1026,38 +1251,235 @@ fn normalize(v: &Value) -> Value {
     }
 }
 
-/// A data service (`<project>-<env>-wc-data`) that versions before 0.1.11
-/// deployed: reachable on workers.dev with full access to the environment's
-/// data, so it is deleted, and this machine's token for it too.
-fn remove_old_data_service(
-    ctx: &Ctx,
-    cf: &Cf,
-    act: &Act,
-    n: &Names,
-    seen: &Seen,
-    records: &mut Value,
-) -> Result<()> {
-    if seen.scripts.contains_key(&n.data) {
-        act.run(
-            crate::tr!(
-                "以前の版が置いた道具のデータのサービス {} を消す",
-                "deleting {}, the data service an older version deployed",
-                n.data
-            ),
-            || {
-                run_wrangler(
-                    wrangler(ctx, cf, &["delete", "--name", &n.data, "--force"]),
-                    crate::tr!("{} を消せません", "cannot delete {}", n.data),
-                )?;
-                records["data"] = Value::Null;
-                Ok(())
-            },
-        )?;
+/// What a Worker is, the same from every PC: its bundle and settings
+/// without local paths or secrets. Deployed as the version's tag, so the
+/// next plan compares with what Cloudflare runs (REQ-014).
+fn code_tag(built: &Built, cfg: &Value) -> String {
+    let mut c = cfg.clone();
+    if let Some(o) = c.as_object_mut() {
+        for k in ["main", "base_dir", "account_id"] {
+            o.shift_remove(k);
+        }
     }
-    if !ctx.dry_run {
-        let _ = std::fs::remove_file(ctx.env_dir().join("data-token"));
+    // Deleted-class tombstones only matter once (as in deploy_worker).
+    if let Some(e) = c.get_mut("exports").and_then(Value::as_object_mut) {
+        e.retain(|_, v| v["state"] != "deleted");
+        if e.is_empty() {
+            c.as_object_mut().map(|o| o.shift_remove("exports"));
+        }
     }
-    Ok(())
+    let h = hash_of(&[built.hash.as_bytes(), c.to_string().as_bytes()]);
+    format!("wc-{}", &h[..16])
+}
+
+/// A Worker's settings that a plan shows: environment values, bindings
+/// (name → type), crons and secret names.
+#[derive(Default, PartialEq)]
+struct Shape {
+    vars: BTreeMap<String, String>,
+    bindings: BTreeMap<String, String>,
+    crons: Vec<String>,
+    secrets: BTreeSet<String>,
+    date: String,
+    flags: Vec<String>,
+}
+
+fn wanted_shape(cfg: &Value, secrets: &BTreeMap<String, String>) -> Shape {
+    let mut sh = Shape {
+        date: cfg["compatibility_date"].as_str().unwrap_or_default().to_string(),
+        flags: cfg["compatibility_flags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str().map(str::to_string))
+            .collect(),
+        secrets: secrets.keys().cloned().collect(),
+        crons: cfg["triggers"]["crons"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.as_str().map(str::to_string))
+            .collect(),
+        ..Shape::default()
+    };
+    for (k, v) in cfg["vars"].as_object().into_iter().flatten() {
+        sh.vars.insert(
+            k.clone(),
+            v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()),
+        );
+    }
+    let mut add = |list: &Value, key: &str, t: &str| {
+        for b in list.as_array().into_iter().flatten() {
+            if let Some(name) = b[key].as_str() {
+                sh.bindings.insert(name.to_string(), t.to_string());
+            }
+        }
+    };
+    add(&cfg["d1_databases"], "binding", "d1");
+    add(&cfg["r2_buckets"], "binding", "r2_bucket");
+    add(&cfg["kv_namespaces"], "binding", "kv_namespace");
+    add(&cfg["queues"]["producers"], "binding", "queue");
+    add(&cfg["services"], "binding", "service");
+    add(&cfg["durable_objects"]["bindings"], "name", "durable_object_namespace");
+    sh
+}
+
+/// What Cloudflare runs now for a Worker, and its version's tag.
+fn current_shape(cf: &Cf, script: &str) -> Result<(Shape, Option<String>)> {
+    let get = |path: &str| match cf.get(path) {
+        Ok(v) => Ok(v),
+        Err(e) if cf::is_missing(&e) => Ok(Value::Null),
+        Err(e) => Err(e),
+    };
+    let settings = get(&format!("/workers/scripts/{script}/settings"))?;
+    let mut sh = Shape {
+        date: settings["compatibility_date"].as_str().unwrap_or_default().to_string(),
+        flags: settings["compatibility_flags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str().map(str::to_string))
+            .collect(),
+        ..Shape::default()
+    };
+    for b in settings["bindings"].as_array().into_iter().flatten() {
+        let (Some(name), Some(t)) = (b["name"].as_str(), b["type"].as_str()) else {
+            continue;
+        };
+        match t {
+            "plain_text" => {
+                sh.vars
+                    .insert(name.into(), b["text"].as_str().unwrap_or_default().into());
+            }
+            "json" => {
+                sh.vars.insert(name.into(), b["json"].to_string());
+            }
+            "secret_text" => {
+                sh.secrets.insert(name.into());
+            }
+            // Not a binding of the Worker's own (what a deploy keeps).
+            "inherit" => {}
+            other => {
+                sh.bindings.insert(name.into(), other.into());
+            }
+        }
+    }
+    let sched = get(&format!("/workers/scripts/{script}/schedules"))?;
+    sh.crons = sched["schedules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c["cron"].as_str().map(str::to_string))
+        .collect();
+    for s in get(&format!("/workers/scripts/{script}/secrets"))?
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        if let Some(n) = s["name"].as_str() {
+            sh.secrets.insert(n.into());
+        }
+    }
+    let deps = get(&format!("/workers/scripts/{script}/deployments"))?;
+    let version = deps["deployments"][0]["versions"][0]["version_id"]
+        .as_str()
+        .map(str::to_string);
+    let tag = match version {
+        Some(v) => get(&format!("/workers/scripts/{script}/versions/{v}"))?["annotations"]
+            ["workers/tag"]
+            .as_str()
+            .map(str::to_string),
+        None => None,
+    };
+    Ok((sh, tag))
+}
+
+/// Before → after of each setting that differs (secrets by name only).
+fn shape_changes(now: &Shape, want: &Shape) -> Vec<String> {
+    let mut out = Vec::new();
+    if now.date != want.date {
+        out.push(format!("compatibility_date: {} → {}", now.date, want.date));
+    }
+    if now.flags != want.flags {
+        out.push(format!(
+            "compatibility_flags: [{}] → [{}]",
+            now.flags.join(", "),
+            want.flags.join(", ")
+        ));
+    }
+    for (k, v) in &want.vars {
+        match now.vars.get(k) {
+            None => out.push(format!("environment.{k}: + {v:?}")),
+            Some(old) if old != v => out.push(format!("environment.{k}: {old:?} → {v:?}")),
+            _ => {}
+        }
+    }
+    for k in now.vars.keys().filter(|k| !want.vars.contains_key(*k)) {
+        out.push(format!("environment.{k}: -"));
+    }
+    for (k, t) in &want.bindings {
+        match now.bindings.get(k) {
+            None => out.push(format!("bindings.{k}: + {t}")),
+            Some(old) if old != t => out.push(format!("bindings.{k}: {old} → {t}")),
+            _ => {}
+        }
+    }
+    for k in now.bindings.keys().filter(|k| !want.bindings.contains_key(*k)) {
+        out.push(format!("bindings.{k}: -"));
+    }
+    if now.crons != want.crons {
+        out.push(format!(
+            "crons: [{}] → [{}]",
+            now.crons.join(", "),
+            want.crons.join(", ")
+        ));
+    }
+    for k in want.secrets.difference(&now.secrets) {
+        out.push(crate::tr!("secrets.{k}: +(値は出さない)", "secrets.{k}: + (value not shown)"));
+    }
+    for k in now.secrets.difference(&want.secrets) {
+        out.push(format!("secrets.{k}: -"));
+    }
+    out
+}
+
+/// The plan of an up (REQ-014), shown like terraform plan.
+#[derive(Default)]
+struct Plan {
+    lines: Vec<(char, String, Vec<String>)>,
+    /// Worker services whose settings or code differ from Cloudflare's.
+    changed: BTreeSet<String>,
+}
+
+impl Plan {
+    fn add(&mut self, sign: char, what: String, details: Vec<String>) {
+        self.lines.push((sign, what, details));
+    }
+
+    fn show(&self) {
+        say(crate::tr!("実行の計画:", "plan:"));
+        let label = |c: char| match c {
+            '+' => crate::tr!("作る", "create"),
+            '~' => crate::tr!("変える", "change"),
+            '-' => crate::tr!("消す", "delete"),
+            _ => crate::tr!("変わらない", "unchanged"),
+        };
+        for (sign, what, details) in &self.lines {
+            eprintln!("  {sign} {:<10} {what}", label(*sign));
+            for d in details {
+                eprintln!("      {d}");
+            }
+        }
+        let count = |c: char| self.lines.iter().filter(|(s, _, _)| *s == c).count();
+        say(crate::tr!(
+            "作る {}・変える {}・消す {}・変わらない {}",
+            "{} to create, {} to change, {} to delete, {} unchanged",
+            count('+'),
+            count('~'),
+            count('-'),
+            count('=')
+        ));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1073,24 +1495,20 @@ fn deploy_worker(
     built: &Built,
     dropped: Option<&Vec<String>>,
     kept: Option<&Vec<String>>,
+    changed_on_cloud: bool,
     records: &mut Value,
 ) -> Result<()> {
     let script = n.workers[&s.name].clone();
     let exists = seen.scripts.contains_key(&script);
-    let legacy: Vec<String> = seen
-        .legacy_kv
-        .iter()
-        .filter(|(sc, _)| *sc == script)
-        .map(|(_, c)| c.clone())
-        .collect();
     let declared: Vec<String> = w
         .durable_objects
         .iter()
         .chain(kept.into_iter().flatten())
         .cloned()
         .collect();
-    let exports = do_exports(&declared, dropped, &legacy);
+    let exports = do_exports(&declared, dropped);
     let cfg = configs::remote_worker(&s.name, w, built, ids, &cf.account, exports);
+    let tag = code_tag(built, &cfg);
     let secrets = &w.secrets;
     let secret_text = serde_json::to_string(&secrets)?;
     // Deleted-class tombstones only matter once: the next deploy without
@@ -1107,7 +1525,10 @@ fn deploy_worker(
         same.to_string().as_bytes(),
         secret_text.as_bytes(),
     ]);
-    let unchanged = exists && records["workers"][&script]["hash"] == hash.as_str();
+    // Unchanged both on Cloudflare (what any PC sees) and since this PC's
+    // last deploy (which also covers the secrets' values).
+    let unchanged =
+        exists && !changed_on_cloud && records["workers"][&script]["hash"] == hash.as_str();
     if unchanged {
         say(crate::tr!(
             "{}: 変わっていないので展開しません",
@@ -1133,7 +1554,7 @@ fn deploy_worker(
                 std::fs::create_dir_all(&dir)?;
                 let cfg_path = dir.join("wrangler.json");
                 std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg)?)?;
-                let mut cmd = wrangler(ctx, cf, &["deploy", "-c"]);
+                let mut cmd = wrangler(ctx, cf, &["deploy", "--tag", &tag, "-c"]);
                 cmd.arg(&cfg_path);
                 let file = dir.join("secrets.json");
                 if !secrets.is_empty() {
@@ -1211,23 +1632,14 @@ fn deploy_worker(
 /// Durable Object classes, declared (DES-010): Cloudflare compares the
 /// `exports` map with what it has and creates or deletes namespaces, so no
 /// migration tags are kept. Dropped classes become `deleted` tombstones
-/// (after the user agreed); classes already on the old key-value storage
-/// keep it.
-pub fn do_exports(
-    want: &[String],
-    dropped: Option<&Vec<String>>,
-    legacy_kv: &[String],
-) -> Option<Value> {
+/// (after the user chose to delete them). Every class is SQLite-backed;
+/// the old key-value storage is not supported.
+pub fn do_exports(want: &[String], dropped: Option<&Vec<String>>) -> Option<Value> {
     let mut map = serde_json::Map::new();
     for c in want {
-        let storage = if legacy_kv.contains(c) {
-            "legacy-kv"
-        } else {
-            "sqlite"
-        };
         map.insert(
             c.clone(),
-            json!({ "type": "durable-object", "storage": storage }),
+            json!({ "type": "durable-object", "storage": "sqlite" }),
         );
     }
     for c in dropped.into_iter().flatten() {
@@ -1237,27 +1649,6 @@ pub fn do_exports(
         );
     }
     (!map.is_empty()).then(|| Value::Object(map))
-}
-
-/// Workers the compose file no longer has: only those this machine's
-/// record says the tool deployed. A name alone does not tell environments
-/// apart (`staging` and `staging-eu` share the start), so names are not
-/// matched (REQ-006).
-fn orphans(ctx: &Ctx, n: &Names, seen: &Seen, records: &Value) -> Vec<String> {
-    let known: BTreeSet<&String> = n.workers.values().collect();
-    let mut out: BTreeSet<String> = BTreeSet::new();
-    for name in records["workers"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(k, _)| k)
-    {
-        if !known.contains(name) && seen.scripts.contains_key(name) {
-            out.insert(name.clone());
-        }
-    }
-    let _ = ctx;
-    out.into_iter().collect()
 }
 
 fn remove_record(records: &mut Value, script: &str) {
@@ -1305,57 +1696,59 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         ctx.compose.closure(only)?;
     }
     let n = names(&ctx.compose, &ctx.env)?;
-    // Data that a Worker which stays still uses is never deleted (REQ-011).
-    let targets: Vec<(&'static str, String)> = if purge {
-        if only.is_empty() {
-            n.resources
-                .iter()
-                .map(|r| (r.kind, r.key.clone()))
-                .collect()
-        } else {
-            crate::local::purge_targets(&ctx.compose, only)?
-                .into_iter()
-                .filter(|(k, _)| *k != "do")
-                .collect()
-        }
-    } else {
-        Vec::new()
-    };
+    let prefix = env_prefix(&ctx.compose, &ctx.env);
     let cf = Cf::connect(ctx)?;
     let seen = look(&cf, &n)?;
-    let ids = seen.ids(&n);
-    let act = Act { dry: ctx.dry_run };
+    let act = Act::new(ctx.dry_run);
+    let ours = seen.env_resources(&prefix);
 
-    // Workers to take down, dependents first (REQ-011).
+    // Workers to take down, dependents first (REQ-011). Without services
+    // named, every Worker of this environment goes, those the compose file
+    // no longer has too.
     let order: Vec<&Service> = ctx.compose.services.iter().rev().collect();
-    let workers: Vec<(&Service, &String)> = order
+    let mut workers: Vec<(String, String)> = order
         .iter()
         .filter(|s| only.is_empty() || only.contains(&s.name))
         .filter_map(|s| match &s.kind {
             Kind::Worker(_) => {
                 let name = &n.workers[&s.name];
-                seen.scripts.contains_key(name).then_some((*s, name))
+                seen.scripts
+                    .contains_key(name)
+                    .then(|| (s.name.clone(), name.clone()))
             }
             _ => None,
         })
         .collect();
-    let data_too = only.is_empty() && seen.scripts.contains_key(&n.data);
-    let resources: Vec<&Res> = targets
-        .iter()
-        .filter_map(|(_, key)| n.res(key))
-        .filter(|r| seen.has(r))
-        .collect();
-
-    // R2 buckets cannot be emptied remotely for now, so `--purge` with one
-    // stops before anything, the dry run as well (REQ-014).
-    if let Some(r) = resources.iter().find(|r| r.kind == "r2") {
-        bail!(crate::tr!(
-            "R2 のバケット {} は、いまは --purge で消せません(作り直すまで止めています。何もしていません)",
-            "R2 bucket {} cannot be removed by --purge for now (stopped until it is rebuilt; nothing was done)",
-            r.name
-        ));
+    if only.is_empty() {
+        let known: BTreeSet<&String> = n.workers.values().collect();
+        for w in seen.env_workers(&prefix) {
+            if !known.contains(&w) {
+                workers.push(("-".into(), w));
+            }
+        }
     }
-    if workers.is_empty() && resources.is_empty() && !data_too {
+    // Data: everything of this environment, or, with services named, theirs
+    // and only when no Worker that stays still uses it (REQ-011).
+    let resources: Vec<&Found> = if !purge {
+        Vec::new()
+    } else if only.is_empty() {
+        ours.iter().collect()
+    } else {
+        let keys: BTreeSet<String> = crate::local::purge_targets(&ctx.compose, only)?
+            .into_iter()
+            .filter(|(k, _)| *k != "do")
+            .map(|(_, key)| key)
+            .collect();
+        let wanted: BTreeSet<&str> = n
+            .resources
+            .iter()
+            .filter(|r| keys.contains(&r.key))
+            .map(|r| r.name.as_str())
+            .collect();
+        ours.iter().filter(|f| wanted.contains(f.name.as_str())).collect()
+    };
+
+    if workers.is_empty() && resources.is_empty() {
         say(crate::tr!(
             "環境 {} に下ろすものはありません",
             "nothing to take down in environment {}",
@@ -1363,38 +1756,22 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         ));
         return Ok(());
     }
-    for (s, name) in &workers {
-        let classes = seen.classes.get(*name).cloned().unwrap_or_default();
-        if classes.is_empty() {
-            eprintln!(
-                "  {}",
-                crate::tr!("Worker {name}({})", "Worker {name} ({})", s.name)
-            );
+    for (svc, name) in &workers {
+        let classes = seen.classes.get(name).cloned().unwrap_or_default();
+        let what = if classes.is_empty() {
+            crate::tr!("Worker {name}({svc})", "Worker {name} ({svc})")
         } else {
-            eprintln!(
-                "  {}",
-                crate::tr!(
-                    "Worker {name}({})。Durable Object {} の中身も消えます",
-                    "Worker {name} ({}); the data of Durable Objects {} goes with it",
-                    s.name,
-                    classes.join(", ")
-                )
-            );
-        }
+            crate::tr!(
+                "Worker {name}({svc})。Durable Object {} の中身も消えます",
+                "Worker {name} ({svc}); the data of Durable Objects {} goes with it",
+                classes.join(", ")
+            )
+        };
+        eprintln!("  {what}");
     }
     // Names only: the contents are not counted remotely (REQ-011).
     for r in &resources {
         eprintln!("  {} {}", kind_label(r.kind), r.name);
-    }
-    if data_too {
-        eprintln!(
-            "  {}",
-            crate::tr!(
-                "以前の版が置いた道具のデータのサービス {}",
-                "{}, the data service an older version deployed",
-                n.data
-            )
-        );
     }
     if ctx.dry_run {
         say(crate::tr!(
@@ -1419,9 +1796,9 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
     )?;
 
     let mut records = read_records(ctx);
-    for (s, name) in &workers {
+    for (svc, name) in &workers {
         act.run(
-            crate::tr!("下ろす: {}({name})", "taking down {} ({name})", s.name),
+            crate::tr!("下ろす: {svc}({name})", "taking down {svc} ({name})"),
             || {
                 delete_worker(&cf, &seen, name)?;
                 remove_record(&mut records, name);
@@ -1430,63 +1807,98 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         )?;
     }
     for r in &resources {
-        act.run(
-            crate::tr!("消す: {} {}", "deleting {} {}", kind_label(r.kind), r.name),
-            || match r.kind {
-                "d1" => cf.delete(&format!("/d1/database/{}", ids.d1[&r.key].1)),
-                "kv" => cf.delete(&format!("/storage/kv/namespaces/{}", ids.kv[&r.key])),
-                "r2" => {
-                    cf.delete_with(&format!("/r2/buckets/{}", r.name), &headers(&jur_header(r)))
-                }
-                _ => {
-                    let q = &seen.queues[&r.name];
-                    let qid = q["queue_id"].as_str().unwrap_or_default();
-                    for c in q["consumers"].as_array().into_iter().flatten() {
-                        if let Some(cid) = c["consumer_id"].as_str() {
-                            let _ = cf.delete(&format!("/queues/{qid}/consumers/{cid}"));
-                        }
-                    }
-                    // Cloudflare refuses to delete a queue that R2 notifies (11017).
-                    for b in n.resources.iter().filter(|b| b.kind == "r2") {
-                        let h = jur_header(b);
-                        let conf = format!("/event_notifications/r2/{}/configuration", b.name);
-                        let now = match cf.get_with(&conf, &headers(&h)) {
-                            Ok(v) => v,
-                            Err(e) if cf::is_missing(&e) => continue,
-                            Err(e) => return Err(e),
-                        };
-                        for x in now["queues"].as_array().into_iter().flatten() {
-                            // R2 gives the id with dashes, Queues without.
-                            if x["queueId"].as_str().unwrap_or_default().replace('-', "") == qid {
-                                cf.delete_with(&format!("{conf}/queues/{qid}"), &headers(&h))?;
-                            }
-                        }
-                    }
-                    cf.delete(&format!("/queues/{qid}"))
-                }
-            },
-        )?;
-    }
-    if data_too {
-        remove_old_data_service(ctx, &cf, &act, &n, &seen, &mut records)?;
+        delete_found(&cf, &act, &seen, &ours, r)?;
     }
     write_records(ctx, &records)?;
     say(crate::tr!("下ろしました", "taken down"));
     Ok(())
 }
 
+/// Deletes one resource of this environment: an R2 bucket is emptied first,
+/// a queue is taken off its consumers and off the buckets that notify it.
+fn delete_found(cf: &Cf, act: &Act, seen: &Seen, ours: &[Found], r: &Found) -> Result<()> {
+    if r.kind == "r2" {
+        act.run(
+            crate::tr!("空にする: R2 {}", "emptying R2 {}", r.name),
+            || cf.r2_empty(&r.name, &r.jurisdiction).map(|_| ()),
+        )?;
+    }
+    act.run(
+        crate::tr!("消す: {} {}", "deleting {} {}", kind_label(r.kind), r.name),
+        || match r.kind {
+            "d1" => cf.delete(&format!("/d1/database/{}", r.id)),
+            "kv" => cf.delete(&format!("/storage/kv/namespaces/{}", r.id)),
+            "r2" => cf.delete_with(
+                &format!("/r2/buckets/{}", r.name),
+                &[("cf-r2-jurisdiction", r.jurisdiction.as_str())],
+            ),
+            _ => {
+                let qid = r.id.as_str();
+                if let Some(q) = seen.queues.get(&r.name) {
+                    for c in q["consumers"].as_array().into_iter().flatten() {
+                        if let Some(cid) = c["consumer_id"].as_str() {
+                            let _ = cf.delete(&format!("/queues/{qid}/consumers/{cid}"));
+                        }
+                    }
+                }
+                // Cloudflare refuses to delete a queue that R2 notifies (11017).
+                for b in ours.iter().filter(|b| b.kind == "r2") {
+                    let h = [("cf-r2-jurisdiction", b.jurisdiction.as_str())];
+                    let conf = format!("/event_notifications/r2/{}/configuration", b.name);
+                    let now = match cf.get_with(&conf, &h) {
+                        Ok(v) => v,
+                        Err(e) if cf::is_missing(&e) => continue,
+                        Err(e) => return Err(e),
+                    };
+                    for x in now["queues"].as_array().into_iter().flatten() {
+                        // R2 gives the id with dashes, Queues without.
+                        if x["queueId"].as_str().unwrap_or_default().replace('-', "") == qid {
+                            cf.delete_with(&format!("{conf}/queues/{qid}"), &h)?;
+                        }
+                    }
+                }
+                cf.delete(&format!("/queues/{qid}"))
+            }
+        },
+    )
+}
+
 // ---------------------------------------------------------------- data
 
-/// Remote D1, R2 and KV contents are not read or written by the tool:
-/// nothing of the tool runs in a remote environment (REQ-017), and Cloudflare
-/// is reached only through Wrangler. backup and restore against a remote
-/// environment wait until they are built on Wrangler's commands.
+/// A remote environment's data through Cloudflare's APIs for D1, KV and R2
+/// (REQ-013): only what is named as this environment's (REQ-006). What does
+/// not exist yet cannot be read or written; `up` makes it first.
 pub fn data_client(ctx: &Ctx) -> Result<crate::data::Client> {
-    bail!(crate::tr!(
-        "リモートの環境 {} の backup・restore は、いまは使えません(作り直すまで止めています。何もしていません)",
-        "backup and restore of the remote environment {} are unavailable for now (stopped until they are rebuilt; nothing was done)",
-        ctx.env
-    ))
+    let n = names(&ctx.compose, &ctx.env)?;
+    let cf = Cf::connect(ctx)?;
+    let seen = look(&cf, &n)?;
+    let ids = seen.ids(&n);
+    let missing: Vec<String> = n
+        .resources
+        .iter()
+        .filter(|r| matches!(r.kind, "d1" | "kv" | "r2") && !seen.has(r))
+        .map(|r| format!("{} {}", kind_label(r.kind), r.name))
+        .collect();
+    if !missing.is_empty() {
+        bail!(crate::tr!(
+            "環境 {} にまだ無いものがあります: {}。先に up してください(何もしていません)",
+            "environment {} does not have these yet: {}; run up first (nothing was done)",
+            ctx.env,
+            missing.join(", ")
+        ));
+    }
+    let r2 = n
+        .resources
+        .iter()
+        .filter(|r| r.kind == "r2")
+        .map(|r| (r.key.clone(), (r.name.clone(), jur(r))))
+        .collect();
+    Ok(crate::data::Client::remote(crate::data::Remote {
+        d1: ids.d1.iter().map(|(k, (_, id))| (k.clone(), id.clone())).collect(),
+        kv: ids.kv.clone(),
+        r2,
+        cf,
+    }))
 }
 
 // ---------------------------------------------------------------- ps
@@ -1496,8 +1908,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
     let cf = Cf::connect(ctx)?;
     let seen = look(&cf, &n)?;
     let ids = seen.ids(&n);
-    let records = read_records(ctx);
-    println!("{:<16} {:<8} {:<10} NAME / URL", "SERVICE", "TYPE", "STATE");
+    crate::out!("{:<16} {:<8} {:<10} NAME / URL", "SERVICE", "TYPE", "STATE");
     let state = |has: bool| {
         if has {
             crate::tr!("あり", "present")
@@ -1519,7 +1930,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                 {
                     where_.push(format!("https://{name}.{sub}.workers.dev"));
                 }
-                println!(
+                crate::out!(
                     "{:<16} {:<8} {:<10} {}",
                     s.name,
                     "worker",
@@ -1546,7 +1957,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                             ));
                         }
                     }
-                    println!(
+                    crate::out!(
                         "{:<16} {:<8} {:<10} {}",
                         s.name,
                         other.type_name(),
@@ -1557,25 +1968,29 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
             }
         }
     }
-    if seen.scripts.contains_key(&n.data) {
-        println!(
-            "{:<16} {:<8} {:<10} {}",
-            "wc-data",
-            "tool",
-            crate::tr!("残り", "orphan"),
-            crate::tr!(
-                "{}(以前の版が置いた道具の Worker。up が消す)",
-                "{} (left by an older version; up deletes it)",
-                n.data
-            )
-        );
-    }
-    for o in orphans(ctx, &n, &seen, &records) {
-        println!(
+    // This environment's things (by name) the compose file no longer has.
+    let prefix = env_prefix(&ctx.compose, &ctx.env);
+    let known: BTreeSet<&String> = n.workers.values().collect();
+    for o in seen.env_workers(&prefix).into_iter().filter(|w| !known.contains(w)) {
+        crate::out!(
             "{:<16} {:<8} {:<10} {o}",
             "-",
             "worker",
-            crate::tr!("残り", "orphan")
+            crate::tr!("残り(up が消す)", "orphan (up deletes it)")
+        );
+    }
+    let in_compose: BTreeSet<&str> = n.resources.iter().map(|r| r.name.as_str()).collect();
+    for f in seen
+        .env_resources(&prefix)
+        .into_iter()
+        .filter(|f| !in_compose.contains(f.name.as_str()))
+    {
+        crate::out!(
+            "{:<16} {:<8} {:<10} {}",
+            "-",
+            f.kind,
+            crate::tr!("残り(up --purge が消す)", "orphan (up --purge deletes it)"),
+            f.name
         );
     }
     Ok(())
@@ -1615,7 +2030,7 @@ pub fn logs(ctx: &Ctx, follow: bool, only: &[String]) -> Result<()> {
         std::thread::spawn(move || {
             for event in JsonObjects::new(std::io::BufReader::new(out)) {
                 for line in tail_lines(&svc, &event) {
-                    println!("{line}");
+                    crate::out!("{line}");
                 }
             }
         });
@@ -1770,15 +2185,11 @@ mod tests {
     #[test]
     fn declares_durable_object_classes() {
         let want = vec!["Counter".to_string()];
-        assert!(do_exports(&[], None, &[]).is_none());
+        assert!(do_exports(&[], None).is_none());
         assert_eq!(
-            do_exports(&want, Some(&vec!["Old".to_string()]), &[]).unwrap(),
+            do_exports(&want, Some(&vec!["Old".to_string()])).unwrap(),
             json!({ "Counter": { "type": "durable-object", "storage": "sqlite" },
                     "Old": { "type": "durable-object", "state": "deleted" } })
-        );
-        assert_eq!(
-            do_exports(&want, None, &want).unwrap()["Counter"]["storage"],
-            "legacy-kv"
         );
     }
 

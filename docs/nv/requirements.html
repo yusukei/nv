@@ -106,7 +106,7 @@
 
 <h3 id="req-003"><span class="id">REQ-003</span>sync(依存を揃える)</h3>
 <ul>
-  <li><code>nv sync</code> は、Node を揃え(REQ-002)、その版に付いている npm で、プロジェクトの <code>package-lock.json</code> のとおりに依存を入れる(<code>npm ci</code>)</li>
+  <li><code>nv sync</code> は、Node を揃え(REQ-002)、その版に付いている npm で、プロジェクトの <code>package-lock.json</code> のとおりに依存を入れる(<code>npm ci</code>)。揃っていても毎回入れ直す(壊れた <code>node_modules</code> を直す手段にする。利用者の決定 2026-10-13)</li>
   <li><code>package-lock.json</code> が無ければ、何もせずに止まる(ロックファイルを書き換える導入はしない)</li>
   <li>nv が動かす npm(<code>nv sync</code>・<code>nv run</code>・<code>nv x</code>・<code>nv add</code>・<code>nv remove</code>)は、キャッシュに <code>~/.nv/cache/npm</code> を使う(利用者の決定)</li>
 </ul>
@@ -117,6 +117,7 @@
   <li>動かす前に、Node が無い・依存が <code>package-lock.json</code> と合っていなければ、先に揃える(REQ-003)。合っていれば入れ直さない(<code>nv run</code> のたびに依存を入れ直して遅くしない)</li>
   <li>引数はシェルに解釈させず、そのまま渡す(<code>*</code>・<code>&amp;</code>・<code>|</code> などの記号も文字のまま)。Windows で <code>.cmd</code> などの形のコマンドも、同じ書き方で動く(ただし <code>package-lock.json</code> に入口の無い <code>.cmd</code> では、安全に渡せない引数(<code>%</code> など)は渡さずに止まる)</li>
   <li>標準の入出力(標準入力を含む)と終了コードは、動かしたコマンドのものをそのまま返す</li>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、Node だけを揃えて動かす(<code>nv run npm install</code> でロックファイルを作れるように。利用者の決定 2026-10-13)</li>
 </ul>
 
 <h3 id="req-005"><span class="id">REQ-005</span>x(プロジェクトに入れずに道具を動かす)</h3>

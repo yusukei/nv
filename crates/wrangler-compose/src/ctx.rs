@@ -24,14 +24,18 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn open(env: &str, dry_run: bool) -> Result<Ctx> {
+        // `--` separates the parts of names on Cloudflare (REQ-006).
         if !env
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             || env.is_empty()
+            || env.contains("--")
+            || env.starts_with('-')
+            || env.ends_with('-')
         {
             bail!(crate::tr!(
-                "環境の名前「{env}」には英小文字・数字・- だけを使ってください",
-                "environment name \"{env}\" may only use lowercase letters, digits and -"
+                "環境の名前「{env}」には英小文字・数字・- だけを使ってください(-- と、先頭・末尾の - は使えません)",
+                "environment name \"{env}\" may only use lowercase letters, digits and - (no --, and no - at either end)"
             ));
         }
         let cwd = std::env::current_dir()?;

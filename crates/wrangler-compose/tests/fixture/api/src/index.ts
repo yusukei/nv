@@ -19,6 +19,7 @@ export default {
       await env.CACHE.put("ü", "v", { metadata: { note: "日本" } });
       await env.DB.batch([
         env.DB.prepare("INSERT INTO big(rowid, n, x, t) VALUES (42, 9007199254740993, 1.0, char(1) || 'z')"),
+        env.DB.prepare("INSERT INTO big(rowid, n, x, t) VALUES (43, 0, x'00ff10', 'blob')"),
         env.DB.prepare("INSERT INTO seqd(v) VALUES ('a'), ('b'), ('c')"),
         env.DB.prepare("DELETE FROM seqd WHERE id = 3"),
       ]);
@@ -35,6 +36,10 @@ export default {
     }
     if (u.pathname === "/values") {
       const r = await env.DB.prepare("SELECT CAST(n AS TEXT) AS n, typeof(x) AS x, rowid AS id, t = char(1) || 'z' AS t FROM big").first();
+      return Response.json(r);
+    }
+    if (u.pathname === "/blob") {
+      const r = await env.DB.prepare("SELECT hex(x) AS h, typeof(x) AS t FROM big WHERE t = 'blob'").first();
       return Response.json(r);
     }
     if (u.pathname === "/next") {

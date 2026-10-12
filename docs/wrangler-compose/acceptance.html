@@ -47,7 +47,7 @@
 <p class="lead"><a href="requirements.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p>
 
 <h2 id="fixture">試験用のプロジェクト</h2>
-<p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>storage</code>(R2。バケット <code>files</code>・<code>uploads</code> の複数形)・<code>cache</code>(KV。省略形)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
+<p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>files</code> と <code>uploads</code>(R2。<code>uploads</code> は <code>name: incoming</code>)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
 
 <h3 id="ac-001"><span class="id">AC-001</span>compose ファイル <span class="refs">REQ-001</span></h3>
 <ul>
@@ -61,7 +61,7 @@
 <h3 id="ac-002"><span class="id">AC-002</span>サービスの型 <span class="refs">REQ-002</span></h3>
 <ul>
   <li>5 つの型が、手元とリモートの両方で、それぞれ Worker・D1・R2・KV・Queue として建つ。知らない <code>type</code> は止まる</li>
-  <li>D1・R2・KV・Queue のそれぞれで、省略形のサービスは資源 1 つ、複数形のサービスは並べた数だけ資源になる。1 つのサービスに両方を書くと止まる。別のサービスに同じ名前の資源があっても、別の資源として建つ</li>
+  <li>D1・R2・KV・Queue のそれぞれで、1 つのサービスが資源 1 つになる。<code>buckets</code> などの複数形を書くと、サービスを分けるよう出て止まる。<code>name</code> が同じプロジェクトの別のサービスと重なると止まる</li>
   <li>R2 のバケットの <code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> が、リモートのバケットの設定に入っている。手元では <code>public</code>・<code>cors</code>・<code>notifications</code> が同じに効き(AC-009 の同じ試験で確かめる)、ほかは効かないことを <code>up</code> が知らせる</li>
   <li><code>environment</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
   <li><code>compatibility_date</code> の無い Worker のサービスは、何もせずに止まる(場所を示す)</li>
@@ -72,7 +72,7 @@
   <li>手元とリモートの両方で、<code>web</code> → <code>api</code> の呼び出し、<code>api</code> → D1・R2・KV・Queue、別の Worker から <code>api.Counter</code> の Durable Object が通る</li>
   <li><code>api</code> が <code>jobs</code> に送ったメッセージを、<code>consumes: [jobs]</code> の Worker が受け取る</li>
   <li><code>depends_on</code> に書いていない相手でも先に建つ。相手に無いクラスを指すと止まる</li>
-  <li><code>storage.files</code> と <code>storage.uploads</code> が別のバケットとして見える。複数形のサービスを名前だけ(<code>storage</code>)で指すと止まる</li>
+  <li><code>files</code> と <code>uploads</code> が別のバケットとして見える</li>
 </ul>
 
 <h3 id="ac-004"><span class="id">AC-004</span>環境ごとの値 <span class="refs">REQ-004</span></h3>
@@ -95,7 +95,7 @@
 
 <h3 id="ac-006"><span class="id">AC-006</span>環境 <span class="refs">REQ-006</span></h3>
 <ul>
-  <li><code>--env ac-1 up</code> のあと、Cloudflare に Worker は <code>&lt;プロジェクト&gt;-ac-1-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-ac-1-&lt;資源の名前&gt;</code>(<code>…-ac-1-cache</code>・<code>…-ac-1-storage-files</code> など)の名前でできる。手元では資源の名前(<code>cache</code>・<code>storage-files</code>)のまま。名前が長すぎるときは止まり、<code>name</code> を書くよう出る。続けて <code>--env ac-2 up</code> すると別のものができ、データが混ざらない</li>
+  <li><code>--env ac-1 up</code> のあと、Cloudflare に Worker も資源も <code>&lt;プロジェクト&gt;--ac-1--&lt;名前&gt;</code>(<code>…--ac-1--cache</code>・<code>…--ac-1--files</code>・<code>…--ac-1--incoming</code> など)の名前でできる。手元ではサービスの名前(<code>cache</code>・<code>files</code>)のまま。一番上の <code>name</code> が無い、3 文字未満、どこかの名前に <code>--</code> があると止まる。名前が長すぎるときは止まり、<code>name</code> を書くよう出る。続けて <code>--env ac-2 up</code> すると別のものができ、データが混ざらない</li>
   <li><code>name</code> を書くとその名前を使い、すでにあればそれを使って中身は変わらない</li>
   <li>別の PC(道具の記録が無い)から同じ環境へ <code>up</code> しても、同じものにつながり、新しく作らない</li>
   <li><code>.env.staging</code> に <code>CLOUDFLARE_ACCOUNT_ID</code> が無いと、<code>--env staging</code> の操作は <code>--dry-run</code> でも何もせずに止まり、使えるアカウントが出る。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> が違うとき、ログインで見えないアカウントのときも止まる。どの場合も Cloudflare に変更の要求が出ていない</li>
@@ -141,7 +141,8 @@
   <li>展開した Worker は、手元で動かしたものと同じ組み立てたもの(同じ要約)である</li>
   <li>何も変えずにもう 1 度 <code>up</code> しても何も変わらない。<code>api</code> のコードだけ変えると <code>api</code> だけが展開される</li>
   <li>失敗する移行を足すと、その D1 を使う Worker は展開されず、どこで止まったかが出る</li>
-  <li>compose ファイルから消したサービスの Worker は示され、<code>--remove-orphans</code> のときだけ消える。データは消えない</li>
+  <li>compose ファイルから消したサービスの Worker は、次の <code>up</code> で消える(どの PC から打っても)。その D1・KV・R2・Queue は残り、<code>up</code> が示す。<code>up --purge</code> で打ち直すと、それらも消える。打ち直しが違う・端末が無いと、何も消えない</li>
+  <li>同じアカウントに、名前の似た別のプロジェクト・別の環境(<code>staging</code> と <code>staging-eu</code> など)があっても、<code>up</code>・<code>up --purge</code>・<code>down --purge</code> はそれらに触らない</li>
   <li>compose ファイルから Durable Object のクラスを消して <code>up</code> すると、消す・残す・やめるを選ばせる。環境名を打てば保存データごと消え、<code>keep</code> なら残り、何も打たずに Enter なら何も変えずに止まる。端末が無ければ何も変えずに止まる</li>
 </ul>
 
@@ -162,6 +163,7 @@
 <ul>
   <li><code>backup</code> のあと、<code>backups/&lt;環境&gt;/&lt;日時&gt;/</code> に D1・R2・KV のすべてが入り、数と大きさが環境と一致する</li>
   <li>リモートの控えを <code>--env local restore --drop</code> で戻すと、手元が控えと一致する。手元の控えを別のリモートの環境へ戻しても同じ。戻す前に控えを取った環境が出る</li>
+  <li>リモートの環境の <code>backup</code> と <code>restore --drop</code> で、D1(2^53 を超える整数・整数に見える実数・印の文字で始まる文字列・BLOB を含む)・KV(メタデータを含む)・R2 の中身が元に戻る。まだ無い資源があると、先に <code>up</code> するよう出て止まる</li>
   <li>控えのあとに足した移行だけが、戻したあとに当たる</li>
   <li>中身がある先への <code>--drop</code> の無い <code>restore</code>、書きかけの控え、git に入る書き出し先は、どれも止まる</li>
 </ul>
@@ -190,7 +192,7 @@
 <h3 id="ac-017"><span class="id">AC-017</span>道具のサービス <span class="refs">REQ-017</span></h3>
 <ul>
   <li><code>--env local up</code> のあと、道具のサービスが手元にあり、<code>ps</code> に分けて出る。<code>down</code> のあと無くなる</li>
-  <li>リモートの <code>up</code> のあと、Cloudflare のアカウントにある Worker は compose ファイルの Worker だけ。以前の版が置いた <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code> があれば消えている</li>
+  <li>リモートの <code>up</code> のあと、名前がその環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker は compose ファイルの Worker だけ</li>
   <li>リモートへの操作の間、道具が動かすのは Wrangler のコマンドだけで、Cloudflare の API へ直接の要求が 1 つも無い</li>
 </ul>
 

@@ -64,6 +64,37 @@ pub fn serve(listener: TcpListener, shared: Arc<Shared>, stop: Arc<AtomicBool>) 
     });
 }
 
+/// A public bucket's own port (`public_port`, REQ-009): every path is a key
+/// of that one bucket, whatever the Host, so other machines on the LAN
+/// reach it by the PC's address.
+pub fn serve_public(listener: TcpListener, shared: Arc<Shared>, bucket: String, stop: Arc<AtomicBool>) {
+    accept_until(listener, stop, move |client| {
+        let shared = shared.clone();
+        let bucket = bucket.clone();
+        std::thread::spawn(move || {
+            let _ = client.set_read_timeout(Some(Duration::from_secs(300)));
+            let _ = handle_public(client, &shared, &bucket);
+        });
+    });
+}
+
+fn handle_public(mut client: TcpStream, shared: &Shared, bucket: &str) -> std::io::Result<()> {
+    let Some((buf, len)) = read_head(&mut client)? else {
+        return respond(&mut client, 400, &[], b"bad request");
+    };
+    let Some(head) = parse(&buf, len, true) else {
+        return respond(&mut client, 400, &[], b"bad request");
+    };
+    let Some(site) = shared.sites.iter().find(|s| s.key == bucket && s.public) else {
+        return respond(&mut client, 404, &[], b"not found");
+    };
+    let origin = head.get("origin").map(str::to_string);
+    if head.method == "OPTIONS" && head.get("access-control-request-method").is_some() {
+        return preflight(&mut client, site, &head);
+    }
+    public_get(client, shared, site, &head, origin.as_deref())
+}
+
 /// A Worker's port: everything goes to the gateway as it came, except the
 /// simulator's S3 API for buckets whose r2 service has its own port. Those
 /// answer only there, with the bucket's CORS rules, as in production where
@@ -603,20 +634,37 @@ fn public_get(
         .build()
         .into();
     let url = format!(
-        "http://{}/__wc/r2/{}/object?key={}",
+        "http://{}/__wc/r2/{}/public?key={}",
         shared.gateway,
         site.key,
         crate::data::enc(&key)
     );
-    let res = match agent
-        .get(&url)
-        .header("authorization", format!("Bearer {}", shared.token))
-        .call()
-    {
+    // Ranges and conditions are answered by the data service, with R2's
+    // own ETag and upload time (HTTP's rules, RFC 9110).
+    let mut req = if head.method == "HEAD" {
+        agent.head(&url)
+    } else {
+        agent.get(&url)
+    }
+    .header("authorization", format!("Bearer {}", shared.token));
+    for name in [
+        "range",
+        "if-range",
+        "if-match",
+        "if-none-match",
+        "if-modified-since",
+        "if-unmodified-since",
+    ] {
+        if let Some(v) = head.get(name) {
+            req = req.header(name, v);
+        }
+    }
+    let res = match req.call() {
         Ok(r) => r,
         Err(_) => return respond(&mut client, 502, &[], b"no answer from the data service"),
     };
-    if res.status().as_u16() != 200 {
+    let status = res.status().as_u16();
+    if status == 404 {
         return respond(
             &mut client,
             404,
@@ -640,13 +688,24 @@ fn public_get(
             h.push((name, v.to_string()));
         }
     }
-    let mut body = Vec::new();
-    res.into_body().into_reader().read_to_end(&mut body)?;
-    h.push(("content-length", body.len().to_string()));
-    if head.method == "HEAD" {
-        body.clear();
+    for name in [
+        "etag",
+        "last-modified",
+        "accept-ranges",
+        "content-range",
+        "content-length",
+    ] {
+        if let Some(v) = res.headers().get(name).and_then(|v| v.to_str().ok())
+            && !v.contains(['\r', '\n'])
+        {
+            h.push((name, v.to_string()));
+        }
     }
-    respond_raw(&mut client, 200, &h, &body)
+    let mut body = Vec::new();
+    if head.method != "HEAD" && status != 304 && status != 412 && status != 416 {
+        res.into_body().into_reader().read_to_end(&mut body)?;
+    }
+    respond_raw(&mut client, status, &h, &body)
 }
 
 fn respond(
@@ -669,6 +728,10 @@ fn respond_raw(
     let reason = match status {
         200 => "OK",
         204 => "No Content",
+        206 => "Partial Content",
+        304 => "Not Modified",
+        412 => "Precondition Failed",
+        416 => "Range Not Satisfiable",
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",

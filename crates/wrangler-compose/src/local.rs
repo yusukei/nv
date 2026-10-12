@@ -2,7 +2,7 @@
 //! runs on this machine, in one runtime, without touching Cloudflare.
 
 use crate::build::{self, Built};
-use crate::compose::{Kind, Service, Target};
+use crate::compose::{Kind, Port, Service, Target};
 use crate::configs;
 use crate::ctx::Ctx;
 use anyhow::{Context, Result, anyhow, bail};
@@ -292,6 +292,14 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             continue;
         };
         let l = claim_port(&s.name, port)?;
+        // A public bucket's own port, on the same address (REQ-009).
+        let mut own = Vec::new();
+        for b in buckets {
+            if let Some(pp) = b.spec.public_port {
+                let at = Port { ip: port.ip.clone(), port: pp };
+                own.push((b.key.clone(), at.clone(), claim_port(&s.name, &at)?));
+            }
+        }
         let sites: Vec<crate::r2proxy::Site> = buckets
             .iter()
             .map(|b| crate::r2proxy::Site {
@@ -300,7 +308,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
                 cors: b.spec.cors.clone(),
             })
             .collect();
-        r2_sites.push((s.name.clone(), port.clone(), l, sites));
+        r2_sites.push((s.name.clone(), port.clone(), l, sites, own));
     }
     let gateway_port = free_port()?;
 
@@ -378,7 +386,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let guarded: Arc<Vec<String>> = Arc::new(
         r2_sites
             .iter()
-            .flat_map(|(_, _, _, sites)| sites.iter().map(|x| x.key.clone()))
+            .flat_map(|(_, _, _, sites, _)| sites.iter().map(|x| x.key.clone()))
             .collect(),
     );
     for (_, l) in listeners {
@@ -389,13 +397,17 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         }));
     }
     let mut r2_urls = Vec::new();
-    for (svc, port, l, sites) in r2_sites {
+    for (svc, port, l, sites, own) in r2_sites {
         let base = format!("http://{}:{}", url_host(&port.ip), port.port);
-        let public: Vec<String> = sites
+        let mut public: Vec<String> = sites
             .iter()
             .filter(|x| x.public)
             .map(|x| format!("http://{}.localhost:{}/", x.key, port.port))
             .collect();
+        public.extend(
+            own.iter()
+                .map(|(_, at, _)| format!("http://{}:{}/", url_host(&at.ip), at.port)),
+        );
         r2_urls.push((
             svc,
             base,
@@ -412,6 +424,12 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
                 .clone()
                 .expect("a local compose file has local S3 keys"),
         });
+        for (key, _, pl) in own {
+            let (shared, stop) = (shared.clone(), stop.clone());
+            accepters.push(std::thread::spawn(move || {
+                crate::r2proxy::serve_public(pl, shared, key, stop)
+            }));
+        }
         let stop = stop.clone();
         accepters.push(std::thread::spawn(move || {
             crate::r2proxy::serve(l, shared, stop)
@@ -605,12 +623,21 @@ fn announce(ctx: &Ctx, urls: &[(String, Option<String>)], ports: &[(u16, String)
         .filter(|s| matches!(s.kind, Kind::R2(_)) && s.ports.is_empty())
         .map(|s| s.name.as_str())
         .collect();
-    if let (false, Some((port, _))) = (without.is_empty(), ports.first()) {
-        say(crate::tr!(
+    if without.is_empty() {
+        return;
+    }
+    match ports.first() {
+        Some((port, _)) => say(crate::tr!(
             "{} には ports が無いので、S3 互換の口は http://127.0.0.1:{port}/cdn-cgi/local/r2/s3 で、CORS はバケットの設定によらずすべて許され、公開の URL もありません。本番と同じにするには ports を書いてください",
             "{} has no ports: its S3-compatible API is at http://127.0.0.1:{port}/cdn-cgi/local/r2/s3, allows every CORS origin regardless of the bucket's rules, and has no public URLs. Add ports to behave like production",
             without.join(", ")
-        ));
+        )),
+        // No Worker port either: nothing outside reaches the bucket at all.
+        None => say(crate::tr!(
+            "{} には ports が無いので、手元では S3 互換の API にも公開の URL にも外から届きません(Worker のバインディングからだけ使えます)。本番と同じにするには ports を書いてください",
+            "{} has no ports: locally neither its S3-compatible API nor its public URLs can be reached from outside (only a Worker's binding uses it). Add ports to behave like production",
+            without.join(", ")
+        )),
     }
 }
 
@@ -1288,7 +1315,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
         );
         pending = crate::data::pending_migrations(ctx, &client).unwrap_or_default();
     }
-    println!(
+    crate::out!(
         "{:<16} {:<8} {:<10} URL / RESOURCES",
         "SERVICE", "TYPE", "STATE"
     );
@@ -1305,7 +1332,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                 } else {
                     crate::tr!("停止", "stopped")
                 };
-                println!(
+                crate::out!(
                     "{:<16} {:<8} {:<10} {}",
                     s.name,
                     "worker",
@@ -1325,7 +1352,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                         _ => r.key.clone(),
                     })
                     .collect();
-                println!(
+                crate::out!(
                     "{:<16} {:<8} {:<10} {}",
                     s.name,
                     "d1",
@@ -1338,7 +1365,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                 if let Some(port) = s.ports.first() {
                     keys = format!("{keys}  http://{}:{}", url_host(&port.ip), port.port);
                 }
-                println!(
+                crate::out!(
                     "{:<16} {:<8} {:<10} {}",
                     s.name,
                     other.type_name(),
@@ -1350,7 +1377,7 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
     }
     if running {
         for tool in [configs::GATEWAY, configs::DATA] {
-            println!(
+            crate::out!(
                 "{:<16} {:<8} {:<10} -",
                 tool,
                 crate::tr!("道具", "tool"),
@@ -1387,7 +1414,7 @@ pub fn logs(ctx: &Ctx, follow: bool, names: &[String]) -> Result<()> {
             pos += buf.len() as u64;
             for line in buf.lines() {
                 if wanted(line) {
-                    println!("{line}");
+                    crate::out!("{line}");
                 }
             }
         } else if !follow {

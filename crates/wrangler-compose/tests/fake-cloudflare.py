@@ -3,7 +3,7 @@ wrangler-compose's remote flow offline (remote-smoke.sh). It answers what
 wrangler-compose and `wrangler deploy` / `d1 migrations apply` ask, as far
 as the test needs; it is not a model of Cloudflare. Logs every request to
 stderr."""
-import json, re, sys, uuid
+import base64, json, re, sqlite3, sys, threading, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ACC = "acc"
@@ -16,6 +16,57 @@ S = {
     "queues": {},       # name -> {id, consumers[]}
 }
 LOG = []
+DBS = {}            # D1 uuid -> sqlite3 connection (real SQL, in memory)
+KVV = {}            # (ns id, key) -> (bytes, metadata, expiration)
+LOCK = threading.Lock()
+
+class Raw:
+    """An answer that is not JSON: a KV value or an R2 object."""
+    def __init__(self, data, headers=None):
+        self.data, self.headers = data, headers or {}
+
+def d1(u):
+    if u not in DBS:
+        c = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
+        c.create_function("unhex", 1, lambda h: bytes.fromhex(h) if h is not None else None)
+        DBS[u] = c
+    return DBS[u]
+
+def statements(sql):
+    out, cur = [], ""
+    for part in sql.split(";"):
+        cur += part + ";"
+        if sqlite3.complete_statement(cur):
+            if cur.strip(" \n\t;"): out.append(cur.strip())
+            cur = ""
+    if cur.strip(" \n\t;"): out.append(cur.strip())
+    return out
+
+def plain(v):
+    return list(v) if isinstance(v, (bytes, bytearray)) else v
+
+def run_sql(u, sql, params, raw_form):
+    """Runs every statement as one batch (one transaction), as D1 does."""
+    c = d1(u)
+    with LOCK:
+        results = []
+        try:
+            c.execute("BEGIN")
+            sts = statements(sql)
+            for st in sts:
+                cur = c.execute(st, params if (params and len(sts) == 1) else [])
+                cols = [d[0] for d in cur.description] if cur.description else []
+                rows = [[plain(v) for v in r] for r in cur.fetchall()]
+                if raw_form:
+                    results.append({"results": {"columns": cols, "rows": rows}, "success": True, "meta": {}})
+                else:
+                    results.append({"results": [dict(zip(cols, r)) for r in rows], "success": True, "meta": {"changes": c.total_changes}})
+            c.execute("COMMIT")
+        except sqlite3.Error as e:
+            try: c.execute("ROLLBACK")
+            except sqlite3.Error: pass
+            return err(400, f"{e}: SQLITE_ERROR", 7500)
+        return ok(results)
 
 def ok(result=None, extra=None):
     body = {"success": True, "errors": [], "messages": [], "result": result}
@@ -35,9 +86,15 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write(f"{method} {path}\n"); sys.stderr.flush()
         LOG.append(f"{method} {path}")
         status, body = route(method, path, raw, self.headers)
-        data = json.dumps(body).encode()
+        if isinstance(body, Raw):
+            data, ctype = body.data, body.headers.get("content-type", "application/octet-stream")
+        else:
+            data, ctype = json.dumps(body).encode(), "application/json"
         self.send_response(status)
-        self.send_header("content-type", "application/json")
+        self.send_header("content-type", ctype)
+        if isinstance(body, Raw):
+            for k, v in body.headers.items():
+                if k != "content-type": self.send_header(k, v)
         self.send_header("content-length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -108,6 +165,7 @@ def route(method, path, raw, headers):
                 if b.get("type") == "secret_text":
                     s["secrets"][b["name"]] = b.get("text")
             s["meta"] = meta
+            s["tag"] = (meta.get("annotations") or {}).get("workers/tag")
             ex = meta.get("exports") or meta.get("durable_object_exports") or {}
             if isinstance(ex, dict):
                 for c, e in ex.items():
@@ -135,16 +193,31 @@ def route(method, path, raw, headers):
         if rest == "/subdomain":
             return ok({"enabled": True, "previews_enabled": False})
         if rest == "/settings":
-            return ok({"bindings": (sc or {}).get("meta", {}).get("bindings", []), "tags": []})
+            meta = (sc or {}).get("meta", {})
+            # Secrets as they are now (deleted ones gone), not as last uploaded.
+            binds = [b for b in meta.get("bindings", []) if b.get("type") not in ("inherit", "secret_text")]
+            binds += [{"type": "secret_text", "name": k} for k in (sc or {}).get("secrets", {})]
+            return ok({"bindings": binds, "tags": [], "compatibility_date": meta.get("compatibility_date"),
+                       "compatibility_flags": meta.get("compatibility_flags", [])})
         if rest == "/deployments" and method == "GET":
-            return ok({"deployments": []})
+            return ok({"deployments": [{"versions": [{"version_id": "v-" + name, "percentage": 100}]}] if sc else []})
         if rest == "/schedules":
-            return ok({"schedules": (j or {}).get("schedules", []) if isinstance(j, dict) else (j or [])})
+            if method == "PUT" and sc is not None:
+                sc["schedules"] = j if isinstance(j, list) else (j or {}).get("schedules", [])
+            return ok({"schedules": (sc or {}).get("schedules", [])})
+        m3 = re.fullmatch(r"/versions/([^/]+)", rest)
+        if m3 and method == "GET":
+            return ok({"id": m3.group(1), "annotations": {"workers/tag": (sc or {}).get("tag")}})
         if rest.startswith("/versions") and method == "GET":
             return ok({"items": []})
         if rest.startswith("/versions") and method == "POST":
             meta = metadata_of(raw, headers)
             s = S["scripts"].setdefault(name, {"classes": [], "secrets": {}})
+            s["meta"] = meta
+            s["tag"] = (meta.get("annotations") or {}).get("workers/tag")
+            for b in meta.get("bindings", []):
+                if b.get("type") == "secret_text":
+                    s["secrets"][b["name"]] = b.get("text")
             ex = meta.get("exports") or {}
             for c, e in ex.items():
                 if e.get("state", "created") == "created" and c not in s["classes"]: s["classes"].append(c)
@@ -184,25 +257,39 @@ def route(method, path, raw, headers):
         if rest in ("/query", "/raw"):
             sql = j.get("sql", "")
             sys.stderr.write("  SQL " + sql.replace("\n", " ")[:300] + "\n")
-            if "d1_migrations" in sql and sql.strip().upper().startswith("SELECT"):
-                sel_name = "name" if "SELECT name" in sql else "*"
-                if u not in S["d1_applied"]:
-                    return err(400, "no such table: d1_migrations: SQLITE_ERROR", 7500)
-                return ok([{"results": [{"name": n} for n in S["d1_applied"][u]], "success": True, "meta": {}}])
-            if "FAIL_HERE" in sql:
-                return err(400, "near FAIL_HERE: syntax error: SQLITE_ERROR", 7500)
-            # migrations apply: record names inserted
-            for n in re.findall(r"INSERT INTO \"?d1_migrations\"?\s*\(name\)\s*values\s*\('([^']+)'\)", sql, re.I):
-                S["d1_applied"].setdefault(u, []).append(n)
-            if re.search(r'CREATE TABLE IF NOT EXISTS "?d1_migrations', sql):
-                S["d1_applied"].setdefault(u, [])
-            return ok([{"results": [], "success": True, "meta": {"changes": 0}}])
+            return run_sql(u, sql, j.get("params") or [], rest == "/raw")
         return ok({})
     # kv
     if r == "/storage/kv/namespaces" and method == "GET":
         return ok([{"title": k, "id": v} for k, v in S["kv"].items()], info)
     if r == "/storage/kv/namespaces" and method == "POST":
         i = uuid.uuid4().hex; S["kv"][j["title"]] = i; return ok({"title": j["title"], "id": i})
+    m = re.fullmatch(r"/storage/kv/namespaces/([^/]+)/(keys|bulk|values|metadata)(?:/(.+))?", r)
+    if m:
+        ns, op, key = m.group(1), m.group(2), urllib.parse.unquote(m.group(3) or "")
+        if op == "keys":
+            keys = sorted(k for (n, k) in KVV if n == ns)
+            out = []
+            for k in keys:
+                _, meta, exp = KVV[(ns, k)]
+                e = {"name": k}
+                if meta is not None: e["metadata"] = meta
+                if exp is not None: e["expiration"] = exp
+                out.append(e)
+            return ok(out, {"result_info": {"count": len(out), "cursor": ""}})
+        if op == "bulk" and method == "PUT":
+            for e in j or []:
+                v = base64.b64decode(e["value"]) if e.get("base64") else e["value"].encode()
+                KVV[(ns, e["key"])] = (v, e.get("metadata"), e.get("expiration"))
+            return ok({})
+        if op == "values":
+            if method == "GET":
+                if (ns, key) not in KVV: return err(404, "key not found", 10009)
+                return 200, Raw(KVV[(ns, key)][0])
+            if method == "DELETE": KVV.pop((ns, key), None); return ok({})
+        if op == "metadata":
+            if (ns, key) not in KVV: return err(404, "key not found", 10009)
+            return ok(KVV[(ns, key)][1])
     m = re.fullmatch(r"/storage/kv/namespaces/([^/]+)", r)
     if m and method == "DELETE":
         for k, v in list(S["kv"].items()):
@@ -212,13 +299,29 @@ def route(method, path, raw, headers):
     if r == "/r2/buckets" and method == "GET":
         return ok({"buckets": [{"name": n} for (jj, n) in S["r2"] if jj == jur]}, {"result_info": {"cursor": ""}})
     if r == "/r2/buckets" and method == "POST":
-        S["r2"][(jur, j["name"])] = {"cors": None, "managed": False, "lifecycle": [{"id": "Default Multipart Abort Rule", "enabled": True, "conditions": {"prefix": ""}, "abortMultipartUploadsTransition": {"condition": {"maxAge": 604800, "type": "Age"}}}], "lock": [], "notif": {}}
+        S["r2"][(jur, j["name"])] = {"cors": None, "managed": False, "lifecycle": [{"id": "Default Multipart Abort Rule", "enabled": True, "conditions": {"prefix": ""}, "abortMultipartUploadsTransition": {"condition": {"maxAge": 604800, "type": "Age"}}}], "lock": [], "notif": {}, "objects": {}}
         return ok({"name": j["name"]})
     m = re.fullmatch(r"/r2/buckets/([^/]+)(/.*)?", r)
     if m:
         b = S["r2"].get((jur, m.group(1))); rest = m.group(2) or ""
         if b is None: return err(404, "The specified bucket does not exist.", 10006)
-        if rest == "" and method == "DELETE": del S["r2"][(jur, m.group(1))]; return ok({})
+        if rest == "" and method == "DELETE":
+            if b.get("objects"): return err(409, "The bucket you tried to delete is not empty.", 10008)
+            del S["r2"][(jur, m.group(1))]; return ok({})
+        objs = b.setdefault("objects", {})
+        if rest == "/objects" and method == "GET":
+            out = [{"key": k, "size": len(v[0]), "etag": "e"} for k, v in sorted(objs.items())][:1000]
+            return ok(out, {"result_info": {"cursor": "", "is_truncated": False}})
+        if rest.startswith("/objects/"):
+            key = urllib.parse.unquote(rest[len("/objects/"):])
+            if method == "PUT":
+                ct = headers.get("content-type")
+                objs[key] = (raw, {"content-type": ct} if ct else {})
+                return ok({"key": key})
+            if method == "GET":
+                if key not in objs: return err(404, "The specified key does not exist.", 10007)
+                return 200, Raw(objs[key][0], objs[key][1])
+            if method == "DELETE": objs.pop(key, None); return ok({})
         if rest == "/cors":
             if method == "GET":
                 return err(404, "The CORS configuration does not exist.", 10059) if not b["cors"] else ok({"rules": b["cors"]})
