@@ -52,7 +52,7 @@ curl -s -i -X OPTIONS "$U/x" -H 'Origin: http://elsewhere.test' -H 'Access-Contr
 # The S3 keys are random per project, kept where only the user can read them,
 # and never printed (REQ-009). The fixed keys of older versions are refused.
 KF=.wrangler/compose/local/s3-keys.json
-[[ $(stat -f %Lp "$KF" 2>/dev/null || stat -c %a "$KF") == 600 ]] || fail "s3-keys.json mode"
+[[ $(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$KF") == 600 ]] || fail "s3-keys.json mode"
 K="$(sed -n 's/.*"key": *"\([^"]*\)".*/\1/p' "$KF"):$(sed -n 's/.*"secret": *"\([^"]*\)".*/\1/p' "$KF")"
 [[ "$K" == wc*:* ]] || fail "s3 keys: $(cat "$KF")"
 ! grep -q "${K#*:}" up.out || fail "s3 secret printed"

@@ -55,6 +55,8 @@ jobs:
           bin="$PWD/target/release"
           export NV_HOME="$RUNNER_TEMP/nvhome"
           cp -R crates/wrangler-compose/tests/fixture "$RUNNER_TEMP/wcproj" && cd "$RUNNER_TEMP/wcproj"
+          # The fixture's secret takes its value from a variable (REQ-005).
+          export STRIPE_KEY=sk_test_build
           "$bin/nv" run npm install --no-audit --no-fund >/dev/null
           "$bin/wrangler-compose" --env local build
           if "$bin/wrangler-compose" up; then echo "up without --env must fail"; exit 1; fi
