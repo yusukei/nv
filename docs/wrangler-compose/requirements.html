@@ -71,6 +71,7 @@
   <li><strong>作り直せるものとデータを分ける</strong>: <code>down</code> はデータを残し、データは明示したときだけ消す</li>
   <li><strong>論理名で書き、名前で呼び合う</strong>: compose ファイルにはサービスの名前だけを書き、サービスは互いを名前で指す。実際の名前は道具が決める</li>
   <li><strong>環境を混ぜない</strong>: 1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れることも、その逆もない</li>
+  <li><strong>1 つの compose ファイルが 1 つの塊</strong>: 1 つの compose ファイル(プロジェクト)は、それだけで完結した 1 つの塊として動く。その中のサービスは、compose ファイルに書いたつながり(<code>bindings</code>・<code>consumes</code>)で、互いの資源(D1・R2・KV・Queue・Worker の呼び出し)を使う。塊の外(別の compose ファイル・別のプロジェクト)のものとは、資源を一切共有しない。プロセス・待ち受けのポート・データの置き場・Worker の呼び出し先の登録(Wrangler の dev registry)も共有しない(docker compose のプロジェクトどうしが混ざらないのと同じ)</li>
 </ul>
 
 <h2 id="flow">使い方の流れ</h2>
@@ -173,6 +174,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>本物に無い機能が要るときは、道具が自分のサービスとして初めから持つ</li>
   <li>環境の違いは、compose ファイルの中の変数(<code>${VAR}</code>)を <code>.env.&lt;環境&gt;</code> から展開して表す。切り替えの口は <code>--env</code> 1 つ</li>
   <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
+  <li>1 つの compose ファイルが 1 つの塊。中のサービスはつながり(<code>bindings</code>・<code>consumes</code>)で互いの資源を使い、塊の外(別の compose ファイル・別のプロジェクト)とは、プロセス・ポート・データの置き場・Worker の呼び出し先の登録を含めて資源を一切共有しない(2026-10-12)</li>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
   <li>r2 のサービスにも <code>ports</code> を書ける。そのポートが手元の R2 の口(S3 互換の API とバケットの CORS・公開の URL)になる</li>
