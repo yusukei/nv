@@ -367,6 +367,25 @@ fn handle(mut client: TcpStream, shared: &Shared) -> std::io::Result<()> {
         if head.method == "OPTIONS" && head.get("access-control-request-method").is_some() {
             return preflight(&mut client, site, &head);
         }
+        // From another machine: the simulator takes only local names in
+        // Host and Origin, so the request is checked and signed again for
+        // localhost (DES-019).
+        let rewritten = crate::s3sig::rewrite(
+            &head.method,
+            &head.path,
+            &head.headers,
+            crate::configs::LOCAL_S3_KEY,
+            crate::configs::LOCAL_S3_SECRET,
+        );
+        let head = match rewritten {
+            Some(r) => Head {
+                method: head.method.clone(),
+                path: r.target,
+                headers: r.headers,
+                raw_len: head.raw_len,
+            },
+            None => head,
+        };
         return proxy_s3(client, shared, site, &head, &buf, origin.as_deref());
     }
     // Public URL: <bucket>.localhost

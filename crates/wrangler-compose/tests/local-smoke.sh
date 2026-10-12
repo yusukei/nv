@@ -54,6 +54,15 @@ K="wrangler-compose-local:wrangler-compose-local-secret"
 [[ $(curl -fsS -H 'Host: storage-files.localhost:9000' http://127.0.0.1:9000/pub.txt) == hi ]] || fail "public url"
 # A client waiting for 100 Continue still gets the bucket's CORS headers.
 curl -s -i --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'expect' -H 'Expect: 100-continue' -H 'Origin: http://localhost:8787' "$U/e.txt" | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "100-continue"
+# From another machine (AC-009): requests signed for the PC's LAN address
+# (192.0.2.10 here, reached through --connect-to) pass like local ones, and a
+# wrong signature is still refused.
+L=http://192.0.2.10:9000/cdn-cgi/local/r2/s3/storage-files
+C=(--connect-to 192.0.2.10:9000:127.0.0.1:9000)
+[[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user $K -X PUT --data-binary 'lan' "$L/lan.txt") == 200 ]] || fail "LAN signed put"
+[[ $(curl -s "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -r 0-1 "$L/lan.txt") == la ]] || fail "LAN signed range get"
+curl -s -i "${C[@]}" --aws-sigv4 "aws:amz:auto:s3" --user $K -H 'Origin: http://localhost:8787' "$L/lan.txt" | grep -qi '^access-control-allow-origin: http://localhost:8787' || fail "LAN CORS"
+[[ $(curl -s "${C[@]}" -o /dev/null -w '%{http_code}' --aws-sigv4 "aws:amz:auto:s3" --user wrangler-compose-local:wrong "$L/lan.txt") == 403 ]] || fail "LAN wrong signature"
 # R2 event notifications reach the queue consumer (AC-009).
 curl -fsS -o /dev/null "localhost:8788/upload?k=n1"
 for _ in $(seq 1 30); do grep -q '"action":"PutObject","bucket":"storage-uploads"' up.out && break; sleep 1; done

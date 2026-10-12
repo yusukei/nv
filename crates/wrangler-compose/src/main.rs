@@ -17,6 +17,7 @@ mod interrupt;
 mod local;
 mod r2proxy;
 mod remote;
+mod s3sig;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
