@@ -293,12 +293,10 @@ fn dev_vars_value(v: &str) -> String {
     }
 }
 
-pub fn dev_vars(c: &Compose, w: &Worker) -> String {
+pub fn dev_vars(w: &Worker) -> String {
     let mut out = String::new();
-    for s in &w.secrets {
-        if let Some(sec) = c.secrets.get(s) {
-            out.push_str(&format!("{}={}\n", sec.var, dev_vars_value(&sec.value)));
-        }
+    for (name, value) in &w.secrets {
+        out.push_str(&format!("{name}={}\n", dev_vars_value(value)));
     }
     out
 }

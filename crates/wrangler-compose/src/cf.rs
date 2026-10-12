@@ -45,8 +45,11 @@ pub fn is_missing(e: &anyhow::Error) -> bool {
 
 impl Cf {
     /// Credentials from Wrangler (`wrangler auth token --json`: the login's
-    /// token, refreshed, or CLOUDFLARE_API_TOKEN), and the account:
-    /// CLOUDFLARE_ACCOUNT_ID, or the only account the login can see.
+    /// token, refreshed, or CLOUDFLARE_API_TOKEN), and the account: the
+    /// CLOUDFLARE_ACCOUNT_ID written in `.env.<env>`, which a remote
+    /// environment must have, so nothing is deployed to or deleted from an
+    /// account by accident (REQ-006). A different CLOUDFLARE_ACCOUNT_ID in
+    /// the environment, or an account the login cannot see, stops.
     pub fn connect(ctx: &Ctx) -> Result<Cf> {
         let out = ctx
             .wrangler(["auth", "token", "--json"])
@@ -84,36 +87,50 @@ impl Cf {
             auth,
             account: String::new(),
         };
-        cf.account = match std::env::var("CLOUDFLARE_ACCOUNT_ID") {
-            Ok(id) if !id.is_empty() => id,
-            _ => {
-                let accounts = cf.list_raw("/accounts")?;
-                match accounts.as_slice() {
-                    [one] => one["id"].as_str().unwrap_or_default().to_string(),
-                    [] => bail!(crate::tr!(
-                        "このログインで使える Cloudflare のアカウントがありません",
-                        "this login has no Cloudflare account"
-                    )),
-                    many => {
-                        let names: Vec<String> = many
-                            .iter()
-                            .map(|a| {
-                                format!(
-                                    "{} ({})",
-                                    a["name"].as_str().unwrap_or("?"),
-                                    a["id"].as_str().unwrap_or("?")
-                                )
-                            })
-                            .collect();
-                        bail!(crate::tr!(
-                            "アカウントが複数あります。使うものの ID を環境変数 CLOUDFLARE_ACCOUNT_ID に入れてください: {}",
-                            "this login sees several accounts; set CLOUDFLARE_ACCOUNT_ID to the one to use: {}",
-                            names.join(", ")
-                        ))
-                    }
-                }
-            }
+        // The accounts this login can see. A token that may not list them
+        // still works on the account written in .env.<env>.
+        let accounts = cf.list_raw("/accounts").ok();
+        let seen = || match &accounts {
+            Some(list) if !list.is_empty() => list
+                .iter()
+                .map(|a| {
+                    format!(
+                        "{} ({})",
+                        a["name"].as_str().unwrap_or("?"),
+                        a["id"].as_str().unwrap_or("?")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "-".to_string(),
         };
+        let file = ctx.compose.env_file.display();
+        let Some(id) = ctx.compose.account_id.clone() else {
+            bail!(crate::tr!(
+                "{file} に CLOUDFLARE_ACCOUNT_ID=<アカウントの ID> を書いてください。意図しないアカウントへの展開・削除を防ぐため、リモートの環境では必須です(何もしていません)。このログインで使えるアカウント: {}",
+                "write CLOUDFLARE_ACCOUNT_ID=<account id> in {file}; a remote environment needs it so nothing is deployed to or deleted from an unintended account (nothing was done). Accounts this login can use: {}",
+                seen()
+            ));
+        };
+        if let Ok(env) = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+            && !env.is_empty()
+            && env != id
+        {
+            bail!(crate::tr!(
+                "環境変数 CLOUDFLARE_ACCOUNT_ID({env})が {file} の CLOUDFLARE_ACCOUNT_ID({id})と違います。どちらに出すつもりかを確かめ、環境変数を消すか合わせてください(何もしていません)",
+                "the environment variable CLOUDFLARE_ACCOUNT_ID ({env}) differs from CLOUDFLARE_ACCOUNT_ID in {file} ({id}); check which account you mean and unset or match the variable (nothing was done)"
+            ));
+        }
+        if let Some(list) = &accounts
+            && !list.iter().any(|a| a["id"].as_str() == Some(id.as_str()))
+        {
+            bail!(crate::tr!(
+                "このログインではアカウント {id}({file} の CLOUDFLARE_ACCOUNT_ID)を使えません(何もしていません)。使えるアカウント: {}",
+                "this login cannot use account {id} (CLOUDFLARE_ACCOUNT_ID in {file}); nothing was done. Accounts it can use: {}",
+                seen()
+            ));
+        }
+        cf.account = id;
         Ok(cf)
     }
 

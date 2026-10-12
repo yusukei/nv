@@ -244,13 +244,13 @@ fn outside_inputs(base: &Path, w: &Worker, meta: &Path) -> Vec<PathBuf> {
 /// keys (checked), with paths made absolute.
 fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
     // Wrangler would read local values from these; here they belong in the
-    // compose file (vars) and .env.<env> (secrets).
+    // compose file (environment) and .env.<env> (secrets).
     for entry in std::fs::read_dir(&w.build).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name == ".dev.vars" || name.starts_with(".dev.vars.") {
             bail!(crate::tr!(
-                "{} は使えません。値は wrangler-compose.yaml の services.{svc}.vars に、シークレットは secrets と .env.<環境> に書いてください",
-                "{} is not used; put values in services.{svc}.vars in wrangler-compose.yaml and secrets in secrets plus .env.<env>",
+                "{} は使えません。値は wrangler-compose.yaml の services.{svc}.environment に、シークレットは services.{svc}.secrets と .env.<環境> に書いてください",
+                "{} is not used; put values in services.{svc}.environment in wrangler-compose.yaml and secrets in services.{svc}.secrets plus .env.<env>",
                 entry.path().display()
             ));
         }
@@ -358,7 +358,7 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
 fn where_in_compose(key: &str) -> Option<String> {
     let field = match key {
         "name" => "name",
-        "vars" => "vars",
+        "vars" => "environment",
         "routes" | "route" => "routes",
         "triggers" => "crons",
         "compatibility_date" => "compatibility_date",

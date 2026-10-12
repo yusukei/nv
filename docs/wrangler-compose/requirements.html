@@ -112,7 +112,9 @@ services:
       JOBS: jobs                    # queue へ送る
     consumes: [jobs]                # queue から受け取る
     durable_objects: [Counter]      # この Worker のコードにあるクラス
-    secrets: [stripe-key]
+    environment:                    # Worker に渡す秘密でない値(docker compose と同じ。NAME=値 の並びでもよい)
+      GREETING: hello
+    secrets: [STRIPE_KEY]           # 値は .env.&lt;環境&gt; の STRIPE_KEY。Worker からは env.STRIPE_KEY
 
   db:
     type: d1
@@ -139,11 +141,7 @@ services:
     type: kv                        # 省略形: このサービスが KV 名前空間 1 つ
 
   jobs:
-    type: queue
-
-secrets:                            # docker compose の secrets と同じ形
-  stripe-key:
-    environment: STRIPE_KEY         # 値は .env.&lt;環境&gt; の STRIPE_KEY</code></pre>
+    type: queue</code></pre>
 <pre><code># .env.staging(git の外)
 WEB_DOMAIN=staging.shop.example.com
 WEB_ORIGIN=https://staging.shop.example.com
@@ -205,7 +203,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-001"><span class="id">REQ-001</span>compose ファイル</h3>
 <ul>
   <li>名前は <code>wrangler-compose.yaml</code>(<code>.yml</code> も読む。両方あれば止まる)。いまのフォルダから上へたどって最初に見つかったものを使う。見つからなければ止まり、書き始め方を示す</li>
-  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>context</code>・<code>services</code>・<code>secrets</code></li>
+  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>context</code>・<code>services</code></li>
   <li><code>context</code> は、Wrangler と Node の版を決める <code>package.json</code> のあるフォルダ(compose ファイルから見た相対)。省くと compose ファイルのあるフォルダ。compose ファイルを展開用のフォルダに置き、コードと依存は別のフォルダに置けるようにする(docker compose の <code>build.context</code> と同じ考え)。<code>package.json</code> が無ければ止まる。ほかのパス(<code>build</code>・<code>assets</code>・<code>migrations</code>)はこれまでどおり compose ファイルから見た相対で、<code>.env.&lt;環境&gt;</code>・<code>.wrangler/compose/</code>・<code>backups/</code> も compose ファイルのあるフォルダに置く</li>
   <li><code>name</code> を省くと、compose ファイルのあるフォルダ名。プロジェクトとサービスの名前は、英小文字・数字・<code>-</code> だけ</li>
   <li><code>x-</code> で始まるキーは、どの階層でも読み飛ばす(docker と同じ)</li>
@@ -216,7 +214,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-002"><span class="id">REQ-002</span>サービスの型</h3>
 <table>
   <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:26%">建つもの</th></tr>
-  <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>compatibility_date</code>(必須)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>vars</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
+  <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>compatibility_date</code>(必須)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>environment</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
   <tr><td><code>d1</code></td><td>省略形: <code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)。複数形: <code>databases.&lt;名前&gt;</code> の下に同じキー</td><td>D1 データベース 1 つ以上</td></tr>
   <tr><td><code>r2</code></td><td><code>ports</code>(手元の R2 の口)。省略形: バケットのキー。複数形: <code>buckets.&lt;名前&gt;</code> の下にバケットのキー。バケットのキーは <code>name</code>・<code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ以上</td></tr>
   <tr><td><code>kv</code></td><td>省略形: <code>name</code>。複数形: <code>namespaces.&lt;名前&gt;</code> の下に <code>name</code></td><td>KV 名前空間 1 つ以上</td></tr>
@@ -227,7 +225,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>複数形で並べる名前は、そのサービスの中で重ならなければよい(サービスの名前はプロジェクトの中で重ならないので、<code>&lt;サービス&gt;.&lt;名前&gt;</code> の組で必ず 1 つに決まる)。英小文字・数字・<code>-</code> だけ</li>
   <li><code>name</code> は Cloudflare での実際の名前(<a href="#req-006">REQ-006</a>)。省けば道具が決める</li>
   <li>R2 のバケットのキーは、本物の R2 のバケットの設定と同じ意味を持つ: <code>public</code>(公開の URL で配る)・<code>cors</code>(CORS の決まり)・<code>lifecycle</code>(期限で消す・保管の種類を変える)・<code>notifications</code>(変化を同じプロジェクトの Queue へ送る)・<code>lock</code>(消せない期間)・<code>storage_class</code>(保管の種類)・<code>jurisdiction</code>(置き場の管轄)。どれも手元でも同じに効く(REQ-009)</li>
-  <li><code>vars</code> は Worker に渡す秘密でない値。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_flags</code> は Workers の互換の指定</li>
+  <li><code>environment</code> は Worker に渡す秘密でない値(Wrangler の <code>vars</code>)。docker compose と同じく「名前: 値」の対応表か <code>NAME=値</code> の並びで書き、名前だけなら同じ名前の変数から取る。<code>routes</code> はルート・カスタムドメイン、<code>crons</code> は定期実行の式、<code>assets</code> は静的なファイルのフォルダ、<code>compatibility_flags</code> は Workers の互換の指定</li>
   <li><code>compatibility_date</code> は、Worker をどの日付の時点の Workers の動き方で動かすかを決める日付(例 <code>"2026-09-01"</code>)。Cloudflare は動き方の変更を日付ごとに区切り、Worker はその日までの変更だけを受ける。省くと動かした日の日付になり、手元とリモート・動かした日ごとに動き方が変わりうるので、必須とする(利用者の決定)。無ければ止まる</li>
   <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧(Durable Objects は Worker の中のものなので、型にはしない)</li>
   <li>型は使うものから足す。足すときは、手元で本物と互換に動く手立てを同時に決める</li>
@@ -253,8 +251,10 @@ STRIPE_KEY=sk_test_...</code></pre>
 
 <h3 id="req-005"><span class="id">REQ-005</span>シークレット</h3>
 <ul>
-  <li>一番上の <code>secrets</code> に docker compose と同じ形で宣言する(<code>&lt;名前&gt;: { environment: &lt;変数名&gt; }</code>)。値は REQ-004 と同じ探し方で読む</li>
-  <li>Worker の <code>secrets</code> に並べたものだけが、その Worker から見える</li>
+  <li>Worker の <code>secrets</code> に、<code>environment</code> と同じ形で書く: 「名前: <code>${変数}</code>」の対応表か、名前の並び(同じ名前の変数から取る)。名前は Worker から見える名前(<code>env.&lt;名前&gt;</code>)。値は REQ-004 と同じ探し方で読む</li>
+  <li>シークレットの値は必ず変数から取る。compose ファイルに値を書くと(変数を含まない値・<code>NAME=値</code> の並び)止まる。シークレットが git に入らないため</li>
+  <li>その Worker の <code>secrets</code> に書いたものだけが、その Worker から見える</li>
+  <li>0.1.7 までの書き方(Worker の <code>vars</code>、一番上の <code>secrets</code> と <code>environment: &lt;変数名&gt;</code>)は、書き直し方を示して止まる(利用者の決定。2026-10-12: docker compose の一番上の secrets はファイルとして渡すための仕組みで、Workers では名前が 3 つになるだけ)</li>
   <li><code>up</code> が、手元でもリモートでも、その Worker のシークレットとして入れる。compose ファイルから消したシークレットは、<code>up</code> が消す</li>
   <li>値が無ければ止まり、無い変数の名前を示す</li>
 </ul>
@@ -266,6 +266,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>決めた名前が Cloudflare の名前の決まり(長さなど)に合わなければ、何もせずに止まり、<code>name</code> で短い名前を書くよう示す</li>
   <li><code>name</code> を書けば、その名前を使う(既存のものを使う、環境ごとに <code>${VAR}</code> で変えるなど)。同じ名前のものがすでにあれば、それを使う(作り直さない)</li>
   <li>手元では、資源の名前(<code>cache</code>・<code>storage-files</code> など)をそのまま使う</li>
+  <li>リモートの環境は、<code>.env.&lt;環境&gt;</code> に <code>CLOUDFLARE_ACCOUNT_ID=&lt;アカウントの ID&gt;</code> を書いたアカウントでだけ操作する(<code>--dry-run</code> も含むすべての操作)。書いていなければ、何もせずに止まり、ログインで使えるアカウントを示す。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> がそれと違うとき、ログインがそのアカウントを使えないときも止まる。意図しないアカウントへの展開・削除を防ぐため(利用者の決定。2026-10-12)。手元では要らない</li>
   <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
   <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
 </ul>

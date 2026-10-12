@@ -18,17 +18,12 @@ pub struct Compose {
     /// The folder whose package.json gives Wrangler and Node: top-level
     /// `context`, else `root` (REQ-001).
     pub context: PathBuf,
+    /// `.env.<env>`, and the `CLOUDFLARE_ACCOUNT_ID` written in it: a
+    /// remote environment works only on that account (REQ-006).
+    pub env_file: PathBuf,
+    pub account_id: Option<String>,
     /// In dependency order: what a service needs comes before it.
     pub services: Vec<Service>,
-    /// Top-level `secrets`: name → value (REQ-005).
-    pub secrets: BTreeMap<String, Secret>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Secret {
-    /// The variable named by `environment:`; also the name the Worker sees.
-    pub var: String,
-    pub value: String,
 }
 
 #[derive(Debug)]
@@ -120,7 +115,9 @@ pub struct Worker {
     /// Resource keys of the queues this Worker consumes.
     pub consumes: Vec<String>,
     pub durable_objects: Vec<String>,
-    pub secrets: Vec<String>,
+    /// `secrets`: the name the Worker sees → its value (REQ-005).
+    pub secrets: BTreeMap<String, String>,
+    /// `environment`: values that are not secret (Wrangler's vars).
     pub vars: Map<String, Value>,
     pub routes: Vec<String>,
     pub crons: Vec<String>,
@@ -297,20 +294,17 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
             file.display()
         ))
     })?;
+    let account_id = file_vars
+        .get("CLOUDFLARE_ACCOUNT_ID")
+        .filter(|v| !v.is_empty())
+        .cloned();
     let vars = Vars(file_vars);
+    let raw = docker_forms(strip_extensions(raw), file)?;
     let mut missing = BTreeSet::new();
-    let expanded = expand_tree(strip_extensions(raw), &vars, &mut missing);
+    // Secrets read variables like any other value, so ones without a value
+    // are in the same list (AC-004).
+    let expanded = expand_tree(raw, &vars, &mut missing);
     if !missing.is_empty() {
-        // Secrets without a value belong in the same list (AC-004).
-        for var in secret_vars(&expanded) {
-            if vars.get(&var).is_none() {
-                missing.insert(Missing {
-                    name: var,
-                    message: None,
-                    invalid: false,
-                });
-            }
-        }
         bail!(missing_message(&missing, env, &env_file));
     }
     let dir_name = root
@@ -319,7 +313,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "project".to_string());
     let mut c = Checker::default();
-    let compose = c.compose(expanded, &root, file, &dir_name, &vars);
+    let compose = c.compose(expanded, &root, file, &dir_name);
     if !c.errors.is_empty() {
         bail!(
             "{}\n{}",
@@ -335,7 +329,10 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
                 .join("\n")
         );
     }
-    Ok(compose.expect("no errors means a compose file"))
+    let mut compose = compose.expect("no errors means a compose file");
+    compose.env_file = env_file;
+    compose.account_id = account_id;
+    Ok(compose)
 }
 
 fn missing_message(missing: &BTreeSet<Missing>, env: &str, env_file: &Path) -> String {
@@ -385,14 +382,108 @@ fn strip_extensions(v: Value) -> Value {
     }
 }
 
-/// The variables the top-level `secrets` read.
-fn secret_vars(v: &Value) -> Vec<String> {
-    v["secrets"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(_, s)| s["environment"].as_str().map(str::to_string))
-        .collect()
+/// A service's `environment` and `secrets` take docker compose's two forms
+/// (REQ-005): a mapping `NAME: value`, or a list where `NAME=value` sets a
+/// value and a bare `NAME` takes the variable of the same name. Both become
+/// mappings here, before values are expanded. A secret's value must come
+/// from a variable, so a secret never sits in the compose file; that is
+/// checked on the text as written. The forms before 0.1.8 (`vars`, the
+/// top-level `secrets`) stop with what to write instead.
+fn docker_forms(mut v: Value, file: &Path) -> Result<Value> {
+    let mut errors = Vec::new();
+    if v.get("secrets").is_some() {
+        errors.push(crate::tr!(
+            "secrets: 一番上の secrets はなくなりました。サービスの secrets に「名前: ${{変数}}」か名前の並び([NAME, …]。同じ名前の変数から取る)で書いてください。Worker から見える名前は、これまでの environment: の変数名です",
+            "secrets: the top-level secrets are gone; list them in the service's secrets as NAME: ${{VAR}} or as names ([NAME, …], read from the variable of the same name). The name the Worker sees is the old environment: variable"
+        ));
+    }
+    if let Some(Value::Object(svcs)) = v.get_mut("services") {
+        for (sname, sv) in svcs.iter_mut() {
+            let Value::Object(o) = sv else { continue };
+            if o.contains_key("vars") {
+                errors.push(crate::tr!(
+                    "services.{sname}.vars: vars は environment に改めました(docker compose と同じ)",
+                    "services.{sname}.vars: vars is now environment (as in docker compose)"
+                ));
+            }
+            for key in ["environment", "secrets"] {
+                let at = format!("services.{sname}.{key}");
+                match o.get_mut(key) {
+                    Some(Value::Array(items)) => {
+                        let mut m = Map::new();
+                        for item in items.iter() {
+                            let Value::String(item) = item else {
+                                errors.push(crate::tr!(
+                                    "{at}: 並びには NAME か NAME=値 を書いてください",
+                                    "{at}: list items are NAME or NAME=value"
+                                ));
+                                continue;
+                            };
+                            match item.split_once('=') {
+                                Some((k, val)) if key == "environment" => {
+                                    m.insert(k.to_string(), Value::String(val.to_string()));
+                                }
+                                Some(_) => errors.push(crate::tr!(
+                                    "{at}: シークレットの値は並びに書けません。名前だけを並べると同じ名前の変数から取ります",
+                                    "{at}: a secret's value cannot be written in the list; a bare name reads the variable of the same name"
+                                )),
+                                None => {
+                                    m.insert(item.clone(), Value::String(format!("${{{item}}}")));
+                                }
+                            }
+                        }
+                        o.insert(key.to_string(), Value::Object(m));
+                    }
+                    Some(Value::Object(m)) if key == "secrets" => {
+                        for (name, val) in m.iter() {
+                            if !val.as_str().is_some_and(reads_variable) {
+                                errors.push(crate::tr!(
+                                    "{at}.{name}: シークレットの値は ${{変数}} で環境変数か .env.<環境> から取ってください(compose ファイルに値を書かない)",
+                                    "{at}.{name}: take a secret's value from a variable with ${{VAR}} (the environment or .env.<env>), never the compose file"
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    if !errors.is_empty() {
+        bail!(
+            "{}\n{}",
+            crate::tr!(
+                "{} に誤りがあります(何もしていません):",
+                "{} has errors (nothing was done):",
+                file.display()
+            ),
+            errors
+                .iter()
+                .map(|e| format!("  - {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+    Ok(v)
+}
+
+/// Whether a value as written refers to a variable (`$VAR` or `${…}`; `$$`
+/// is a literal `$`).
+fn reads_variable(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'$' {
+            match b[i + 1] {
+                b'$' => i += 2,
+                c if c == b'{' || c == b'_' || c.is_ascii_alphabetic() => return true,
+                _ => i += 1,
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 fn expand_tree(v: Value, vars: &dyn Lookup, missing: &mut BTreeSet<Missing>) -> Value {
@@ -428,7 +519,7 @@ const WORKER_KEYS: &[&str] = &[
     "consumes",
     "durable_objects",
     "secrets",
-    "vars",
+    "environment",
     "routes",
     "crons",
     "compatibility_date",
@@ -453,14 +544,7 @@ impl Checker {
         self.errors.push(format!("{at}: {msg}"));
     }
 
-    fn compose(
-        &mut self,
-        v: Value,
-        root: &Path,
-        file: &Path,
-        dir_name: &str,
-        vars: &Vars,
-    ) -> Option<Compose> {
+    fn compose(&mut self, v: Value, root: &Path, file: &Path, dir_name: &str) -> Option<Compose> {
         let Value::Object(top) = v else {
             self.err(
                 "(top)",
@@ -468,7 +552,7 @@ impl Checker {
             );
             return None;
         };
-        self.unknown_keys("(top)", &top, &["name", "context", "services", "secrets"]);
+        self.unknown_keys("(top)", &top, &["name", "context", "services"]);
         let context = match top.get("context") {
             None => root.to_path_buf(),
             Some(Value::String(p)) => {
@@ -513,7 +597,6 @@ impl Checker {
                 ),
             );
         }
-        let secrets = self.secrets(top.get("secrets"), vars);
         let Some(Value::Object(svcs)) = top.get("services") else {
             self.err(
                 "services",
@@ -579,7 +662,7 @@ impl Checker {
             };
             let kind = match t.as_str() {
                 "worker" => self
-                    .worker(&at, o, root, &types, &secrets)
+                    .worker(&at, o, root, &types)
                     .map(|w| Kind::Worker(Box::new(w))),
                 "d1" => Some(Kind::D1(self.resources(
                     &at,
@@ -667,8 +750,9 @@ impl Checker {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             context,
+            env_file: PathBuf::new(),
+            account_id: None,
             services,
-            secrets,
         })
     }
 
@@ -740,70 +824,6 @@ impl Checker {
                 },
             );
         }
-    }
-
-    fn secrets(&mut self, v: Option<&Value>, vars: &Vars) -> BTreeMap<String, Secret> {
-        let mut out = BTreeMap::new();
-        let Some(v) = v else { return out };
-        let Value::Object(m) = v else {
-            self.err(
-                "secrets",
-                crate::tr!("対応表にしてください", "must be a mapping"),
-            );
-            return out;
-        };
-        let mut missing = Vec::new();
-        for (name, sv) in m {
-            let at = format!("secrets.{name}");
-            let Value::Object(o) = sv else {
-                self.err(
-                    &at,
-                    crate::tr!(
-                        "environment: <変数名> を書いてください",
-                        "write environment: <variable>"
-                    ),
-                );
-                continue;
-            };
-            self.unknown_keys(&at, o, &["environment"]);
-            let Some(Value::String(var)) = o.get("environment") else {
-                self.err(&at, crate::tr!("environment: <変数名> を書いてください(値は環境変数か .env.<環境> から読みます)", "write environment: <variable> (the value comes from the environment or .env.<env>)"));
-                continue;
-            };
-            if !valid_binding(var) {
-                self.err(
-                    &format!("{at}.environment"),
-                    crate::tr!(
-                        "変数名「{var}」は英字・数字・_ だけにしてください",
-                        "variable name \"{var}\" may only use letters, digits and _"
-                    ),
-                );
-                continue;
-            }
-            match vars.get(var) {
-                Some(value) => {
-                    out.insert(
-                        name.clone(),
-                        Secret {
-                            var: var.clone(),
-                            value,
-                        },
-                    );
-                }
-                None => missing.push(var.clone()),
-            }
-        }
-        if !missing.is_empty() {
-            self.err(
-                "secrets",
-                crate::tr!(
-                    "シークレットの値がありません。環境変数か .env.<環境> に書いてください: {}",
-                    "secrets have no value; set them in the environment or .env.<env>: {}",
-                    missing.join(", ")
-                ),
-            );
-        }
-        out
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1085,7 +1105,6 @@ impl Checker {
         o: &Map<String, Value>,
         root: &Path,
         types: &BTreeMap<String, (String, bool, Vec<String>)>,
-        secrets: &BTreeMap<String, Secret>,
     ) -> Option<Worker> {
         self.unknown_keys(at, o, WORKER_KEYS);
         let mut w = Worker::default();
@@ -1191,43 +1210,59 @@ impl Checker {
         }
         w.durable_objects =
             self.strings(&format!("{at}.durable_objects"), o.get("durable_objects"));
-        w.secrets = self.strings(&format!("{at}.secrets"), o.get("secrets"));
-        for s in &w.secrets {
-            if !secrets.contains_key(s) && !self.errors.iter().any(|e| e.starts_with("secrets")) {
-                self.err(
-                    &format!("{at}.secrets"),
-                    crate::tr!(
-                        "シークレット「{s}」が一番上の secrets にありません",
-                        "secret \"{s}\" is not in the top-level secrets"
-                    ),
-                );
-            }
-        }
-        match o.get("vars") {
+        match o.get("secrets") {
             None => {}
-            Some(Value::Object(m)) => w.vars = m.clone(),
+            Some(Value::Object(m)) => {
+                for (name, v) in m {
+                    match v {
+                        Value::String(v) => {
+                            w.secrets.insert(name.clone(), v.clone());
+                        }
+                        _ => self.err(
+                            &format!("{at}.secrets.{name}"),
+                            crate::tr!("文字列にしてください", "must be a string"),
+                        ),
+                    }
+                }
+            }
             Some(_) => self.err(
-                &format!("{at}.vars"),
+                &format!("{at}.secrets"),
                 crate::tr!(
-                    "「名前: 値」の対応表にしてください",
-                    "must be a mapping of name: value"
+                    "「名前: ${{変数}}」の対応表か、名前の並びにしてください",
+                    "must be a mapping of NAME: ${{VAR}} or a list of names"
                 ),
             ),
         }
-        // One name space in the Worker's env: bindings, vars and secrets.
+        match o.get("environment") {
+            None => {}
+            Some(Value::Object(m)) => w.vars = m.clone(),
+            Some(_) => self.err(
+                &format!("{at}.environment"),
+                crate::tr!(
+                    "「名前: 値」の対応表か、NAME=値 の並びにしてください",
+                    "must be a mapping of NAME: value or a list of NAME=value"
+                ),
+            ),
+        }
+        // One name space in the Worker's env: bindings, environment and
+        // secrets.
         let mut names: BTreeMap<String, &str> = BTreeMap::new();
-        let secret_names: Vec<String> = w
-            .secrets
-            .iter()
-            .filter_map(|s| secrets.get(s).map(|x| x.var.clone()))
-            .collect();
         for (name, what) in w
             .bindings
             .iter()
             .map(|(b, _)| (b.clone(), "bindings"))
-            .chain(w.vars.keys().map(|k| (k.clone(), "vars")))
-            .chain(secret_names.into_iter().map(|v| (v, "secrets")))
+            .chain(w.vars.keys().map(|k| (k.clone(), "environment")))
+            .chain(w.secrets.keys().map(|k| (k.clone(), "secrets")))
         {
+            if what != "bindings" && !valid_binding(&name) {
+                self.err(
+                    &format!("{at}.{what}.{name}"),
+                    crate::tr!(
+                        "名前「{name}」は英字・数字・_ だけにしてください(英字か _ で始める)",
+                        "name \"{name}\" may only use letters, digits and _ (starting with a letter or _)"
+                    ),
+                );
+            }
             if name.starts_with("__WC_") {
                 self.err(
                     &format!("{at}.{what}.{name}"),
@@ -1633,9 +1668,9 @@ fn is_date(s: &str) -> bool {
 fn hint_for(key: &str) -> Option<String> {
     Some(match key {
         "image" => crate::tr!("型は type に書きます", "use type for the kind of service"),
-        "environment" | "env_file" => crate::tr!(
-            "値は vars か secrets に書き、環境ごとの違いは ${{VAR}} と .env.<環境> で表します",
-            "put values in vars or secrets; per-environment values come from ${{VAR}} and .env.<env>"
+        "env_file" => crate::tr!(
+            "値は environment か secrets に書き、環境ごとの違いは ${{VAR}} と .env.<環境> で表します",
+            "put values in environment or secrets; per-environment values come from ${{VAR}} and .env.<env>"
         ),
         "volumes" => crate::tr!(
             "データは d1・r2・kv・queue のサービスとして書きます",
@@ -1717,7 +1752,7 @@ services:
       JOBS: jobs
     consumes: [jobs]
     durable_objects: [Counter]
-    secrets: [stripe-key]
+    secrets: [STRIPE_KEY]
     x-note: anything
   db:
     type: d1
@@ -1738,9 +1773,6 @@ services:
     type: kv
   jobs:
     type: queue
-secrets:
-  stripe-key:
-    environment: STRIPE_KEY
 x-anything: 1
 "#;
 
@@ -1768,7 +1800,9 @@ x-anything: 1
         );
         assert_eq!(b[0].spec.cors[0].origins, ["https://x.example"]);
         assert_eq!(b[1].spec.notifications[0].queue, "jobs");
-        assert_eq!(c.secrets["stripe-key"].value, "sk");
+        let api = c.services.iter().find(|s| s.name == "api").unwrap();
+        let Kind::Worker(w) = &api.kind else { panic!() };
+        assert_eq!(w.secrets["STRIPE_KEY"], "sk");
     }
 
     #[test]
@@ -1864,7 +1898,7 @@ services:
       X: api.Nope
       DB: cache
       __WC_DO_Counter: api.Counter
-    vars:
+    environment:
       DB: "1"
     consumes: [jobs]
   api:
@@ -1891,7 +1925,7 @@ services:
             "services.web.compatibility_date",
             "services.web.ports",
             "services.web.bindings.X",
-            "services.web.vars.DB",
+            "services.web.environment.DB",
             "services.web.bindings.__WC_DO_Counter",
             "services.api.consumes",
             "services.wc-gateway",
@@ -1923,8 +1957,6 @@ services:
       - origins: ["*"]
         methods: [GET]
         max_age: "${AGE:-600}"
-secrets:
-  x-unused: {}
 "#;
         let c = project(yaml, None).1.unwrap();
         let Kind::R2(b) = &c.service("storage").unwrap().kind else {
@@ -1944,16 +1976,73 @@ services:
     build: ./web
     compatibility_date: "2026-09-01"
     routes: ["${WEB_DOMAIN}/*"]
-    secrets: [key]
-secrets:
-  key:
-    environment: STRIPE_KEY
+    secrets:
+      KEY: ${STRIPE_KEY}
 "#;
         let err = project(yaml, None).1.unwrap_err().to_string();
         assert!(
             err.contains("WEB_DOMAIN") && err.contains("STRIPE_KEY"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn environment_and_secrets_take_both_docker_forms() {
+        let yaml = r#"
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    environment: [MODE=prod, REGION]
+    secrets: [STRIPE_KEY]
+  api:
+    type: worker
+    build: ./api
+    compatibility_date: "2026-09-01"
+    environment:
+      MODE: dev
+    secrets:
+      SIGNING: ${SIGNING_KEY}
+"#;
+        let env = "REGION=apac\nSTRIPE_KEY=sk\nSIGNING_KEY=k1\n";
+        let c = project(yaml, Some(env)).1.unwrap();
+        let w = |n| match &c.service(n).unwrap().kind {
+            Kind::Worker(w) => w,
+            _ => panic!(),
+        };
+        assert_eq!(w("web").vars["MODE"], "prod");
+        assert_eq!(w("web").vars["REGION"], "apac");
+        assert_eq!(w("web").secrets["STRIPE_KEY"], "sk");
+        assert_eq!(w("api").vars["MODE"], "dev");
+        assert_eq!(w("api").secrets["SIGNING"], "k1");
+    }
+
+    #[test]
+    fn a_secret_written_in_the_compose_file_stops() {
+        for secrets in [
+            "{ KEY: sk_live_1 }",
+            "{ KEY: \"$$notavar\" }",
+            "[KEY=sk_live_1]",
+        ] {
+            let yaml = format!("{ONE_WORKER}    secrets: {secrets}\n");
+            let err = project(&yaml, Some("KEY=x\n")).1.unwrap_err().to_string();
+            assert!(err.contains("services.web.secrets"), "{secrets}: {err}");
+            assert!(!err.contains("sk_live_1"), "the secret leaked: {err}");
+        }
+    }
+
+    #[test]
+    fn the_forms_before_0_1_8_stop_with_what_to_write() {
+        let yaml = format!(
+            "{ONE_WORKER}    vars:\n      A: b\n    secrets: [key]\nsecrets:\n  key:\n    environment: KEY\n"
+        );
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(
+            err.contains("services.web.vars") && err.contains("environment"),
+            "{err}"
+        );
+        assert!(err.contains("  - secrets: "), "{err}");
     }
 
     #[test]

@@ -24,8 +24,8 @@ services:
     consumes: [jobs]
     crons: ["*/5 * * * *"]
     durable_objects: [Counter]
-    secrets: [stripe-key]
-    vars:
+    secrets: [STRIPE_KEY]
+    environment:
       GREETING: hello
   db:
     type: d1
@@ -48,6 +48,3 @@ services:
     type: kv
   jobs:
     type: queue
-secrets:
-  stripe-key:
-    environment: STRIPE_KEY

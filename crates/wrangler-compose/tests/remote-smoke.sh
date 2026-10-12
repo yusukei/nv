@@ -30,6 +30,20 @@ wc_yes() { printf 'staging\n' | script -qec "$BIN/wrangler-compose $*" /dev/null
 fail() { echo "FAIL: $*"; tail -20 api.log; exit 1; }
 api() { grep -a -c "$1" api.log || true; }
 
+# The account must be written in .env.<env> (REQ-006): without it, with a
+# different CLOUDFLARE_ACCOUNT_ID in the environment, or with an account the
+# login cannot see, nothing is done, not even a dry run.
+out=$(wc --env staging --dry-run up) && fail "ran without CLOUDFLARE_ACCOUNT_ID in .env.staging"
+grep -q 'write CLOUDFLARE_ACCOUNT_ID=<account id>' <<<"$out" || fail "missing account message: $out"
+grep -q 'Test (acc)' <<<"$out" || fail "accounts not listed: $out"
+echo 'CLOUDFLARE_ACCOUNT_ID=other' >> .env.staging
+out=$(wc --env staging --dry-run up) && fail "ran with a different account in the environment"
+grep -q 'differs from CLOUDFLARE_ACCOUNT_ID' <<<"$out" || fail "mismatch message: $out"
+out=$(CLOUDFLARE_ACCOUNT_ID= wc --env staging --dry-run up) && fail "ran with an account the login cannot see"
+grep -q 'this login cannot use account other' <<<"$out" || fail "unknown account message: $out"
+sed -i.bak 's/^CLOUDFLARE_ACCOUNT_ID=other$/CLOUDFLARE_ACCOUNT_ID=acc/' .env.staging && rm .env.staging.bak
+[[ $(api 'POST ') == 0 && $(api 'PUT ') == 0 && $(api 'DELETE ') == 0 ]] || fail "something changed without the account"
+
 # A dry run of a new environment says everything and changes nothing.
 out=$(wc --env staging --dry-run up)
 grep -q 'environment staging does not exist on Cloudflare yet' <<<"$out" || fail "new environment not announced: $out"
@@ -61,7 +75,7 @@ grep -q 'wc-data' <<<"$out" && fail "second up redeployed the data service: $out
 cp wrangler-compose.yaml compose.orig
 python3 - <<'PY'
 s = open("wrangler-compose.yaml").read()
-for line in ["    secrets: [stripe-key]\n", "    consumes: [jobs]\n", "    durable_objects: [Counter]\n", "      COUNTER: api.Counter\n"]:
+for line in ["    secrets: [STRIPE_KEY]\n", "    consumes: [jobs]\n", "    durable_objects: [Counter]\n", "      COUNTER: api.Counter\n"]:
     s = s.replace(line, "")
 open("wrangler-compose.yaml", "w").write(s)
 PY

@@ -31,5 +31,12 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
   `--dry-run` to show what would be deleted; ask the user to run the real command.
 - Behaviour settings (bindings, vars, routes, crons) belong in `wrangler-compose.yaml`, not in a
   Worker folder's Wrangler config; that config may only hold build settings.
-- Secrets come from `.env.<env>` in the project. Never print, commit or copy their values.
+- A Worker's non-secret values go in its `environment` and its secrets in its `secrets`, both as in docker
+  compose (`NAME: value` or a list). A secret's value must be `${VAR}`; values come from `.env.<env>`.
+  Never print, commit or copy secret values.
+- A remote environment needs `CLOUDFLARE_ACCOUNT_ID=<account id>` in its `.env.<env>`; every remote command,
+  even `--dry-run`, stops without it or when the environment variable differs. Ask the user for the ID;
+  do not pick an account yourself.
+- `context: <folder>` at the top points at the folder whose `package.json` holds Wrangler, when the compose
+  file lives elsewhere (e.g. a `deploy/` folder).
 - For any other Wrangler command, use `nv run wrangler …` so the project's locked Wrangler version is used.

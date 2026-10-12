@@ -1116,12 +1116,7 @@ fn deploy_worker(
         .collect();
     let exports = do_exports(&w.durable_objects, dropped, &legacy);
     let cfg = configs::remote_worker(&s.name, w, built, ids, &cf.account, exports);
-    let secrets: BTreeMap<String, String> = w
-        .secrets
-        .iter()
-        .filter_map(|name| ctx.compose.secrets.get(name))
-        .map(|sec| (sec.var.clone(), sec.value.clone()))
-        .collect();
+    let secrets = &w.secrets;
     let secret_text = serde_json::to_string(&secrets)?;
     // Deleted-class tombstones only matter once: the next deploy without
     // them is the same Worker.

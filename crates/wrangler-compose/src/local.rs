@@ -321,7 +321,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         std::fs::create_dir_all(&dir)?;
         let cfg = configs::local_worker(&ctx.compose, &s.name, w, &builts[&s.name]);
         configs.push(write_cfg(&dir, &cfg)?);
-        let vars = configs::dev_vars(&ctx.compose, w);
+        let vars = configs::dev_vars(w);
         if !vars.is_empty() {
             write_private(&dir.join(".dev.vars"), &vars)?;
         }
@@ -635,18 +635,14 @@ fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
                         .as_str()
                         .map(str::to_string)
                         .unwrap_or_else(|| v.to_string());
-                    say(format!("{}: vars.{k} = {v}", s.name));
+                    say(format!("{}: environment.{k} = {v}", s.name));
                 }
                 let port = w
                     .ports
                     .first()
                     .map(|p| format!("http://{}:{}", url_host(&p.ip), p.port))
                     .unwrap_or_else(|| "-".into());
-                let secrets: Vec<&str> = w
-                    .secrets
-                    .iter()
-                    .filter_map(|n| ctx.compose.secrets.get(n).map(|x| x.var.as_str()))
-                    .collect();
+                let secrets: Vec<&str> = w.secrets.keys().map(String::as_str).collect();
                 say(crate::tr!(
                     "{}: 組み立てて手元で動かす({port})。シークレット: {}",
                     "{}: would build and run locally ({port}); secrets: {}",

@@ -63,7 +63,7 @@
   <li>5 つの型が、手元とリモートの両方で、それぞれ Worker・D1・R2・KV・Queue として建つ。知らない <code>type</code> は止まる</li>
   <li>D1・R2・KV・Queue のそれぞれで、省略形のサービスは資源 1 つ、複数形のサービスは並べた数だけ資源になる。1 つのサービスに両方を書くと止まる。別のサービスに同じ名前の資源があっても、別の資源として建つ</li>
   <li>R2 のバケットの <code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> が、リモートのバケットの設定に入っている。手元では <code>public</code>・<code>cors</code>・<code>notifications</code> が同じに効き(AC-009 の同じ試験で確かめる)、ほかは効かないことを <code>up</code> が知らせる</li>
-  <li><code>vars</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
+  <li><code>environment</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
   <li><code>compatibility_date</code> の無い Worker のサービスは、何もせずに止まる(場所を示す)</li>
 </ul>
 
@@ -86,6 +86,7 @@
 <h3 id="ac-005"><span class="id">AC-005</span>シークレット <span class="refs">REQ-005</span></h3>
 <ul>
   <li><code>STRIPE_KEY</code> が、手元でもリモートでも、<code>secrets</code> に並べた Worker からだけ見える</li>
+  <li><code>environment</code>・<code>secrets</code> は対応表でも並びでも同じに読まれる。シークレットの値を compose ファイルに書くと止まり、その値はどこにも出ない。<code>vars</code> と一番上の <code>secrets</code> は書き直し方を示して止まる</li>
   <li>値を変えて <code>up</code> すると変わり、compose ファイルから消して <code>up</code> すると Worker からも消える</li>
   <li>値が無いと止まり、無い変数の名前が出る</li>
 </ul>
@@ -95,6 +96,7 @@
   <li><code>--env ac-1 up</code> のあと、Cloudflare に Worker は <code>&lt;プロジェクト&gt;-ac-1-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-ac-1-&lt;資源の名前&gt;</code>(<code>…-ac-1-cache</code>・<code>…-ac-1-storage-files</code> など)の名前でできる。手元では資源の名前(<code>cache</code>・<code>storage-files</code>)のまま。名前が長すぎるときは止まり、<code>name</code> を書くよう出る。続けて <code>--env ac-2 up</code> すると別のものができ、データが混ざらない</li>
   <li><code>name</code> を書くとその名前を使い、すでにあればそれを使って中身は変わらない</li>
   <li>別の PC(道具の記録が無い)から同じ環境へ <code>up</code> しても、同じものにつながり、新しく作らない</li>
+  <li><code>.env.staging</code> に <code>CLOUDFLARE_ACCOUNT_ID</code> が無いと、<code>--env staging</code> の操作は <code>--dry-run</code> でも何もせずに止まり、使えるアカウントが出る。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> が違うとき、ログインで見えないアカウントのときも止まる。どの場合も Cloudflare に変更の要求が出ていない</li>
   <li>網を切った PC で、<code>--env local</code> のどの操作も動く。リモートの環境の操作の間、手元で動く Worker がリモートの資源に触れていない</li>
 </ul>
 

@@ -85,7 +85,7 @@ wrangler-compose --env local down --purge # データも消す
 wrangler-compose --env local --dry-run up # 何も変えずに、何をするかを示す(どの操作にも付く)
 ```
 
-`--env local` 以外の名前(`staging`・`pr-123` など)はリモートの環境で、Cloudflare に `<プロジェクト>-<環境>-<サービス>` などの名前で建てる。要るのは一度の `nv run wrangler login` だけ(アカウントが複数なら `CLOUDFLARE_ACCOUNT_ID`)。
+`--env local` 以外の名前(`staging`・`pr-123` など)はリモートの環境で、Cloudflare に `<プロジェクト>-<環境>-<サービス>` などの名前で建てる。要るのは一度の `nv run wrangler login` と、`.env.<環境名>` の `CLOUDFLARE_ACCOUNT_ID=<アカウントの ID>`(必須。意図しないアカウントへ出さない・消さないため。環境変数の値が違えば止まる)。
 
 ```bash
 wrangler-compose --env staging --dry-run up   # 何を作り・上げるかを示す
