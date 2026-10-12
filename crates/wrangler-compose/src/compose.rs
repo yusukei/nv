@@ -1282,7 +1282,11 @@ impl Checker {
                 );
             }
         }
+        // An entry left empty by its variable (`${DOMAIN:-}`) is as if not
+        // written, so one compose file serves an environment on its own
+        // domain and one on workers.dev (REQ-002).
         w.routes = self.strings(&format!("{at}.routes"), o.get("routes"));
+        w.routes.retain(|r| !r.trim().is_empty());
         w.crons = self.strings(&format!("{at}.crons"), o.get("crons"));
         match o.get("compatibility_date") {
             Some(Value::String(d)) if is_date(d) => w.compatibility_date = d.clone(),
@@ -2016,6 +2020,22 @@ services:
         assert_eq!(w("web").secrets["STRIPE_KEY"], "sk");
         assert_eq!(w("api").vars["MODE"], "dev");
         assert_eq!(w("api").secrets["SIGNING"], "k1");
+    }
+
+    #[test]
+    fn an_empty_route_is_as_if_not_written() {
+        let yaml =
+            format!("{ONE_WORKER}    ports: [\"8787:8787\"]\n    routes: [\"${{DOMAIN:-}}\"]\n");
+        let c = project(&yaml, None).1.unwrap();
+        let Kind::Worker(w) = &c.service("web").unwrap().kind else {
+            panic!()
+        };
+        assert!(w.routes.is_empty());
+        let c = project(&yaml, Some("DOMAIN=x.example\n")).1.unwrap();
+        let Kind::Worker(w) = &c.service("web").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(w.routes, ["x.example"]);
     }
 
     #[test]
