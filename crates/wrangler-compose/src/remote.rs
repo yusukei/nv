@@ -1482,8 +1482,8 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
 /// environment wait until they are built on Wrangler's commands.
 pub fn data_client(ctx: &Ctx) -> Result<crate::data::Client> {
     bail!(crate::tr!(
-        "リモートの環境 {} の backup・restore は、いまは使えません(Wrangler のコマンドで作り直すまで止めています。何もしていません)",
-        "backup and restore of the remote environment {} are unavailable for now (stopped until they are rebuilt on Wrangler's commands; nothing was done)",
+        "リモートの環境 {} の backup・restore は、いまは使えません(作り直すまで止めています。何もしていません)",
+        "backup and restore of the remote environment {} are unavailable for now (stopped until they are rebuilt; nothing was done)",
         ctx.env
     ))
 }

@@ -60,7 +60,7 @@
   <li><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong></li>
   <li><strong>wrangler-compose は、内部では Wrangler が稼働している。</strong></li>
   <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、プロジェクト(compose ファイル)の単位で分離している。</strong></li>
-  <li><strong>wrangler-compose は、Wrangler のコマンド以外を一切使わない。</strong>(2026-10-12)</li>
+  <li><strong>wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は <code>wrangler login</code> で付与される API のみとする。</strong>(2026-10-13)</li>
 </ol>
 <p>これをどう使うかは、使うアプリの側の責任である。</p>
 </div>
@@ -171,7 +171,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code></li>
   <li>主に使うのは Workers・D1・R2・KV・Queues・Durable Objects・シークレット。使うものだけを作り、作るものは本物と互換にする</li>
   <li>手元では、ふつうのプロダクトを作るのに無いと困る機能を本物と同じに提供する。ほとんど使わない機能は再現しない</li>
-  <li>Cloudflare の API は一切使わない。Wrangler を使う(2026-10-12)</li>
+  <li>Cloudflare の操作には Wrangler と Cloudflare の API を使う。使える API は <code>wrangler login</code> で付与される API のみ(2026-10-13。2026-10-12 の決定を改める)</li>
   <li>リモートの環境の Worker は、利用者のサービスのものだけ(2026-10-12)</li>
   <li>環境の違いは、compose ファイルの中の変数(<code>${VAR}</code>)を <code>.env.&lt;環境&gt;</code> から展開して表す。切り替えの口は <code>--env</code> 1 つ</li>
   <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
@@ -279,7 +279,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <ul>
   <li>Worker のフォルダ(<code>build</code>)には、コードと、環境に依存しない組み立てのためのもの(どのファイルから組み立てるか、組み立ての手順など)だけを置いてよい</li>
   <li>振る舞いに関わる設定(名前・つながり・値・ルート・定期実行・環境など)がフォルダの中にあれば、何もせずに止まり、compose ファイルのどこに書くかを示す</li>
-  <li>道具はプロジェクトのファイルを書き換えない。道具が作るものは、git の外の決まった場所に置く</li>
+  <li>道具はプロジェクトのファイルを書き換えない。道具が作るものは、プロジェクトの中の決まった場所(<code>.wrangler/compose/</code>)に置く。git のリポジトリの中なら、そこが git から外れていなければ止まる。リポジトリでなければ確かめない(2026-10-13)</li>
 </ul>
 
 <h3 id="req-008"><span class="id">REQ-008</span>build</h3>
@@ -335,7 +335,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li><code>backup</code> は、その環境の D1・R2・KV の中身を手元のフォルダ(既定は <code>backups/&lt;環境&gt;/&lt;日時&gt;/</code>)へ書き出す</li>
   <li><code>restore &lt;控え&gt;</code> は、サービスの名前で照らしてその環境へ戻す。戻す先が空のときだけ戻し、<code>--drop</code> ならいまの中身を消してから戻す(打ち直しで確かめる)。戻したあと、控えのあとの移行を当てる</li>
   <li>控えはどの環境のものでも、どの環境へでも戻せる。データは控えのファイルを間に置いて移す(移し元の中で書き出し、移し先の中で読み込む)</li>
-  <li>リモートの環境の中身は Wrangler のコマンドで書き出し・読み込む</li>
+  <li>リモートの環境の中身は Wrangler のコマンドか Cloudflare の API で書き出し・読み込む</li>
   <li>控えは git に入れない。書きかけの控えは戻さない。Durable Objects・Queue の中身とシークレットは控えない</li>
 </ul>
 
@@ -383,7 +383,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>使わない型(Vectorize・Workers AI・Hyperdrive・Workflows など)。使うときに型を足す</li>
   <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code>(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
   <li>DNS・WAF・Access などゾーンの設定</li>
-  <li>Wrangler のコマンドで行えない操作(リモートの R2 のオブジェクトの一覧など)</li>
+  <li>Wrangler のコマンドでも Cloudflare の API でも行えない操作</li>
 </ul>
 
 <footer>docs/wrangler-compose/requirements.html</footer>

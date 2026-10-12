@@ -129,7 +129,7 @@
   <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)。<code>ports</code> のある r2 のサービスのバケットには、Worker のポートの S3 互換の口は答えない(404。本番の Worker のアドレスにも S3 の口は無い)ので、<code>cors</code> を飛ばして届くことは無い。そのため Worker のポートは 1 つの接続に 1 つの要求(<code>Connection: close</code>)で受け、要求ごとに行き先を確かめる。WebSocket などの upgrade はそのまま通す</li>
   <li><strong>ログ</strong>: 手元では、Worker のログにどの Worker のものかが付かない(実測)。そこで道具がサービスごとに小さな tail の受け手(<code>wc-logs-&lt;サービス&gt;</code>)を置き、受け手が届いたログにサービス名を付けて出す。道具は Wrangler 自身の行(起動・再読み込み・エラー)と受け手の行だけを画面と <code>.wrangler/compose/local/logs/up.log</code> に出し、名前の付かない生の行は出さない</li>
   <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る。前に見た中身は道具の KV(<code>wc-notify-state</code>)に残し、Queue が受け取ってから進めるので、動かし直しても抜けも重なりも無く、送れなかったものは次の回に送り直す</li>
-  <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。git の外)</li>
+  <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。<code>.wrangler/compose/</code> の中)</li>
   <li>動かす前に、移行を <code>d1 migrations apply --local --persist-to …</code> で当てる</li>
   <li>使う Wrangler は 4.149.0 以上(この設計を確かめた版)</li>
   <li>Queue の受け手は、compose ファイルに設定を持たないので、手元の設定に本物の既定値(<code>max_batch_size: 10</code>・<code>max_batch_timeout: 5</code>・<code>max_retries: 3</code>)を書いて渡す。手元の模擬の既定値(5・1・2)は本物と違うため(実測)</li>
