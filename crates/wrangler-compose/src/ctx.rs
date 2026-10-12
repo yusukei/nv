@@ -54,6 +54,12 @@ impl Ctx {
         &self.compose.root
     }
 
+    /// Where Wrangler and Node run: the folder of the package.json that
+    /// pins them (`context`, else the compose root).
+    pub fn project(&self) -> &Path {
+        &self.compose.context
+    }
+
     /// `.wrangler/compose/`: everything the tool makes (REQ-007).
     pub fn tool_dir(&self) -> PathBuf {
         self.root().join(".wrangler").join("compose")
@@ -64,7 +70,7 @@ impl Ctx {
         self.tool_dir().join(&self.env)
     }
 
-    /// `nv run wrangler <args>` in the compose root, with an empty stdin so
+    /// `nv run wrangler <args>` in the project folder, with an empty stdin so
     /// Wrangler never prompts nor writes back into config files.
     pub fn wrangler<I, S>(&self, args: I) -> Command
     where
@@ -75,13 +81,13 @@ impl Ctx {
         cmd.args(["run", "wrangler"]).args(args);
         // Nothing about the project leaves the machine but what the
         // operation itself sends (REQ-006).
-        cmd.current_dir(self.root())
+        cmd.current_dir(self.project())
             .stdin(Stdio::null())
             .env("WRANGLER_SEND_METRICS", "false");
         cmd
     }
 
-    /// `nv run node -e <script> <args>` in the compose root.
+    /// `nv run node -e <script> <args>` in the project folder.
     pub fn node_script<I, S>(&self, script: &str, args: I) -> Command
     where
         I: IntoIterator<Item = S>,
@@ -89,7 +95,7 @@ impl Ctx {
     {
         let mut cmd = Command::new(&self.nv);
         cmd.args(["run", "node", "-e", script]).args(args);
-        cmd.current_dir(self.root()).stdin(Stdio::null());
+        cmd.current_dir(self.project()).stdin(Stdio::null());
         cmd
     }
 
@@ -110,8 +116,8 @@ impl Ctx {
             .map(|(_, j)| j.trim())
             .ok_or_else(|| {
                 anyhow!(crate::tr!(
-                    "Wrangler を読めません。compose ファイルのあるフォルダの package.json に wrangler がありますか(`nv run npm install --save-dev wrangler@<版>`)",
-                    "cannot load Wrangler; is wrangler in the package.json next to the compose file? (`nv run npm install --save-dev wrangler@<version>`)"
+                    "Wrangler を読めません。compose ファイルのあるフォルダ(context を書いたならそのフォルダ)の package.json に wrangler がありますか(`nv run npm install --save-dev wrangler@<版>`)",
+                    "cannot load Wrangler; is wrangler in the package.json next to the compose file (or in the context folder)? (`nv run npm install --save-dev wrangler@<version>`)"
                 ))
             })?;
         let v: Value = serde_json::from_str(json).context(crate::tr!(
@@ -145,7 +151,7 @@ const path = require("path");
 const req = require("module").createRequire(path.join(process.cwd(), "package.json"));
 let out;
 try { out = { version: req("wrangler/package.json").version }; }
-catch (e) { out = { error: "wrangler is not installed next to the compose file (`nv run npm install --save-dev wrangler@latest`)" }; }
+catch (e) { out = { error: "wrangler is not installed next to the compose file or in its context folder (`nv run npm install --save-dev wrangler@latest`)" }; }
 process.stdout.write("\n@@WC@@" + JSON.stringify(out) + "\n");
 "#;
 

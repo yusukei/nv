@@ -15,6 +15,9 @@ pub struct Compose {
     /// The folder holding the compose file (REQ-001).
     pub root: PathBuf,
     pub file: PathBuf,
+    /// The folder whose package.json gives Wrangler and Node: top-level
+    /// `context`, else `root` (REQ-001).
+    pub context: PathBuf,
     /// In dependency order: what a service needs comes before it.
     pub services: Vec<Service>,
     /// Top-level `secrets`: name → value (REQ-005).
@@ -465,7 +468,31 @@ impl Checker {
             );
             return None;
         };
-        self.unknown_keys("(top)", &top, &["name", "services", "secrets"]);
+        self.unknown_keys("(top)", &top, &["name", "context", "services", "secrets"]);
+        let context = match top.get("context") {
+            None => root.to_path_buf(),
+            Some(Value::String(p)) => {
+                let dir = root.join(p);
+                if !dir.join("package.json").is_file() {
+                    self.err(
+                        "context",
+                        crate::tr!(
+                            "{} に package.json がありません(Wrangler を入れた package.json のあるフォルダを書いてください)",
+                            "no package.json in {} (name the folder whose package.json has Wrangler)",
+                            dir.display()
+                        ),
+                    );
+                }
+                std::fs::canonicalize(&dir).unwrap_or(dir)
+            }
+            Some(_) => {
+                self.err(
+                    "context",
+                    crate::tr!("文字列にしてください", "must be a string"),
+                );
+                root.to_path_buf()
+            }
+        };
         let name = match top.get("name") {
             Some(Value::String(s)) => s.clone(),
             Some(_) => {
@@ -639,6 +666,7 @@ impl Checker {
             name,
             root: root.to_path_buf(),
             file: file.to_path_buf(),
+            context,
             services,
             secrets,
         })
@@ -1747,6 +1775,47 @@ x-anything: 1
     fn reports_every_missing_variable_at_once() {
         let err = project(EXAMPLE, None).1.unwrap_err().to_string();
         assert!(err.contains("WEB_DOMAIN"), "{err}");
+    }
+
+    const ONE_WORKER: &str = r#"
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+"#;
+
+    #[test]
+    fn context_defaults_to_the_compose_folder() {
+        let (d, r) = project(ONE_WORKER, None);
+        assert_eq!(r.unwrap().context, d.0);
+    }
+
+    #[test]
+    fn context_names_the_folder_with_the_package_json() {
+        let d = tempdir::Dir::new();
+        let (deploy, app) = (d.0.join("deploy"), d.0.join("app"));
+        std::fs::create_dir_all(&deploy).unwrap();
+        std::fs::create_dir_all(app.join("web")).unwrap();
+        std::fs::write(app.join("package.json"), "{}").unwrap();
+        let yaml = format!(
+            "context: ../app\n{}",
+            ONE_WORKER.replace("./web", "../app/web")
+        );
+        std::fs::write(deploy.join("wrangler-compose.yaml"), yaml).unwrap();
+        let c = load(&deploy.join("wrangler-compose.yaml"), "local").unwrap();
+        assert_eq!(c.context, std::fs::canonicalize(&app).unwrap());
+        assert_eq!(c.root, deploy);
+    }
+
+    #[test]
+    fn context_without_a_package_json_stops() {
+        let yaml = format!("context: ./web\n{ONE_WORKER}");
+        let err = project(&yaml, None).1.unwrap_err().to_string();
+        assert!(
+            err.contains("context") && err.contains("package.json"),
+            "{err}"
+        );
     }
 
     #[test]

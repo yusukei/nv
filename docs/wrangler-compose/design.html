@@ -69,7 +69,7 @@
 <ul>
   <li>流れ: compose ファイルを読む(DES-002) → 値を展開する(DES-003) → サービスの順を決める → 環境ごとに中で使う設定を作る(DES-005) → Wrangler を <code>nv run wrangler …</code> で動かす</li>
   <li>道具が作るものは、すべてプロジェクトの <code>.wrangler/compose/</code> の下に置く(組み立てたもの・中で使う設定・名前の記録・手元のデータ・手元のログ)。プロジェクトのファイルは書き換えない</li>
-  <li>Wrangler は compose ファイルのあるフォルダの <code>package.json</code> の版を使う。Worker のフォルダに別の <code>package.json</code> があれば、組み立ての前にそこで <code>nv sync</code> を動かす</li>
+  <li>Wrangler は <code>context</code>(省けば compose ファイルのあるフォルダ)の <code>package.json</code> の版を使い、<code>nv run</code> をそのフォルダで動かす。組み立ての見分けに入れるロックファイルも同じフォルダのもの。Worker のフォルダに別の <code>package.json</code> があれば、組み立ての前にそこで <code>nv sync</code> を動かす</li>
 </ul>
 
 <h3 id="des-002"><span class="id">DES-002</span>compose ファイルを読む <span class="refs">REQ-001・REQ-002・REQ-003</span></h3>

@@ -397,7 +397,12 @@ fn entry_name(main: &str) -> String {
 /// A Worker folder with its own package.json gets its dependencies first
 /// (REQ-018 of the old spec, DES-001): `nv run` installs them when needed.
 fn sync_deps(ctx: &Ctx, folder: &Path) -> Result<()> {
-    if !folder.join("package.json").is_file() || folder == ctx.root() {
+    let same = |a: &Path, b: &Path| {
+        std::fs::canonicalize(a)
+            .ok()
+            .is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
+    };
+    if !folder.join("package.json").is_file() || same(folder, ctx.project()) {
         return Ok(());
     }
     let status = ctx
@@ -430,7 +435,7 @@ pub fn source_hash(ctx: &Ctx, w: &Worker, config: &Value, inputs: &[PathBuf]) ->
     let mut all: Vec<PathBuf> = files.iter().map(|r| w.build.join(r)).collect();
     all.extend(inputs.iter().cloned());
     for lock in [
-        ctx.root().join("package-lock.json"),
+        ctx.project().join("package-lock.json"),
         w.build.join("package-lock.json"),
     ] {
         if !all.contains(&lock) {

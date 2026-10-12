@@ -72,7 +72,7 @@ nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ�
 
 nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`、4.149.0 以上)。
 
-プロジェクトの一番上に `wrangler-compose.yaml` を 1 つ置き、docker compose と同じ形でサービス(`type: worker / d1 / r2 / kv / queue`)を並べる。環境ごとの違いは `${変数}` だけで書き、値は環境変数か `.env.<環境名>`(git に入れない)から入る。例は [tests/fixture](crates/wrangler-compose/tests/fixture/wrangler-compose.yaml)。
+プロジェクトの一番上に `wrangler-compose.yaml` を 1 つ置き(展開用のフォルダに分けるなら、そこに置いて `context: ../app` のように Wrangler の入った `package.json` のフォルダを書く)、docker compose と同じ形でサービス(`type: worker / d1 / r2 / kv / queue`)を並べる。環境ごとの違いは `${変数}` だけで書き、値は環境変数か `.env.<環境名>`(git に入れない)から入る。例は [tests/fixture](crates/wrangler-compose/tests/fixture/wrangler-compose.yaml)。
 
 ```bash
 wrangler-compose --env local up           # 手元で全サービスを起動(ソースを直すと組み直す。Ctrl-C で止める)

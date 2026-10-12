@@ -53,6 +53,7 @@
 <ul>
   <li>プロジェクトの根でも <code>api/</code> の中でも、同じ compose ファイルが使われる</li>
   <li><code>name</code> を省くと、フォルダ名がプロジェクトの名前として出る</li>
+  <li><code>context: ../app</code> と書いた <code>deploy/wrangler-compose.yaml</code> は、<code>deploy/</code> に <code>package.json</code> が無くても <code>app/</code> の Wrangler で動き、<code>.env.&lt;環境&gt;</code> と <code>.wrangler/compose/</code> は <code>deploy/</code> のものを使う。<code>context</code> のフォルダに <code>package.json</code> が無ければ止まる</li>
   <li><code>x-</code> で始まるキーを書いても動く</li>
   <li>知らないキー(<code>image</code> など)・型に合わないキー(<code>d1</code> に <code>ports</code>)・無いサービスを指すもの・<code>depends_on</code> の輪・<code>.yaml</code> と <code>.yml</code> の両方があることは、どれも何もせずに止まり、場所と理由が出る</li>
 </ul>

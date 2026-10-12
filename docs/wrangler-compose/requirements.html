@@ -205,7 +205,8 @@ STRIPE_KEY=sk_test_...</code></pre>
 <h3 id="req-001"><span class="id">REQ-001</span>compose ファイル</h3>
 <ul>
   <li>名前は <code>wrangler-compose.yaml</code>(<code>.yml</code> も読む。両方あれば止まる)。いまのフォルダから上へたどって最初に見つかったものを使う。見つからなければ止まり、書き始め方を示す</li>
-  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>services</code>・<code>secrets</code></li>
+  <li>書式は YAML で、docker compose の <code>compose.yaml</code> に寄せる: 一番上に <code>name</code>・<code>context</code>・<code>services</code>・<code>secrets</code></li>
+  <li><code>context</code> は、Wrangler と Node の版を決める <code>package.json</code> のあるフォルダ(compose ファイルから見た相対)。省くと compose ファイルのあるフォルダ。compose ファイルを展開用のフォルダに置き、コードと依存は別のフォルダに置けるようにする(docker compose の <code>build.context</code> と同じ考え)。<code>package.json</code> が無ければ止まる。ほかのパス(<code>build</code>・<code>assets</code>・<code>migrations</code>)はこれまでどおり compose ファイルから見た相対で、<code>.env.&lt;環境&gt;</code>・<code>.wrangler/compose/</code>・<code>backups/</code> も compose ファイルのあるフォルダに置く</li>
   <li><code>name</code> を省くと、compose ファイルのあるフォルダ名。プロジェクトとサービスの名前は、英小文字・数字・<code>-</code> だけ</li>
   <li><code>x-</code> で始まるキーは、どの階層でも読み飛ばす(docker と同じ)</li>
   <li>知らないキー、型に合わないキー、無いサービスを指すもの、<code>depends_on</code> の輪は、何もせずに止まり、どこ(<code>services.web.image</code> など)の何がいけないかを示す</li>
