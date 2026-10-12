@@ -117,6 +117,9 @@ def route(method, path, raw, headers):
             return ok({"id": name, "etag": "e", "deployment_id": "d1", "startup_time_ms": 1})
         if rest == "" and method == "DELETE":
             if sc is None: return err(404, "not found", 10007)
+            # As on Cloudflare: a queue consumer cannot be deleted.
+            if any(c.get("script_name") == name for q in S["queues"].values() for c in q["consumers"]):
+                return err(403, "Cannot delete this Worker as it is a consumer for a Queue. Remove it from the Queue's consumers first, then retry.", 10064)
             del S["scripts"][name]; return ok(None)
         if rest == "" and method == "GET":
             if sc is None: return err(404, "not found", 10007)
@@ -234,10 +237,12 @@ def route(method, path, raw, headers):
         b = S["r2"].get((jur, m.group(1)))
         if b is None: return err(404, "no bucket", 10006)
         if m.group(2) is None:
-            qs = [{"queueId": qid, "queueName": next((n for n, q in S["queues"].items() if q["id"] == qid), "?"), "rules": rules} for qid, rules in b["notif"].items()]
+            # As on Cloudflare: R2 gives queue ids with dashes, Queues without.
+            qs = [{"queueId": str(uuid.UUID(qid)), "queueName": next((n for n, q in S["queues"].items() if q["id"] == qid), "?"), "rules": rules} for qid, rules in b["notif"].items()]
             return ok({"bucketName": m.group(1), "queues": qs})
-        if method == "PUT": b["notif"][m.group(2)] = j["rules"]; return ok({})
-        if method == "DELETE": b["notif"].pop(m.group(2), None); return ok({})
+        qid = m.group(2).replace("-", "")
+        if method == "PUT": b["notif"][qid] = j["rules"]; return ok({})
+        if method == "DELETE": b["notif"].pop(qid, None); return ok({})
     # queues
     if r == "/queues" and method == "GET":
         return ok([{"queue_name": k, "queue_id": v["id"], "consumers": v["consumers"]} for k, v in S["queues"].items()], info)
@@ -249,7 +254,11 @@ def route(method, path, raw, headers):
         q = next(((n, v) for n, v in S["queues"].items() if v["id"] == m.group(1) or n == m.group(1)), None)
         if q is None: return err(404, "queue not found", 11000)
         if m.group(2) is None:
-            if method == "DELETE": del S["queues"][q[0]]; return ok(None)
+            if method == "DELETE":
+                # As on Cloudflare: a queue that R2 notifies cannot be deleted.
+                if any(q[1]["id"] in b["notif"] for b in S["r2"].values()):
+                    return err(400, f"Cannot delete queue '{q[0]}' that serves as a target for event notifications.", 11017)
+                del S["queues"][q[0]]; return ok(None)
             return ok({"queue_name": q[0], "queue_id": q[1]["id"], "consumers": q[1]["consumers"]})
         if method == "GET": return ok(q[1]["consumers"])
         if method == "POST":

@@ -191,6 +191,21 @@ struct Seen {
     subdomain: Option<String>,
 }
 
+/// Deletes a Worker, first taking it off the queues it consumes: Cloudflare
+/// refuses to delete a queue consumer (10064).
+fn delete_worker(cf: &Cf, seen: &Seen, name: &str) -> Result<()> {
+    for q in seen.queues.values() {
+        let qid = q["queue_id"].as_str().unwrap_or_default();
+        for c in q["consumers"].as_array().into_iter().flatten() {
+            if c["script_name"] == name || c["script"] == name {
+                let cid = c["consumer_id"].as_str().unwrap_or_default();
+                cf.delete(&format!("/queues/{qid}/consumers/{cid}"))?;
+            }
+        }
+    }
+    cf.delete(&format!("/workers/scripts/{name}"))
+}
+
 fn look(cf: &Cf, n: &Names) -> Result<Seen> {
     let scripts = cf
         .list("/workers/scripts")?
@@ -617,7 +632,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], remove_orphans: bool) -> Re
             act.run(
                 crate::tr!("消す: Worker {o}", "deleting Worker {o}"),
                 || {
-                    cf.delete(&format!("/workers/scripts/{o}"))?;
+                    delete_worker(&cf, &seen, o)?;
                     remove_record(&mut records, o);
                     Ok(())
                 },
@@ -1460,7 +1475,7 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         act.run(
             crate::tr!("下ろす: {}({name})", "taking down {} ({name})", s.name),
             || {
-                cf.delete(&format!("/workers/scripts/{name}"))?;
+                delete_worker(&cf, &seen, name)?;
                 remove_record(&mut records, name);
                 Ok(())
             },
@@ -1481,6 +1496,22 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
                     for c in q["consumers"].as_array().into_iter().flatten() {
                         if let Some(cid) = c["consumer_id"].as_str() {
                             let _ = cf.delete(&format!("/queues/{qid}/consumers/{cid}"));
+                        }
+                    }
+                    // Cloudflare refuses to delete a queue that R2 notifies (11017).
+                    for b in n.resources.iter().filter(|b| b.kind == "r2") {
+                        let h = jur_header(b);
+                        let conf = format!("/event_notifications/r2/{}/configuration", b.name);
+                        let now = match cf.get_with(&conf, &headers(&h)) {
+                            Ok(v) => v,
+                            Err(e) if cf::is_missing(&e) => continue,
+                            Err(e) => return Err(e),
+                        };
+                        for x in now["queues"].as_array().into_iter().flatten() {
+                            // R2 gives the id with dashes, Queues without.
+                            if x["queueId"].as_str().unwrap_or_default().replace('-', "") == qid {
+                                cf.delete_with(&format!("{conf}/queues/{qid}"), &headers(&h))?;
+                            }
                         }
                     }
                     cf.delete(&format!("/queues/{qid}"))

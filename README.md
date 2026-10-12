@@ -96,7 +96,7 @@ wrangler-compose --env staging backup         # 控えは環境によらず同�
 wrangler-compose --env staging down
 ```
 
-リモートはまだ本物の Cloudflare で確かめていない(偽の API での試験だけ)。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
+リモートは本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
 
 ## 進め方
 
