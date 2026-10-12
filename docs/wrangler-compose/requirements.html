@@ -55,12 +55,13 @@
 
 <h2 id="definition">定義</h2>
 <div class="box decision">
-<p><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong>(利用者の決定。すべての要求はこの定義から決める)</p>
-<ul>
-  <li><strong>手元が出発点</strong>: サービスは compose ファイルに書き、手元で動かして開発する。手元だけで開発が完結する(Cloudflare につながなくてよい)</li>
-  <li><strong>リモートは手元の再現</strong>: リモートには、手元で動いたものと同じもの(同じ compose ファイル・同じ組み立て)を展開する。違ってよいのは、環境ごとの値(<code>.env.&lt;環境&gt;</code>)と、Cloudflare での実際の名前だけ</li>
-  <li><strong>安全に</strong>: 展開の前に何が変わるかが分かる。データを壊さない。消す操作は確かめてから行う。本番を誤って変えない</li>
-</ul>
+<p>(利用者の決定。すべての要求はこの定義から決める。定義するのはここまで)</p>
+<ol>
+  <li><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong></li>
+  <li><strong>wrangler-compose は 1 つのコンテナで構成され、内部では Wrangler が稼働している。</strong></li>
+  <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、コンテナの単位で分離している。</strong></li>
+</ol>
+<p>これをどう使うかは、使うアプリの側の責任である。</p>
 </div>
 
 <h2 id="principles">理念(docker compose から)</h2>
