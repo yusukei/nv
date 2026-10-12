@@ -41,6 +41,13 @@ impl Paths {
     fn run(&self) -> PathBuf {
         self.dir.join("run")
     }
+    /// Wrangler's dev registry (where `wrangler dev` sessions find each
+    /// other's Workers by name). The default is one folder for the whole
+    /// machine, so two projects with a Worker of the same name would
+    /// overwrite each other's entries; each project keeps its own.
+    fn registry(&self) -> PathBuf {
+        self.dir.join("registry")
+    }
     fn log(&self) -> PathBuf {
         self.dir.join("logs").join("up.log")
     }
@@ -820,6 +827,7 @@ fn start_runtime(
         .args(["--inspector-port", &inspector_port.to_string()])
         .arg("--persist-to")
         .arg(p.state())
+        .env("WRANGLER_REGISTRY_PATH", p.registry())
         .env("WRANGLER_SEND_METRICS", "false")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1827,7 +1835,9 @@ mod tests {
         let p = other.local_addr().unwrap().port();
         let e = claim_port("web", &port("127.0.0.1", p)).unwrap_err();
         assert!(format!("{e:#}").contains(&format!("127.0.0.1:{p}")));
-        assert!(format!("{e:#}").contains("else listens") || format!("{e:#}").contains("ほかのものが"));
+        assert!(
+            format!("{e:#}").contains("else listens") || format!("{e:#}").contains("ほかのものが")
+        );
     }
 
     #[test]

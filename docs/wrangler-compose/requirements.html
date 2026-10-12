@@ -58,8 +58,8 @@
 <p>(利用者の決定。すべての要求はこの定義から決める。定義するのはここまで)</p>
 <ol>
   <li><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong></li>
-  <li><strong>wrangler-compose は 1 つのコンテナで構成され、内部では Wrangler が稼働している。</strong></li>
-  <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、コンテナの単位で分離している。</strong></li>
+  <li><strong>wrangler-compose は、内部では Wrangler が稼働している。</strong></li>
+  <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、プロジェクト(compose ファイル)の単位で分離している。</strong></li>
 </ol>
 <p>これをどう使うかは、使うアプリの側の責任である。</p>
 </div>
@@ -166,6 +166,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <div class="box decision">
 <ul>
   <li>定義: docker compose のように手元で開発したサービスを、安全にリモートへ展開するためのもの(最も重要)</li>
+  <li>コンテナは使わない。プロジェクトどうしの分離は、コンテナが無くても道具が行う(2026-10-12。同日の「1 つのコンテナで構成する」を改めた。コンテナにしても手元のポートの重なりは残り、Docker が要るようになるため)</li>
   <li>コマンドと書式は docker compose に合わせる。勝手に足したり変えたりしない</li>
   <li>何ができるべきかから決め、中で使う道具の都合で要求を変えない</li>
   <li>人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない</li>
