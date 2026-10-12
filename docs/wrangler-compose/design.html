@@ -89,7 +89,8 @@
 <h3 id="des-004"><span class="id">DES-004</span>実際の名前と見つけ直し <span class="refs">REQ-006</span></h3>
 <ul>
   <li>実際の名前は、<code>name</code>、無ければ Worker は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;</code>、資源は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;資源の名前&gt;</code>(資源の名前は、省略形はサービスの名前、複数形は <code>&lt;サービス&gt;-&lt;名前&gt;</code>)。手元では資源の名前のまま。Cloudflare の名前の決まりに合わなければ止まる</li>
-  <li>ID の記録(<code>.wrangler/compose/&lt;環境&gt;/resources.json</code>)は写しにすぎない。<code>up</code> のたびに名前で Cloudflare を引き直す(<code>d1 list</code>・<code>kv namespace list</code>・<code>r2 bucket list</code>・<code>queues list</code>)ので、記録を失っても別の PC からでも同じものにつながる。無ければ作り、あれば使う</li>
+  <li>道具は ID を覚えない。操作のたびに名前で Cloudflare を引き直す(Worker・D1・KV・R2(使う管轄ごと)・Queue・Durable Object の名前空間の一覧)ので、別の PC からでも同じものにつながる。無ければ作り、あれば使う。道具が覚えるのは、前回上げた Worker の要約(<code>.wrangler/compose/&lt;環境&gt;/deployed.json</code>。変わっていない Worker を上げないためと、compose から消えた Worker を見つけるため)とデータのサービスの合言葉だけで、失っても上げ直すだけで結果は変わらない</li>
+  <li>一覧・作成・設定は Cloudflare の API で行う(Wrangler の一覧の多くは JSON で答えないため)。資格は <code>wrangler auth token --json</code> で Wrangler のログイン(期限切れなら Wrangler が更新)か <code>CLOUDFLARE_API_TOKEN</code> から受け取り、表に出さない。アカウントは <code>CLOUDFLARE_ACCOUNT_ID</code>、無ければログインで見える 1 つ(複数なら止まって選ばせる)。<code>CLOUDFLARE_API_BASE_URL</code> があれば Wrangler と同じくその API を使う。展開(<code>deploy</code>)と移行(<code>d1 migrations apply --remote</code>)は Wrangler で行う</li>
   <li>初めての環境かは、その環境の名前の Worker か資源が Cloudflare にあるかで見る(REQ-015)</li>
 </ul>
 
@@ -131,8 +132,9 @@
 
 <h3 id="des-009"><span class="id">DES-009</span>リモートの up <span class="refs">REQ-010・REQ-005・REQ-015</span></h3>
 <ul>
-  <li>段: 確かめ(値・<code>.env</code> と git・初めての環境なら確かめ) → 資源を合わせる(DES-004) → サービスの順に: 移行(<code>d1 migrations apply --remote</code>) → 組み立てたもの(DES-007)を、作った設定と <code>--secrets-file</code> で上げる → compose から消えたシークレットを消す(<code>secret delete</code>)</li>
-  <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない</li>
+  <li>段: 組み立て(DES-007。Cloudflare に触れる前) → いまの Cloudflare を引く(DES-004) → 確かめ(初めての環境・消える Durable Object のクラス・<code>--remove-orphans</code> で消す Worker があれば、まとめて示して環境名の打ち直し) → 無い資源を作る → バケットの設定(DES-018) → データのサービス(DES-011) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>)、Worker を作った設定と <code>--secrets-file</code>(0600 の一時ファイル)で上げ、compose から消えたシークレットと、受け取らなくなった Queue の受け手を消す</li>
+  <li>作る設定: 組み立てたものをそのまま(<code>no_bundle</code>。横のファイルも ES モジュールとして)、バインディングは実際の名前と ID、Queue の受け手は Cloudflare の既定値、<code>routes</code> は <code>/</code> か <code>*</code> を含めばルート、含まなければ独自ドメイン。<code>workers.dev</code> の URL は、<code>ports</code> を持ち(外から呼ばれる Worker)<code>routes</code> の無い Worker だけに開く(手元で <code>ports</code> の無い Worker はリモートでも外から届かない)。プレビューの URL は開かない</li>
+  <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない。<code>--dry-run</code> は同じ段を通り、変えることを示すだけ(合言葉のファイルも作らない)</li>
   <li>移行が失敗したら、その D1 を使う Worker と、それより後のサービスは行わない</li>
   <li>compose から消えた Worker は、記録と名前(<code>&lt;プロジェクト&gt;-&lt;環境&gt;-</code> で始まるもの)から見つけて示し、<code>--remove-orphans</code> のときだけ消す</li>
 </ul>
@@ -146,7 +148,8 @@
 
 <h3 id="des-010"><span class="id">DES-010</span>Durable Objects のクラスの足し引き <span class="refs">REQ-002・REQ-015</span></h3>
 <ul>
-  <li>前回展開したクラスと compose ファイルの <code>durable_objects</code> を比べ、足されたクラスは <code>new_sqlite_classes</code>、消えたクラスは <code>deleted_classes</code> の移行として、通し番号のタグ(<code>wc-1</code>・<code>wc-2</code> …)で道具が足す</li>
+  <li>Wrangler の新しい宣言の形(<code>exports</code>。2026-07 から)を使う: compose の <code>durable_objects</code> の各クラスを <code>{"type": "durable-object", "storage": "sqlite"}</code> と宣言し、Cloudflare がいまの名前空間と比べて作る。移行のタグは持たない。もとから古いキー値の保存のクラスは <code>legacy-kv</code> のまま宣言する。手元も同じ宣言を使う</li>
+  <li>Cloudflare に名前空間があり compose から消えたクラスは、<code>{"state": "deleted"}</code> の墓標として宣言して消す</li>
   <li>消すクラスがあれば中身も消えるので、消すものとして示し、環境名の打ち直しで確かめる</li>
 </ul>
 
@@ -154,7 +157,8 @@
 <ul>
   <li><strong>データのサービス</strong>(すべての環境): その環境のすべての R2・KV への、ふつうのバインディングを持つ Worker。HTTP で <code>list</code>・<code>get</code>・<code>put</code>・<code>delete</code> を受ける。<code>up</code> が利用者のサービスと一緒に建て(リモートは Cloudflare に、手元は同じ <code>wrangler dev</code> の中に)、<code>down</code> が一緒に下ろす。<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う。これで R2 の API キーが要らない(REQ-016)</li>
   <li><strong>入口のサービス</strong>(手元だけ): DES-008</li>
-  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚え、覚えていない PC では入れ直してから使う。リモートはルートを持たず <code>workers.dev</code> の URL だけ、手元は <code>127.0.0.1</code> だけで受ける</li>
+  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。合言葉は <code>.wrangler/compose/&lt;環境&gt;/</code> に覚え、覚えていない PC では入れ直してから使う。リモートはルートを持たず <code>workers.dev</code> の URL だけ、手元は <code>127.0.0.1</code> だけで受ける。リモートで合言葉を覚えていない(または古い)PC は、Cloudflare の API でシークレットを入れ直し、効くまで待ってから使う</li>
+  <li>リモートのデータのサービスはアカウントの <code>workers.dev</code> のサブドメインで動くので、それが無いアカウントでは止まる(作り方は決めていない)</li>
   <li>名前は <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code>(手元は <code>wc-data</code>・<code>wc-gateway</code>)</li>
 </ul>
 
@@ -167,8 +171,8 @@
 
 <h3 id="des-013"><span class="id">DES-013</span>ps・logs <span class="refs">REQ-012</span></h3>
 <ul>
-  <li><code>ps</code>(リモート): Worker は <code>deployments list</code>、資源は DES-004 の一覧、未適用の移行は履歴の表を <code>SELECT</code> で読む。手元: 動いている記録と URL</li>
-  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す。手元: <code>up</code> が書く <code>.wrangler/compose/local/logs/up.log</code> を読む(<code>-f</code> なら追う)</li>
+  <li><code>ps</code>(リモート): Worker・資源は DES-004 の一覧、未適用の移行は D1 の履歴の表を API で <code>SELECT</code> で読む。compose に無い Worker は「残り」として出す。手元: 動いている記録と URL</li>
+  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す(手元の受け手と同じ形)。過去のログは読めないので、<code>-f</code> が無くても今から追う。手元: <code>up</code> が書く <code>.wrangler/compose/local/logs/up.log</code> を読む(<code>-f</code> なら追う)</li>
 </ul>
 
 <h3 id="des-014"><span class="id">DES-014</span>backup・restore <span class="refs">REQ-013</span></h3>
@@ -201,7 +205,8 @@
 <ul>
   <li>単体: compose ファイルの確かめ・値の展開・サービスの順・作る設定・Worker のフォルダの確かめ・Durable Objects のタグ・控えの目録</li>
   <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
-  <li>リモート: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
+  <li>リモートの流れ(CI。Linux): 偽の Cloudflare の API(<code>tests/fake-cloudflare.py</code>。<code>CLOUDFLARE_API_BASE_URL</code> で道具と Wrangler の両方を向ける)に対し、新しい環境の <code>up</code>(打ち直しを含む)・2 回目は何も上げない・シークレット/受け手/クラスを消す・移行の失敗で止まる・残りの Worker・<code>ps</code>・<code>down web</code>・<code>down</code> を通す。道具の段を確かめるもので、Cloudflare の本当の振る舞いではない</li>
+  <li>リモートの本物: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
 </ul>
 
 <h3 id="des-019"><span class="id">DES-019</span>手元の R2 の口 <span class="refs">REQ-009</span></h3>
@@ -215,6 +220,7 @@
 
 <h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
 <ul>
+  <li>リモートのすべて(本物の Cloudflare では一度も動かしていない。偽の API と、Cloudflare の公開の API 定義・Wrangler 4.149.0 の作りに合わせて書いた): 資源の作成と設定の答えの形、R2 の設定の比べ方(Cloudflare が足す既定の値で毎回「違う」とならないか)、<code>exports</code> での Durable Object のクラスの作成と墓標、Queue の受け手の付け外し、<code>wrangler auth token</code> の資格で各 API が通るか(ログインの権限の範囲)、<code>wrangler tail --format json</code> の出し方、データのサービスへの合言葉の入れ直しが効くまでの時間</li>
   <li>組み立てたものを組み直さずに使えること(<code>deploy --no-bundle</code> でのリモートの展開、<code>wrangler dev</code> での手元の実行と、コードが変わったときの組み直し)</li>
   <li>入口と中継を通しても、WebSocket・大きな本体・Server-Sent Events が届くこと</li>
   <li>手元のログから、どの Worker の行かを見分けられること</li>

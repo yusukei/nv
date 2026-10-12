@@ -85,7 +85,18 @@ wrangler-compose --env local down --purge # データも消す
 wrangler-compose --env local --dry-run up # 何も変えずに、何をするかを示す(どの操作にも付く)
 ```
 
-今動くのは `--env local`(手元)だけ。リモートの環境への展開はこれから作る。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
+`--env local` 以外の名前(`staging`・`pr-123` など)はリモートの環境で、Cloudflare に `<プロジェクト>-<環境>-<サービス>` などの名前で建てる。要るのは一度の `nv run wrangler login` だけ(アカウントが複数なら `CLOUDFLARE_ACCOUNT_ID`)。
+
+```bash
+wrangler-compose --env staging --dry-run up   # 何を作り・上げるかを示す
+wrangler-compose --env staging up             # 資源を作り、移行を当て、Worker を上げる(初めての環境は打ち直しで確かめる)
+wrangler-compose --env staging ps
+wrangler-compose --env staging logs api
+wrangler-compose --env staging backup         # 控えは環境によらず同じ形。手元へ restore もできる
+wrangler-compose --env staging down
+```
+
+リモートはまだ本物の Cloudflare で確かめていない(偽の API での試験だけ)。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
 
 ## 進め方
 

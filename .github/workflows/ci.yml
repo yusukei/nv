@@ -39,6 +39,14 @@ jobs:
         run: |
           export NV_HOME="$RUNNER_TEMP/nvhome"
           BIN="$PWD/target/release" bash crates/wrangler-compose/tests/local-smoke.sh
+      # The remote flow against a fake Cloudflare API (answers retypes
+      # through util-linux `script`, so Linux only).
+      - name: wrangler-compose remote test (fake API)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export NV_HOME="$RUNNER_TEMP/nvhome"
+          BIN="$PWD/target/release" bash crates/wrangler-compose/tests/remote-smoke.sh
       - name: wrangler-compose build test
         if: runner.os == 'Windows'
         shell: bash

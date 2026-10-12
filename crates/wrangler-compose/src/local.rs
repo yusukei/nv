@@ -787,13 +787,13 @@ fn notices(services: &[&Service]) {
 fn data_config(ctx: &Ctx, run: &Path, token: &str) -> Result<PathBuf> {
     let dir = run.join(configs::DATA);
     std::fs::create_dir_all(&dir)?;
-    let path = write_cfg(&dir, &configs::data_service(&ctx.compose, &dir)?)?;
+    let path = write_cfg(&dir, &configs::data_service(&ctx.compose, &dir, None)?)?;
     write_private(&dir.join(".dev.vars"), &format!("WC_TOKEN=\"{token}\"\n"))?;
     Ok(path)
 }
 
 /// 256 random bits for the data service's token (DES-011).
-fn new_token() -> Result<String> {
+pub(crate) fn new_token() -> Result<String> {
     let mut b = [0u8; 32];
     getrandom::fill(&mut b).map_err(|e| anyhow!("random: {e}"))?;
     Ok(crate::files::hex(&b))
@@ -908,6 +908,10 @@ fn tool_dir_ignored(ctx: &Ctx) -> Result<()> {
 fn with_data<T>(ctx: &Ctx, f: impl FnOnce(&crate::data::Client, bool) -> Result<T>) -> Result<T> {
     let p = Paths::new(ctx);
     tool_dir_ignored(ctx)?;
+    if !ctx.local {
+        // A remote environment's own data service, on Cloudflare.
+        return f(&crate::remote::data_client(ctx)?, false);
+    }
     match try_lock(&p)? {
         None => {
             let rec = read_record(&p).ok_or_else(|| {
@@ -1106,7 +1110,7 @@ fn data_of(s: &Service) -> Vec<(&'static str, String)> {
 
 /// What `down --purge <names>` deletes; an error when a Worker that is not
 /// named also uses any of it.
-fn purge_targets(
+pub(crate) fn purge_targets(
     c: &crate::compose::Compose,
     names: &[String],
 ) -> Result<Vec<(&'static str, String)>> {
@@ -1555,7 +1559,7 @@ impl LogFilter {
     }
 }
 
-fn strip_ansi(s: &str) -> String {
+pub(crate) fn strip_ansi(s: &str) -> String {
     let mut out = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -1583,7 +1587,7 @@ fn write_cfg(dir: &Path, cfg: &Value) -> Result<PathBuf> {
 }
 
 /// A file only the user can read (secrets).
-fn write_private(path: &Path, text: &str) -> Result<()> {
+pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
     // A new file, so an old one's looser permissions never carry over.
     let _ = std::fs::remove_file(path);
     let mut opts = OpenOptions::new();

@@ -8,7 +8,8 @@ description: Run, inspect, stop, back up and restore Cloudflare Workers projects
 Projects with a `wrangler-compose.yaml` are run with `wrangler-compose`, not with `wrangler dev`,
 `wrangler deploy` or `wrangler d1 migrations apply` directly. The file lists services like docker compose
 (`type: worker`, `d1`, `r2`, `kv`, `queue`); differences between environments come only from `${VAR}`
-values in the environment or `.env.<env>`. Only `--env local` works so far; remote environments are not built yet.
+values in the environment or `.env.<env>`. `--env local` runs everything on this machine; any other name is a
+remote environment on Cloudflare (needs `nv run wrangler login` once).
 
 | To do this | Type |
 |---|---|
@@ -21,6 +22,10 @@ values in the environment or `.env.<env>`. Only `--env local` works so far; remo
 | See what any command would do, changing nothing | add `--dry-run`, e.g. `wrangler-compose --env local --dry-run up` |
 
 - `up` stays in the foreground; run it in the background when you need the terminal, and stop it with `down`.
+- For a remote environment, run `--dry-run up` first and show the user what it would create and deploy.
+  The first `up` of a new environment, `--remove-orphans` and dropping a Durable Object class ask the user to
+  retype the environment name; deploying is visible to others, so confirm before `up` to an environment the
+  user did not name.
 - `down --purge` and `restore --drop` delete data and ask the user to retype the environment name.
   They refuse to run without a terminal, so do not try to pipe an answer in. You may run them with
   `--dry-run` to show what would be deleted; ask the user to run the real command.

@@ -3,6 +3,7 @@
 #[macro_use]
 mod i18n;
 mod build;
+mod cf;
 mod compose;
 mod configs;
 mod confirm;
@@ -15,6 +16,7 @@ mod interp;
 mod interrupt;
 mod local;
 mod r2proxy;
+mod remote;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
@@ -246,24 +248,34 @@ fn dispatch(cli: Cli) -> Result<()> {
         ));
     };
     let ctx = Ctx::open(&env, cli.dry_run)?;
-    if !ctx.local {
-        bail!(tr!(
-            "リモートの環境({env})の操作はまだ作っていません。いまは --env local だけが使えます",
-            "remote environments ({env}) are not implemented yet; only --env local works for now"
-        ));
-    }
-    match cli.command {
-        Cmd::Build { services } => build::build(&ctx, &services).map(|_| ()),
-        Cmd::Up {
-            build,
-            remove_orphans: _,
-            services,
-        } => local::up(&ctx, build, &services),
-        Cmd::Down { purge, services } => local::down(&ctx, purge, &services),
-        Cmd::Ps => local::ps(&ctx),
-        Cmd::Logs { follow, services } => local::logs(&ctx, follow, &services),
-        Cmd::Backup { dest } => local::backup(&ctx, dest),
-        Cmd::Restore { drop, from } => local::restore(&ctx, &from, drop),
+    // backup and restore go through the environment's data service, which
+    // `local` reaches either way (DES-014).
+    match (cli.command, ctx.local) {
+        (Cmd::Build { services }, _) => build::build(&ctx, &services).map(|_| ()),
+        (
+            Cmd::Up {
+                build,
+                remove_orphans: _,
+                services,
+            },
+            true,
+        ) => local::up(&ctx, build, &services),
+        (
+            Cmd::Up {
+                build,
+                remove_orphans,
+                services,
+            },
+            false,
+        ) => remote::up(&ctx, build, &services, remove_orphans),
+        (Cmd::Down { purge, services }, true) => local::down(&ctx, purge, &services),
+        (Cmd::Down { purge, services }, false) => remote::down(&ctx, purge, &services),
+        (Cmd::Ps, true) => local::ps(&ctx),
+        (Cmd::Ps, false) => remote::ps(&ctx),
+        (Cmd::Logs { follow, services }, true) => local::logs(&ctx, follow, &services),
+        (Cmd::Logs { follow, services }, false) => remote::logs(&ctx, follow, &services),
+        (Cmd::Backup { dest }, _) => local::backup(&ctx, dest),
+        (Cmd::Restore { drop, from }, _) => local::restore(&ctx, &from, drop),
     }
 }
 

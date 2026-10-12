@@ -345,7 +345,7 @@ fn build_config(ctx: &Ctx, svc: &str, w: &Worker) -> Result<Value> {
             _ => {}
         }
     }
-    cfg.remove("$schema");
+    cfg.shift_remove("$schema");
     cfg.insert("name".into(), json!(svc));
     cfg.insert("compatibility_date".into(), json!(w.compatibility_date));
     if !w.compatibility_flags.is_empty() {

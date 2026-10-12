@@ -73,7 +73,11 @@ impl Ctx {
     {
         let mut cmd = Command::new(&self.nv);
         cmd.args(["run", "wrangler"]).args(args);
-        cmd.current_dir(self.root()).stdin(Stdio::null());
+        // Nothing about the project leaves the machine but what the
+        // operation itself sends (REQ-006).
+        cmd.current_dir(self.root())
+            .stdin(Stdio::null())
+            .env("WRANGLER_SEND_METRICS", "false");
         cmd
     }
 
