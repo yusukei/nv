@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d03-remote.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D03. リモートの up</h1>
-<p>Cloudflare へ展開する段、Durable Objects のクラスの足し引き、R2 のバケットの設定。DES-009・010・018。</p></section>
+<p>Cloudflare へ展開する段、Durable Objects のクラスの足し引き、R2 のバケットの設定。DES-009・010・018・021。</p></section>
 
 <section class="section"><h2>設計</h2><div class="figs"><h4 class="figttl">リモートの up の段</h4><div class="steps">
 <div class="step"><div class="n">1</div><div class="t">組み立て</div><div class="d">Cloudflare に触れる前</div></div>
@@ -39,6 +39,17 @@
   <li><strong>リモート</strong>: <code>up</code> が、バケットごとに compose ファイルの設定と Cloudflare の設定を比べ、違えば合わせる。作るときの <code>storage_class</code>・<code>jurisdiction</code> は <code>r2 bucket create</code> の引数、ほかは <code>r2 bucket dev-url</code>(<code>public</code>)・<code>r2 bucket cors</code>・<code>r2 bucket lifecycle</code>・<code>r2 bucket notification</code>・<code>r2 bucket lock</code> で入れる。compose ファイルから消した設定は消す</li>
   <li><strong>手元</strong>: Wrangler の手元の模擬に無いもののうち、再現すると決めたもの(CORS・公開の URL・イベント通知)を道具のサービス(DES-011)で効かせる。公開は入口のサービスがバケットの公開の URL を配り、CORS は S3 互換の口と公開の URL の応答に付け、通知はオブジェクトの変化を手元の Queue へ送る。ライフサイクル・ロック・保管の種類は手元では効かせない(REQ-009)</li>
   <li>手元で、バインディングからの書き込み・消去(Worker のコードの <code>env.FILES.put</code> など)を道具のサービスが見る手立て(通知・ロックのため)は、作る前に確かめる(<a href="d05-test.html#unverified">確かめていないこと</a>)</li>
+</ul>
+</article>
+<article class="item" id="des-021"><h3><span class="id">DES-021</span>コンテナ(リモート) <span class="refs"><a href="../requirements/write.html#req-020">REQ-020</a>・<a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/commands.html#req-014">REQ-014</a></span></h3>
+<ul>
+  <li>作る設定に <code>containers</code> を入れ(DES-020 と同じ。絶対パス)、<code>wrangler deploy</code> に任せる。Wrangler は Worker を上げたあと、Dockerfile からイメージを作って Cloudflare のコンテナのレジストリに送り(中身が同じなら送らない)、上げた版の Durable Object の namespace に結び付けてアプリケーションを作る・変え、入れ替えを始める。入れ替えは <code>up</code> のあとも続く(知らせる)</li>
+  <li>アプリケーションの名前は Wrangler の決め方のまま <code>&lt;Worker の名前&gt;-&lt;クラス&gt;</code>(小文字)。Worker の名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まるので、持ち主が名前で分かる。道具が探す・消すのは、Worker の名前と(Cloudflare か compose ファイルにある)クラス名から決まる名前のものだけで、名前の頭だけでは選ばない(<code>api</code> と <code>api-v2</code> を取り違えないため)</li>
+  <li>変わったかの判定: 版の印(DES-015)には、コンテナを Dockerfile の場所ではなく中身のハッシュ(Dockerfile・ビルドの基点のすべてのファイル・<code>image_vars</code>。レジストリのイメージは参照)で入れる。どの PC から打っても同じ印になる。コンテナごとの中身のハッシュは展開の説明(<code>--message</code>。100 文字まで)に <code>wc-containers &lt;クラス&gt;=&lt;ハッシュ&gt; …</code> の形で残し、plan はそれと比べてイメージが変わるかを示す(説明に無ければ「変わるかもしれない」)。<code>instance_type</code>・<code>max_instances</code> は Cloudflare のアプリケーションと比べる</li>
+  <li>消す: compose ファイルから消したコンテナ(クラスは残る)のアプリケーションは、その Worker を上げる前に消す。消したクラス・compose に無い Worker・<code>down</code> で下ろす Worker のアプリケーションは、Worker を消す前に消す(Cloudflare は Worker を消してもアプリケーションを消さない)</li>
+  <li>Docker: Dockerfile のコンテナがあれば、Cloudflare に触れる前に確かめる(<code>--dry-run</code> も)。リモートへのビルドは Windows でもできるので、Windows では止めない</li>
+  <li>コンテナを使えないアカウント: アプリケーションの一覧(<code>/containers/applications</code>)を読めなければ、compose ファイルにコンテナがあるときだけ Cloudflare の答えを示して止まる。無ければ今までどおり</li>
+  <li><code>ps</code> は、コンテナのアプリケーションがあるかと、compose ファイルに無いもの(次の <code>up</code> が消す)を示す</li>
 </ul>
 </article>
 </section>

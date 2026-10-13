@@ -272,7 +272,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         .collect();
     let prefix = configs::local_prefix(&ctx.compose);
     if !containers.is_empty() {
-        crate::containers::check_docker()?;
+        crate::containers::check_docker(true)?;
     }
     let mut builts: BTreeMap<String, Built> = BTreeMap::new();
     for (s, w) in &workers {

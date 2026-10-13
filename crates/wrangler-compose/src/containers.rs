@@ -135,6 +135,48 @@ pub fn container_listing() -> Option<String> {
     docker_out(&["ps", "-a", "--format", "{{.Names}}\t{{.State}}"])
 }
 
+/// The name Wrangler gives a container application on Cloudflare when the
+/// config sets none (and no Wrangler environment is used): `<Worker>-<class>`,
+/// lowercased. The Worker name starts with `<project>--<env>--`, so the name
+/// says whose it is (REQ-006).
+pub fn app_name(script: &str, class: &str) -> String {
+    format!("{script}-{class}").to_lowercase().replace(' ', "-")
+}
+
+/// What an image is made from, by content (12 hex digits): the Dockerfile,
+/// every file under the build context by its path there, and the build
+/// variables; or the registry reference. The same on every PC.
+pub fn content_hash(k: &Container) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    match &k.image {
+        Image::Registry(r) => {
+            h.update(b"registry\0");
+            h.update(r.as_bytes());
+        }
+        Image::Dockerfile(f) => {
+            h.update(b"dockerfile\0");
+            h.update(std::fs::read(f).unwrap_or_default());
+            if let Some(dir) = &k.build_context {
+                let mut files = Vec::new();
+                walk(dir, &mut files);
+                files.sort();
+                for file in files {
+                    let rel = file.strip_prefix(dir).unwrap_or(&file);
+                    h.update(b"\0file\0");
+                    h.update(rel.to_string_lossy().replace('\\', "/").as_bytes());
+                    h.update(b"\0");
+                    h.update(std::fs::read(&file).unwrap_or_default());
+                }
+            }
+            for (name, value) in &k.image_vars {
+                h.update(format!("\0var\0{name}={value}").as_bytes());
+            }
+        }
+    }
+    crate::files::hex(&h.finalize())[..12].to_string()
+}
+
 /// Add images to the record `down --purge` deletes from.
 pub fn remember(file: &Path, tags: &[String]) -> Result<()> {
     let mut all = remembered(file);
@@ -232,9 +274,11 @@ fn docker_out(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Docker must answer before anything starts (REQ-020).
-pub fn check_docker() -> Result<()> {
-    if cfg!(windows) {
+/// Docker must answer before anything starts, and before anything on
+/// Cloudflare is touched (REQ-020). Wrangler runs containers locally on
+/// Windows only inside WSL; building for a remote environment works there.
+pub fn check_docker(local: bool) -> Result<()> {
+    if local && cfg!(windows) {
         bail!(crate::tr!(
             "Windows の手元ではコンテナを動かせません(Wrangler が対応していません)。WSL の中で動かしてください",
             "containers cannot run locally on Windows (Wrangler does not support it); run it inside WSL"
@@ -454,5 +498,57 @@ workerd-api-Pinger-ff66\trunning
                 "workerd-shop--k--api-Old-dd44-proxy"
             ]
         );
+    }
+    #[test]
+    fn applications_are_named_as_wrangler_names_them() {
+        assert_eq!(
+            app_name("shop--staging--api", "Pinger"),
+            "shop--staging--api-pinger"
+        );
+    }
+
+    fn box_at(root: &Path, answer: &str) -> Container {
+        let ctx = root.join("box");
+        std::fs::create_dir_all(ctx.join("www")).unwrap();
+        std::fs::write(ctx.join("Dockerfile"), "FROM busybox\nCOPY www /www\n").unwrap();
+        std::fs::write(ctx.join("www/index.html"), answer).unwrap();
+        Container {
+            class: "Pinger".into(),
+            image: Image::Dockerfile(ctx.join("Dockerfile")),
+            build_context: Some(ctx),
+            image_vars: Default::default(),
+            instance_type: None,
+            max_instances: None,
+        }
+    }
+
+    #[test]
+    fn the_content_hash_follows_the_content_not_the_folder() {
+        let (a, b) = (dir("hash-a"), dir("hash-b"));
+        let (ka, kb) = (box_at(&a.0, "v1"), box_at(&b.0, "v1"));
+        assert_eq!(
+            content_hash(&ka),
+            content_hash(&kb),
+            "same content in two folders"
+        );
+        std::fs::write(b.0.join("box/www/index.html"), "v2").unwrap();
+        assert_ne!(content_hash(&ka), content_hash(&kb), "a changed file");
+        let mut kv = ka.clone();
+        kv.image_vars.insert("V".into(), "1".into());
+        assert_ne!(content_hash(&ka), content_hash(&kv), "a build variable");
+        let reg = |r: &str| Container {
+            image: Image::Registry(r.into()),
+            build_context: None,
+            ..ka.clone()
+        };
+        assert_eq!(
+            content_hash(&reg("docker.io/library/busybox:1.36")),
+            content_hash(&reg("docker.io/library/busybox:1.36"))
+        );
+        assert_ne!(
+            content_hash(&reg("docker.io/library/busybox:1.36")),
+            content_hash(&reg("docker.io/library/busybox:1.37"))
+        );
+        assert_eq!(content_hash(&ka).len(), 12);
     }
 }

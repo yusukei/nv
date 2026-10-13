@@ -3,12 +3,13 @@ wrangler-compose's remote flow offline (remote-smoke.sh). It answers what
 wrangler-compose and `wrangler deploy` / `d1 migrations apply` ask, as far
 as the test needs; it is not a model of Cloudflare. Logs every request to
 stderr."""
-import base64, json, re, sqlite3, sys, threading, urllib.parse, uuid
+import base64, json, os, re, sqlite3, sys, threading, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ACC = "acc"
 S = {
     "scripts": {},      # name -> {migration_tag, classes, secrets{}, subdomain}
+    "apps": {},         # container application id -> application
     "d1": {},           # name -> uuid
     "d1_applied": {},   # uuid -> [names]
     "kv": {},           # title -> id
@@ -166,13 +167,15 @@ def route(method, path, raw, headers):
                     s["secrets"][b["name"]] = b.get("text")
             s["meta"] = meta
             s["tag"] = (meta.get("annotations") or {}).get("workers/tag")
+            s["message"] = (meta.get("annotations") or {}).get("workers/message")
+            s["version"] = uuid.uuid4().hex
             ex = meta.get("exports") or meta.get("durable_object_exports") or {}
             if isinstance(ex, dict):
                 for c, e in ex.items():
                     if e.get("state", "created") == "created" and c not in s["classes"]: s["classes"].append(c)
                     if e.get("state") == "deleted" and c in s["classes"]: s["classes"].remove(c)
             sys.stderr.write("  META " + json.dumps({k: v for k, v in meta.items() if k not in ("bindings",)})[:800] + "\n")
-            return ok({"id": name, "etag": "e", "deployment_id": "d1", "startup_time_ms": 1})
+            return ok({"id": name, "etag": "e", "deployment_id": s["version"], "startup_time_ms": 1})
         if rest == "" and method == "DELETE":
             if sc is None: return err(404, "not found", 10007)
             # As on Cloudflare: a queue consumer cannot be deleted.
@@ -200,14 +203,23 @@ def route(method, path, raw, headers):
             return ok({"bindings": binds, "tags": [], "compatibility_date": meta.get("compatibility_date"),
                        "compatibility_flags": meta.get("compatibility_flags", [])})
         if rest == "/deployments" and method == "GET":
-            return ok({"deployments": [{"versions": [{"version_id": "v-" + name, "percentage": 100}]}] if sc else []})
+            return ok({"deployments": [{"versions": [{"version_id": sc.get("version", "v-" + name), "percentage": 100}]}] if sc else []})
         if rest == "/schedules":
             if method == "PUT" and sc is not None:
                 sc["schedules"] = j if isinstance(j, list) else (j or {}).get("schedules", [])
             return ok({"schedules": (sc or {}).get("schedules", [])})
         m3 = re.fullmatch(r"/versions/([^/]+)", rest)
         if m3 and method == "GET":
-            return ok({"id": m3.group(1), "annotations": {"workers/tag": (sc or {}).get("tag")}})
+            # The version's bindings, Durable Objects with their namespace
+            # (Wrangler ties containers to it).
+            binds = []
+            for b in (sc or {}).get("meta", {}).get("bindings", []):
+                b = dict(b)
+                if b.get("type") == "durable_object_namespace" and b.get("script_name", name) == name:
+                    b["namespace_id"] = name + b["class_name"]
+                binds.append(b)
+            return ok({"id": m3.group(1), "resources": {"bindings": binds},
+                       "annotations": {"workers/tag": (sc or {}).get("tag"), "workers/message": (sc or {}).get("message")}})
         if rest.startswith("/versions") and method == "GET":
             return ok({"items": []})
         if rest.startswith("/versions") and method == "POST":
@@ -239,6 +251,38 @@ def route(method, path, raw, headers):
         name = r.split("/")[3]
         if name not in S["scripts"]: return err(404, "This Worker does not exist on your account.", 10090)
         return ok({"default_environment": {"environment": "production", "script": {"id": name}}})
+    # containers (REQ-020): applications, rollouts, limits, registry login
+    if r == "/containers/me":
+        if os.environ.get("FAKE_NO_CONTAINERS"): return err(403, "Containers are not enabled for this account", 1000)
+        return ok({"account_id": ACC, "limits": {"vcpu_per_deployment": 4, "memory_mib_per_deployment": 12288, "disk_mb_per_deployment": 20000},
+                   "defaults": {"vcpus": 0.0625, "memory_mib": 256, "disk_mb": 2000}, "locations": []})
+    if r == "/containers/applications" and method == "GET":
+        if os.environ.get("FAKE_NO_CONTAINERS"): return err(403, "Containers are not enabled for this account", 1000)
+        return ok(list(S["apps"].values()), info)
+    if r == "/containers/applications" and method == "POST":
+        app = dict(j); app["id"] = uuid.uuid4().hex; app["version"] = 1
+        S["apps"][app["id"]] = app
+        sys.stderr.write("  APP+ " + json.dumps(app)[:600] + "\n")
+        return ok(app)
+    m = re.fullmatch(r"/containers/applications/([^/]+)(/.*)?", r)
+    if m:
+        aid, rest = m.group(1), m.group(2) or ""
+        app = S["apps"].get(aid)
+        if app is None: return err(404, "application not found", 1000)
+        if rest == "" and method == "GET": return ok(app)
+        if rest == "" and method == "PATCH":
+            app.update(j or {}); app["version"] = app.get("version", 1) + 1
+            sys.stderr.write("  APP~ " + json.dumps(app)[:600] + "\n")
+            return ok(app)
+        if rest == "" and method == "DELETE":
+            del S["apps"][aid]; sys.stderr.write("  APP- " + app["name"] + "\n"); return ok(None)
+        if rest.startswith("/rollouts") and method == "POST":
+            sys.stderr.write("  ROLLOUT " + app["name"] + "\n")
+            return ok({"id": uuid.uuid4().hex, "status": "progressing"})
+        return ok({})
+    m = re.fullmatch(r"/containers/registries/([^/]+)/credentials", r)
+    if m and method == "POST":
+        return ok({"account_id": ACC, "registry_host": m.group(1), "username": "fake", "password": "fake"})
     # d1
     if r == "/d1/database" and method == "GET":
         return ok([{"name": k, "uuid": v} for k, v in S["d1"].items()], info)

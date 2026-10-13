@@ -297,6 +297,11 @@ pub fn remote_worker(
     }
     // An empty list clears crons set by an earlier deploy.
     cfg.insert("triggers".into(), json!({ "crons": w.crons }));
+    // Wrangler builds Dockerfile images, puts them in Cloudflare's registry
+    // and makes or changes the applications (REQ-020).
+    if !w.containers.is_empty() {
+        cfg.insert("containers".into(), containers(&w.containers));
+    }
     Value::Object(cfg)
 }
 
@@ -968,5 +973,20 @@ services:
         assert!(cfg.get("dev").is_none(), "containers stay enabled locally");
         let web = local_worker(&c, "web", worker(&c, "web"), &built());
         assert!(web.get("containers").is_none());
+    }
+    #[test]
+    fn remote_configs_carry_containers_too() {
+        let (d, c) = project("remote");
+        let ids = Ids {
+            workers: [("api".to_string(), "shop--staging--api".to_string())].into(),
+            ..Ids::default()
+        };
+        let cfg = remote_worker("api", worker(&c, "api"), &built(), &ids, "acc", None);
+        assert_eq!(cfg["containers"][0]["class_name"], "Pinger");
+        assert_eq!(
+            cfg["containers"][0]["image"],
+            json!(d.0.join("./box/Dockerfile"))
+        );
+        assert!(cfg.get("dev").is_none());
     }
 }

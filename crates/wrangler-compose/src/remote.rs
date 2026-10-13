@@ -181,11 +181,20 @@ struct Seen {
     classes: BTreeMap<String, Vec<String>>,
     /// (script, class) of namespaces on the old key-value storage.
     subdomain: Option<String>,
+    /// Container applications by name (REQ-020), and why they could not be
+    /// listed (an account without containers).
+    apps: BTreeMap<String, Value>,
+    apps_error: Option<String>,
 }
 
 /// Deletes a Worker, first taking it off the queues it consumes: Cloudflare
 /// refuses to delete a queue consumer (10064).
 fn delete_worker(cf: &Cf, seen: &Seen, name: &str) -> Result<()> {
+    // Cloudflare keeps a Worker's container applications when the Worker
+    // goes (REQ-020): they go first, found by name.
+    for app in seen.apps_of(name, &[]) {
+        delete_app(cf, &app)?;
+    }
     for q in seen.queues.values() {
         let qid = q["queue_id"].as_str().unwrap_or_default();
         for c in q["consumers"].as_array().into_iter().flatten() {
@@ -253,6 +262,15 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
                 .push(class.to_string());
         }
     }
+    let (apps, apps_error) = match cf.list("/containers/applications") {
+        Ok(list) => (
+            list.into_iter()
+                .filter_map(|a| Some((a["name"].as_str()?.to_string(), a)))
+                .collect(),
+            None,
+        ),
+        Err(e) => (BTreeMap::new(), Some(format!("{e:#}"))),
+    };
     Ok(Seen {
         scripts,
         d1,
@@ -261,6 +279,8 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
         queues,
         classes,
         subdomain: cf.workers_subdomain()?,
+        apps,
+        apps_error,
     })
 }
 
@@ -276,6 +296,26 @@ struct Found {
 }
 
 impl Seen {
+    /// The container applications of a Worker's Durable Object classes (on
+    /// Cloudflare or in `also`) that exist: (name, id). Found by the names
+    /// Wrangler gives them, never by a name's start alone (REQ-006, REQ-020).
+    fn apps_of(&self, script: &str, also: &[String]) -> Vec<(String, String)> {
+        let mut classes: Vec<String> = self.classes.get(script).cloned().unwrap_or_default();
+        for c in also {
+            if !classes.contains(c) {
+                classes.push(c.clone());
+            }
+        }
+        classes
+            .iter()
+            .filter_map(|c| {
+                let name = crate::containers::app_name(script, c);
+                let id = self.apps.get(&name)?["id"].as_str()?.to_string();
+                Some((name, id))
+            })
+            .collect()
+    }
+
     /// Workers named `<project>--<env>--…`.
     fn env_workers(&self, prefix: &str) -> Vec<String> {
         self.scripts
@@ -352,6 +392,106 @@ impl Seen {
         ids.workers = n.workers.clone();
         ids
     }
+}
+
+fn delete_app(cf: &Cf, (name, id): &(String, String)) -> Result<()> {
+    say(crate::tr!(
+        "消す: コンテナ {name}",
+        "deleting container {name}"
+    ));
+    cf.delete(&format!("/containers/applications/{id}"))
+}
+
+/// Container applications of a Worker that the compose file no longer
+/// wants (a container or a class gone): (name, id).
+fn stale_apps(
+    seen: &Seen,
+    script: &str,
+    w: &crate::compose::Worker,
+    dropped: Option<&Vec<String>>,
+) -> Vec<(String, String)> {
+    let mut also = w.durable_objects.clone();
+    also.extend(dropped.into_iter().flatten().cloned());
+    seen.apps_of(script, &also)
+        .into_iter()
+        .filter(|(name, _)| {
+            !w.containers
+                .iter()
+                .any(|k| &crate::containers::app_name(script, &k.class) == name)
+        })
+        .collect()
+}
+
+/// Plan lines of a Worker's containers (REQ-014, REQ-020).
+fn container_plan(
+    seen: &Seen,
+    script: &str,
+    w: &crate::compose::Worker,
+    root: &Path,
+    deployed: &BTreeMap<String, String>,
+    dropped: Option<&Vec<String>>,
+) -> Vec<(char, String, Vec<String>)> {
+    let mut out = Vec::new();
+    for k in &w.containers {
+        let name = crate::containers::app_name(script, &k.class);
+        let image = match &k.image {
+            crate::compose::Image::Dockerfile(f) => {
+                format!("Dockerfile {}", f.strip_prefix(root).unwrap_or(f).display())
+            }
+            crate::compose::Image::Registry(r) => r.clone(),
+        };
+        let want_type = match &k.instance_type {
+            Some(Value::String(s)) => s.clone(),
+            Some(v) => v.to_string(),
+            None => "lite".into(),
+        };
+        let want_max = k.max_instances.unwrap_or(20);
+        let Some(app) = seen.apps.get(&name) else {
+            out.push((
+                '+',
+                crate::tr!("コンテナ {name}", "container {name}"),
+                vec![
+                    crate::tr!("イメージ: {image}", "image: {image}"),
+                    format!("instance_type: {want_type}"),
+                    format!("max_instances: {want_max}"),
+                ],
+            ));
+            continue;
+        };
+        let mut d = Vec::new();
+        let hash = crate::containers::content_hash(k);
+        match deployed.get(&k.class) {
+            Some(h) if *h == hash => {}
+            Some(_) => d.push(crate::tr!(
+                "イメージ: 変わる({image})",
+                "image: changes ({image})"
+            )),
+            None => d.push(crate::tr!(
+                "イメージ: 変わるかもしれない(前の展開に記録が無い)",
+                "image: may change (the last deploy left no record)"
+            )),
+        }
+        if let Some(have) = app["configuration"]["instance_type"].as_str()
+            && have != want_type
+        {
+            d.push(format!("instance_type: {have} → {want_type}"));
+        }
+        if let Some(have) = app["max_instances"].as_u64()
+            && have != want_max
+        {
+            d.push(format!("max_instances: {have} → {want_max}"));
+        }
+        let sign = if d.is_empty() { '=' } else { '~' };
+        out.push((sign, crate::tr!("コンテナ {name}", "container {name}"), d));
+    }
+    for (name, _) in stale_apps(seen, script, w, dropped) {
+        out.push((
+            '-',
+            crate::tr!("コンテナ {name}", "container {name}"),
+            vec![],
+        ));
+    }
+    out
 }
 
 fn jur(r: &Res) -> String {
@@ -472,18 +612,9 @@ fn run_wrangler(mut cmd: std::process::Command, what: String) -> Result<()> {
 
 pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> {
     let services = ctx.compose.closure(only)?;
-    // Containers run locally only for now (REQ-020): an up that left them
-    // out would deploy Workers whose containers never start.
-    if let Some(s) = services
+    let has_containers = services
         .iter()
-        .find(|s| matches!(&s.kind, Kind::Worker(w) if !w.containers.is_empty()))
-    {
-        bail!(crate::tr!(
-            "{}: コンテナのリモートへの展開はまだ対応していません(手元の --env local だけで動きます)。何もしていません",
-            "{}: deploying containers to a remote environment is not supported yet (they run with --env local only); nothing was done",
-            s.name
-        ));
-    }
+        .any(|s| matches!(&s.kind, Kind::Worker(w) if !w.containers.is_empty()));
     let n = names(&ctx.compose, &ctx.env)?;
     let act = Act::new(ctx.dry_run);
 
@@ -504,9 +635,25 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
         }
     }
 
+    // Images are built from Dockerfiles with Docker: it must answer before
+    // anything on Cloudflare is touched (REQ-020).
+    let dockerfiles = services.iter().any(|s| {
+        matches!(&s.kind, Kind::Worker(w) if w.containers.iter()
+            .any(|k| matches!(k.image, crate::compose::Image::Dockerfile(_))))
+    });
+    if dockerfiles {
+        crate::containers::check_docker(false)?;
+    }
+
     // 2. What Cloudflare has.
     let cf = Cf::connect(ctx)?;
     let seen = look(&cf, &n)?;
+    if has_containers && let Some(e) = &seen.apps_error {
+        bail!(crate::tr!(
+            "Cloudflare のコンテナを読めないので、何もしていません(コンテナは Workers の有料プランで使えます): {e}",
+            "cannot read Cloudflare's containers, so nothing was done (containers need the Workers Paid plan): {e}"
+        ));
+    }
     let mut records = read_records(ctx);
     let first = !n.workers.values().any(|w| seen.scripts.contains_key(w))
         && !n.resources.iter().any(|r| seen.has(r));
@@ -688,14 +835,33 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                 do_exports(&declared, dropped_classes.get(&s.name)),
             );
             let want = wanted_shape(&cfg, &w.secrets);
-            let tag = code_tag(&builts[&s.name], &cfg);
+            let hashes = container_hashes(w);
+            let tag = code_tag(&builts[&s.name], &cfg, &hashes);
             if !seen.scripts.contains_key(&script) {
                 let mut d = shape_changes(&Shape::default(), &want);
                 d.retain(|x| !x.starts_with("compatibility_flags: [] → []"));
                 plan.add('+', format!("Worker {script}"), d);
+                for (sign, what, d) in container_plan(
+                    &seen,
+                    &script,
+                    w,
+                    ctx.root(),
+                    &BTreeMap::new(),
+                    dropped_classes.get(&s.name),
+                ) {
+                    plan.add(sign, what, d);
+                }
                 continue;
             }
-            let (now, deployed) = current_shape(&cf, &script)?;
+            let (now, deployed, message) = current_shape(&cf, &script)?;
+            let containers = container_plan(
+                &seen,
+                &script,
+                w,
+                ctx.root(),
+                &message_hashes(message.as_deref()),
+                dropped_classes.get(&s.name),
+            );
             let mut d = shape_changes(&now, &want);
             if deployed.as_deref() != Some(tag.as_str()) {
                 d.push(crate::tr!("コード: 変わる", "code: changes"));
@@ -706,16 +872,30 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                     "Durable Object class {c}: delete (with its data)"
                 ));
             }
+            if containers.iter().any(|(sign, _, _)| *sign != '=') {
+                // A container to make, change or delete goes with a deploy.
+                plan.changed.insert(s.name.clone());
+            }
             if d.is_empty() {
                 plan.add('=', format!("Worker {script}"), d);
             } else {
                 plan.changed.insert(s.name.clone());
                 plan.add('~', format!("Worker {script}"), d);
             }
+            for (sign, what, d) in containers {
+                plan.add(sign, what, d);
+            }
         }
     }
     for o in &orphans {
         plan.add('-', format!("Worker {o}"), vec![]);
+        for (name, _) in seen.apps_of(o, &[]) {
+            plan.add(
+                '-',
+                crate::tr!("コンテナ {name}", "container {name}"),
+                vec![],
+            );
+        }
     }
     for g in &gone {
         if purge {
@@ -777,6 +957,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
 
     // 7. In dependency order: migrations, then Workers (REQ-010). A failed
     //    migration stops everything after it.
+    let mut containers_deployed = false;
     for s in &services {
         match &s.kind {
             Kind::D1(list) => {
@@ -826,7 +1007,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                 }
             }
             Kind::Worker(w) => {
-                deploy_worker(
+                let deployed = deploy_worker(
                     ctx,
                     &cf,
                     &act,
@@ -841,6 +1022,9 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                     plan.changed.contains(&s.name),
                     &mut records,
                 )?;
+                if deployed && !w.containers.is_empty() {
+                    containers_deployed = true;
+                }
             }
             _ => {}
         }
@@ -876,6 +1060,12 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
         "deployed to environment {}",
         ctx.env
     ));
+    if containers_deployed {
+        say(crate::tr!(
+            "コンテナの入れ替えは、このあとも Cloudflare で段階的に続きます。初めての展開では、コンテナが動き出すまで数分かかることがあります",
+            "Cloudflare keeps replacing container instances step by step after this; on a first deploy, containers may take a few minutes to start"
+        ));
+    }
     for s in &services {
         if let Kind::Worker(w) = &s.kind {
             let script = &n.workers[&s.name];
@@ -1266,8 +1456,62 @@ fn normalize(v: &Value) -> Value {
 /// What a Worker is, the same from every PC: its bundle and settings
 /// without local paths or secrets. Deployed as the version's tag, so the
 /// next plan compares with what Cloudflare runs (REQ-014).
-fn code_tag(built: &Built, cfg: &Value) -> String {
+/// The config as it is the same from every PC: containers by what their
+/// images are made from (`hashes`: class → content hash), not by where the
+/// Dockerfile is on this PC (REQ-020).
+fn portable(cfg: &Value, hashes: &[(String, String)]) -> Value {
     let mut c = cfg.clone();
+    if let Some(list) = c.get_mut("containers").and_then(Value::as_array_mut) {
+        for k in list {
+            let Some(o) = k.as_object_mut() else { continue };
+            let class = o
+                .get("class_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some((_, h)) = hashes.iter().find(|(c, _)| c == class) {
+                o.insert("image".into(), json!(format!("content:{h}")));
+            }
+            o.shift_remove("image_build_context");
+            o.shift_remove("image_vars");
+        }
+    }
+    c
+}
+
+/// Class → content hash of a Worker's containers.
+fn container_hashes(w: &crate::compose::Worker) -> Vec<(String, String)> {
+    w.containers
+        .iter()
+        .map(|k| (k.class.clone(), crate::containers::content_hash(k)))
+        .collect()
+}
+
+/// The deploy message that keeps each container's content hash with the
+/// Worker version, so a plan from any PC tells whether an image changes
+/// (REQ-014, REQ-020). None when there is none, or when it would not fit
+/// Cloudflare's 100 characters.
+fn container_message(hashes: &[(String, String)]) -> Option<String> {
+    if hashes.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = hashes.iter().map(|(c, h)| format!("{c}={h}")).collect();
+    let msg = format!("wc-containers {}", parts.join(" "));
+    (msg.len() <= 100).then_some(msg)
+}
+
+/// Class → content hash from a deploy message written by `container_message`.
+fn message_hashes(msg: Option<&str>) -> BTreeMap<String, String> {
+    let Some(rest) = msg.and_then(|m| m.strip_prefix("wc-containers ")) else {
+        return BTreeMap::new();
+    };
+    rest.split_whitespace()
+        .filter_map(|p| p.split_once('='))
+        .map(|(c, h)| (c.to_string(), h.to_string()))
+        .collect()
+}
+
+fn code_tag(built: &Built, cfg: &Value, hashes: &[(String, String)]) -> String {
+    let mut c = portable(cfg, hashes);
     if let Some(o) = c.as_object_mut() {
         for k in ["main", "base_dir", "account_id"] {
             o.shift_remove(k);
@@ -1337,7 +1581,7 @@ fn wanted_shape(cfg: &Value, secrets: &BTreeMap<String, String>) -> Shape {
 }
 
 /// What Cloudflare runs now for a Worker, and its version's tag.
-fn current_shape(cf: &Cf, script: &str) -> Result<(Shape, Option<String>)> {
+fn current_shape(cf: &Cf, script: &str) -> Result<(Shape, Option<String>, Option<String>)> {
     let get = |path: &str| match cf.get(path) {
         Ok(v) => Ok(v),
         Err(e) if cf::is_missing(&e) => Ok(Value::Null),
@@ -1396,14 +1640,12 @@ fn current_shape(cf: &Cf, script: &str) -> Result<(Shape, Option<String>)> {
     let version = deps["deployments"][0]["versions"][0]["version_id"]
         .as_str()
         .map(str::to_string);
-    let tag = match version {
-        Some(v) => get(&format!("/workers/scripts/{script}/versions/{v}"))?["annotations"]
-            ["workers/tag"]
-            .as_str()
-            .map(str::to_string),
-        None => None,
+    let annotations = match version {
+        Some(v) => get(&format!("/workers/scripts/{script}/versions/{v}"))?["annotations"].clone(),
+        None => Value::Null,
     };
-    Ok((sh, tag))
+    let text = |k: &str| annotations[k].as_str().map(str::to_string);
+    Ok((sh, text("workers/tag"), text("workers/message")))
 }
 
 /// Before → after of each setting that differs (secrets by name only).
@@ -1509,9 +1751,10 @@ fn deploy_worker(
     kept: Option<&Vec<String>>,
     changed_on_cloud: bool,
     records: &mut Value,
-) -> Result<()> {
+) -> Result<bool> {
     let script = n.workers[&s.name].clone();
     let exists = seen.scripts.contains_key(&script);
+    let mut deployed = false;
     let declared: Vec<String> = w
         .durable_objects
         .iter()
@@ -1520,12 +1763,25 @@ fn deploy_worker(
         .collect();
     let exports = do_exports(&declared, dropped);
     let cfg = configs::remote_worker(&s.name, w, built, ids, &cf.account, exports);
-    let tag = code_tag(built, &cfg);
+    let hashes = container_hashes(w);
+    let tag = code_tag(built, &cfg, &hashes);
+    // Containers the compose file no longer wants go before the deploy.
+    for app in stale_apps(seen, &script, w, dropped) {
+        act.run(
+            crate::tr!(
+                "{}: コンテナ {} を消す",
+                "{}: deleting container {}",
+                s.name,
+                app.0
+            ),
+            || cf.delete(&format!("/containers/applications/{}", app.1)),
+        )?;
+    }
     let secrets = &w.secrets;
     let secret_text = serde_json::to_string(&secrets)?;
     // Deleted-class tombstones only matter once: the next deploy without
     // them is the same Worker.
-    let mut same = cfg.clone();
+    let mut same = portable(&cfg, &hashes);
     if let Some(e) = same.get_mut("exports").and_then(Value::as_object_mut) {
         e.retain(|_, v| v["state"] != "deleted");
         if e.is_empty() {
@@ -1548,6 +1804,7 @@ fn deploy_worker(
             s.name
         ));
     } else {
+        deployed = true;
         let names: Vec<&String> = secrets.keys().collect();
         act.run(
             crate::tr!(
@@ -1566,8 +1823,11 @@ fn deploy_worker(
                 std::fs::create_dir_all(&dir)?;
                 let cfg_path = dir.join("wrangler.json");
                 std::fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg)?)?;
-                let mut cmd = wrangler(ctx, cf, &["deploy", "--tag", &tag, "-c"]);
-                cmd.arg(&cfg_path);
+                let mut cmd = wrangler(ctx, cf, &["deploy", "--tag", &tag]);
+                if let Some(m) = container_message(&hashes) {
+                    cmd.arg("--message").arg(m);
+                }
+                cmd.arg("-c").arg(&cfg_path);
                 let file = dir.join("secrets.json");
                 if !secrets.is_empty() {
                     crate::local::write_private(&file, &secret_text)?;
@@ -1638,7 +1898,7 @@ fn deploy_worker(
             }
         }
     }
-    Ok(())
+    Ok(deployed)
 }
 
 /// Durable Object classes, declared (DES-010): Cloudflare compares the
@@ -1769,6 +2029,9 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         return Ok(());
     }
     for (svc, name) in &workers {
+        for (app, _) in seen.apps_of(name, &[]) {
+            eprintln!("  {}", crate::tr!("コンテナ {app}", "container {app}"));
+        }
         let classes = seen.classes.get(name).cloned().unwrap_or_default();
         let what = if classes.is_empty() {
             crate::tr!("Worker {name}({svc})", "Worker {name} ({svc})")
@@ -1949,6 +2212,26 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                     state(has),
                     where_.join("  ")
                 );
+                // Its containers (REQ-020), and ones the compose file no
+                // longer wants (the next up deletes them).
+                for k in &w.containers {
+                    let app = crate::containers::app_name(name, &k.class);
+                    crate::out!(
+                        "{:<16} {:<8} {:<10} {}",
+                        format!("{}.{}", s.name, k.class),
+                        "container",
+                        state(seen.apps.contains_key(&app)),
+                        app
+                    );
+                }
+                for (app, _) in stale_apps(&seen, name, w, None) {
+                    crate::out!(
+                        "{:<16} {:<8} {:<10} {app}",
+                        "-",
+                        "container",
+                        crate::tr!("残り(up が消す)", "orphan (up deletes it)")
+                    );
+                }
             }
             other => {
                 for key in crate::compose::resource_keys(s) {
@@ -1990,6 +2273,14 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
             "worker",
             crate::tr!("残り(up が消す)", "orphan (up deletes it)")
         );
+        for (app, _) in seen.apps_of(&o, &[]) {
+            crate::out!(
+                "{:<16} {:<8} {:<10} {app}",
+                "-",
+                "container",
+                crate::tr!("残り(up が消す)", "orphan (up deletes it)")
+            );
+        }
     }
     let in_compose: BTreeSet<&str> = n.resources.iter().map(|r| r.name.as_str()).collect();
     for f in seen
@@ -2238,4 +2529,49 @@ mod tests {
         let got: Vec<Value> = JsonObjects::new(std::io::Cursor::new(text)).collect();
         assert_eq!(got, [json!({ "a": "}{", "b": 1 }), json!({ "c": 2 })]);
     }
+    #[test]
+    fn container_hashes_ride_in_the_version_message() {
+        let hashes = vec![
+            ("Pinger".to_string(), "aaaaaaaaaaaa".to_string()),
+            ("Echo".to_string(), "bbbbbbbbbbbb".to_string()),
+        ];
+        let msg = container_message(&hashes).unwrap();
+        assert!(msg.len() <= 100, "{msg}");
+        let back = message_hashes(Some(&msg));
+        assert_eq!(back.get("Pinger").map(String::as_str), Some("aaaaaaaaaaaa"));
+        assert_eq!(back.get("Echo").map(String::as_str), Some("bbbbbbbbbbbb"));
+        assert!(message_hashes(Some("deployed by hand")).is_empty());
+        assert!(message_hashes(None).is_empty());
+        assert!(container_message(&[]).is_none());
+        // Too long for Cloudflare's message: not written (the plan then
+        // says the image may change).
+        let many: Vec<(String, String)> = (0..10)
+            .map(|i| (format!("VeryLongClassName{i}"), "cccccccccccc".to_string()))
+            .collect();
+        assert!(container_message(&many).is_none());
+    }
+
+    #[test]
+    fn the_version_tag_does_not_depend_on_where_the_dockerfile_is() {
+        let built = Built {
+            dir: "/b".into(),
+            entry: "index.js".into(),
+            hash: "h".into(),
+        };
+        let cfg = |path: &str| {
+            json!({ "name": "w", "containers": [
+            { "class_name": "Pinger", "image": path, "image_build_context": "/x" } ] })
+        };
+        let h = vec![("Pinger".to_string(), "aaaaaaaaaaaa".to_string())];
+        assert_eq!(
+            code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h),
+            code_tag(&built, &cfg("/Users/b/box/Dockerfile"), &h)
+        );
+        let h2 = vec![("Pinger".to_string(), "dddddddddddd".to_string())];
+        assert_ne!(
+            code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h),
+            code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h2)
+        );
+    }
+
 }
