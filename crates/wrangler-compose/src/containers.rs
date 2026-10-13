@@ -659,8 +659,8 @@ workerd-api-Pinger-ff66\trunning
         let d = dir("args");
         let mut k = box_at(&d.0, "v1");
         k.image_vars.insert("V".into(), "1".into());
-        let f = d.0.join("box/Dockerfile");
         let ctx = d.0.join("box");
+        let f = ctx.join("Dockerfile");
         assert_eq!(
             build_args(&k, "repo:wc-push").unwrap(),
             vec![

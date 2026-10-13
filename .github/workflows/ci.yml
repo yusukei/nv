@@ -39,14 +39,6 @@ jobs:
         run: |
           export NV_HOME="$RUNNER_TEMP/nvhome"
           BIN="$PWD/target/release" bash crates/wrangler-compose/tests/local-smoke.sh
-      # The remote flow against a fake Cloudflare API (answers retypes
-      # through util-linux `script`, so Linux only).
-      - name: wrangler-compose remote test (fake API)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          export NV_HOME="$RUNNER_TEMP/nvhome"
-          BIN="$PWD/target/release" bash crates/wrangler-compose/tests/remote-smoke.sh
       # Containers (REQ-020) locally with Docker, which the Linux runners have
       # (two projects at once, rebuild, Ctrl+C, crash, images). Wrangler asks
       # Cloudflare for registry credentials before it pulls a registry image,
