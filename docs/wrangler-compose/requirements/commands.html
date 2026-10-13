@@ -95,6 +95,7 @@ wrangler-compose --env production up         # 同じものを本番へ展開す
 <ul>
   <li><code>down [サービス…]</code> は Worker を依存の逆の順に下ろし、データは残す。そのあとの <code>up</code> で元に戻る</li>
   <li><code>down --purge [サービス…]</code> はデータも消す。下ろさないサービスがつながる資源は消さずに止まる</li>
+  <li>リモートの <code>down --purge</code> は、下ろすサービスのコンテナのイメージ(道具が名前を決めたもの)を Cloudflare のレジストリからも消す。前の <code>down</code> で Worker がもう無くても、compose ファイルのコンテナのものは消す。利用者が自分で置いたイメージ(<code>image</code> にレジストリのイメージとして書いたもの)と、展開した PC の Docker に残るイメージは消さない(利用者の決定 2026-10-13)</li>
   <li>サービスを指定しない <code>down --purge</code> は、名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker と資源をすべて消す。compose ファイルから消したものも含み、環境に何も残らない(利用者の決定 2026-10-13)</li>
   <li>消す前に消すもの(Worker・資源の名前。手元は中身の数も。リモートは中身の数を出さない(利用者の決定 2026-10-13))を示し、環境名を打ち直して確かめる(手元の <code>--purge</code> も)。打ち直しを受けられない場では止まる。リモートの <code>down</code> は Worker を消すので、<code>--purge</code> が無くても確かめる。手元の <code>down</code>(データを消さない)は確かめない</li>
 </ul>

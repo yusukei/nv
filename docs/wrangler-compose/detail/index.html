@@ -45,6 +45,12 @@
   <tr><td><code>wrangler dev</code> を TERM で止めると、コンテナ本体は消えるが中継役は残る。イメージ <code>cloudflare-dev/&lt;クラス&gt;:&lt;起動ごとの乱数&gt;</code> は残る。出力に <code>naming to …</code> の行でイメージの名前が出る</td><td>実測(2026-10-13)</td></tr>
   <tr><td>Durable Object の手元のデータは <code>state/v3/do/&lt;Worker の名前&gt;-&lt;クラス&gt;</code> に置かれる</td><td>実測(2026-10-13)</td></tr>
   <tr><td>手元のイメージも <code>--platform linux/amd64</code> で作る(Apple Silicon ではまねて動く)。動いている間の Dockerfile の変化は <code>[r]</code> キーでしか作り直さない</td><td>実装(4.149.0)</td></tr>
+  <tr><td>コンテナのアプリケーションの名前に <code>--</code> は使えない(<code>VALIDATE_INPUT ... has two consecutive dashes</code>)。Cloudflare のレジストリのリポジトリの名前には使える</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
+  <tr><td><code>wrangler login</code> の権限(<code>containers (write)</code> を含む)で、アプリケーションの一覧・作成・変更・削除、レジストリへの送信と削除が通る。<code>wrangler deploy</code> は Dockerfile から linux/amd64 のイメージを作り、Worker を上げてからアプリケーションを作る(途中で失敗すると Worker だけが上がった状態が残る)</td><td>実測(2026-10-13。本物の Cloudflare・Wrangler 4.149.0)</td></tr>
+  <tr><td>初めての展開のあと、Dockerfile のコンテナは約 15 秒、レジストリのイメージのコンテナは約 1 分で答え始めた(その間は準備中で、要求は失敗する)。イメージの変更は <code>up</code> のあと約 30 秒で入れ替わった。Worker を展開し直した直後は、コンテナにつながるまで約 1 分かかった</td><td>実測(2026-10-13。本物の Cloudflare・<code>max_instances: 1</code>)</td></tr>
+  <tr><td>展開の説明(<code>workers/message</code>)と版の印(<code>workers/tag</code>)は版に残り、読み戻せる。アプリケーションの <code>configuration.instance_type</code> と <code>max_instances</code> は compose ファイルの書き方と同じ形で返る</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
+  <tr><td>Worker を消しても、<code>down</code> で道具が消さなければアプリケーションとレジストリのイメージは残る(道具はアプリケーションを消す。イメージは消さない)</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
+  <tr><td>Cloudflare のレジストリは、タグを消したあともダイジェストで問い合わせると答え続ける(一覧には出ない)。<code>wrangler deploy</code> はそれで送るのを飛ばし、アプリケーションの作成が <code>IMAGE_REGISTRY_DOESNT_CONTAIN_IMAGE</code> で止まる。消したタグと同じ名前で送っても、しばらく一覧に出ず使えない。新しい名前のタグで送れば、すぐ一覧に出て使える。この PC の Docker(containerd の保存方式)ではイメージの ID がダイジェストと同じで、この PC の参照を外しても Wrangler の判断は変わらない</td><td>実測(2026-10-13。本物の Cloudflare・Docker Desktop 29.8.2)</td></tr>
 </table>
 </section>
 <section class="section"><h2 id="pages">この冊のページ</h2>

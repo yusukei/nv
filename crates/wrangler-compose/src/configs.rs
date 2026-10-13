@@ -137,7 +137,7 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
         cfg.insert("triggers".into(), json!({ "crons": w.crons }));
     }
     if !w.containers.is_empty() {
-        cfg.insert("containers".into(), containers(&w.containers));
+        cfg.insert("containers".into(), containers(&w.containers, None));
     }
     cfg.insert(
         "tail_consumers".into(),
@@ -149,12 +149,20 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
 /// Wrangler's `containers` (REQ-020, DES-020). Paths are absolute: Wrangler
 /// resolves them from the config file's folder, and the tool writes its
 /// configs elsewhere.
-fn containers(list: &[crate::compose::Container]) -> Value {
+/// `script`: the Worker's name on Cloudflare, to name each application
+/// (DES-021); None locally, where no application is made.
+fn containers(list: &[crate::compose::Container], script: Option<&str>) -> Value {
     use crate::compose::Image;
     Value::Array(
         list.iter()
             .map(|k| {
                 let mut o = Map::new();
+                if let Some(script) = script {
+                    o.insert(
+                        "name".into(),
+                        json!(crate::containers::app_name(script, &k.class)),
+                    );
+                }
                 o.insert("class_name".into(), json!(k.class));
                 match &k.image {
                     Image::Dockerfile(f) => {
@@ -300,7 +308,10 @@ pub fn remote_worker(
     // Wrangler builds Dockerfile images, puts them in Cloudflare's registry
     // and makes or changes the applications (REQ-020).
     if !w.containers.is_empty() {
-        cfg.insert("containers".into(), containers(&w.containers));
+        cfg.insert(
+            "containers".into(),
+            containers(&w.containers, ids.workers.get(svc).map(String::as_str)),
+        );
     }
     Value::Object(cfg)
 }
@@ -983,6 +994,10 @@ services:
         };
         let cfg = remote_worker("api", worker(&c, "api"), &built(), &ids, "acc", None);
         assert_eq!(cfg["containers"][0]["class_name"], "Pinger");
+        assert_eq!(
+            cfg["containers"][0]["name"],
+            json!(crate::containers::app_name("shop--staging--api", "Pinger"))
+        );
         assert_eq!(
             cfg["containers"][0]["image"],
             json!(d.0.join("./box/Dockerfile"))

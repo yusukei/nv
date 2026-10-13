@@ -170,6 +170,7 @@ fn check_name(kind: &str, name: &str) -> Option<String> {
 
 /// What Cloudflare has now, looked up by name every time (DES-004), so
 /// another machine (without the tool's records) finds the same things.
+#[derive(Default)]
 struct Seen {
     scripts: BTreeMap<String, Value>,
     d1: BTreeMap<String, String>,
@@ -179,6 +180,9 @@ struct Seen {
     queues: BTreeMap<String, Value>,
     /// Script name → its Durable Object classes on Cloudflare.
     classes: BTreeMap<String, Vec<String>>,
+    /// (script, class) → Durable Object namespace id: what tells whose a
+    /// container application is (DES-021).
+    namespaces: BTreeMap<(String, String), String>,
     /// (script, class) of namespaces on the old key-value storage.
     subdomain: Option<String>,
     /// Container applications by name (REQ-020), and why they could not be
@@ -254,12 +258,16 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
         .filter_map(|q| Some((q["queue_name"].as_str()?.to_string(), q)))
         .collect();
     let mut classes: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut namespaces = BTreeMap::new();
     for ns in cf.list("/workers/durable_objects/namespaces")? {
         if let (Some(script), Some(class)) = (ns["script"].as_str(), ns["class"].as_str()) {
             classes
                 .entry(script.to_string())
                 .or_default()
                 .push(class.to_string());
+            if let Some(id) = ns["id"].as_str() {
+                namespaces.insert((script.to_string(), class.to_string()), id.to_string());
+            }
         }
     }
     let (apps, apps_error) = match cf.list("/containers/applications") {
@@ -278,6 +286,7 @@ fn look(cf: &Cf, n: &Names) -> Result<Seen> {
         r2,
         queues,
         classes,
+        namespaces,
         subdomain: cf.workers_subdomain()?,
         apps,
         apps_error,
@@ -297,8 +306,10 @@ struct Found {
 
 impl Seen {
     /// The container applications of a Worker's Durable Object classes (on
-    /// Cloudflare or in `also`) that exist: (name, id). Found by the names
-    /// Wrangler gives them, never by a name's start alone (REQ-006, REQ-020).
+    /// Cloudflare or in `also`): (name, id). An application is this Worker's
+    /// when it is tied to the namespace of one of its classes; when that
+    /// namespace is gone, when it has the name the tool gives it (DES-021).
+    /// Never by a name's start alone (REQ-006).
     fn apps_of(&self, script: &str, also: &[String]) -> Vec<(String, String)> {
         let mut classes: Vec<String> = self.classes.get(script).cloned().unwrap_or_default();
         for c in also {
@@ -306,14 +317,25 @@ impl Seen {
                 classes.push(c.clone());
             }
         }
-        classes
-            .iter()
-            .filter_map(|c| {
-                let name = crate::containers::app_name(script, c);
-                let id = self.apps.get(&name)?["id"].as_str()?.to_string();
-                Some((name, id))
-            })
-            .collect()
+        let mut out: Vec<(String, String)> = Vec::new();
+        for class in &classes {
+            let ns = self.namespaces.get(&(script.to_string(), class.clone()));
+            let want = crate::containers::app_name(script, class);
+            for (name, app) in &self.apps {
+                let bound = app["durable_objects"]["namespace_id"].as_str();
+                let ours = match ns {
+                    Some(ns) => bound == Some(ns.as_str()),
+                    None => *name == want,
+                };
+                if ours
+                    && let Some(id) = app["id"].as_str()
+                    && !out.iter().any(|(_, x)| x == id)
+                {
+                    out.push((name.clone(), id.to_string()));
+                }
+            }
+        }
+        out
     }
 
     /// Workers named `<project>--<env>--…`.
@@ -592,6 +614,49 @@ fn wrangler(ctx: &Ctx, cf: &Cf, args: &[&str]) -> std::process::Command {
 }
 
 /// Run Wrangler; on failure show its output and stop with `what`.
+/// From `wrangler containers images list --json` (`[{ name, tags }]`), the
+/// images (`<repository>:<tag>`) in the given repositories: the ones named
+/// after this environment's container applications (REQ-011, DES-021).
+fn registry_targets(list: &Value, repos: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for r in list.as_array().into_iter().flatten() {
+        let Some(name) = r["name"].as_str() else {
+            continue;
+        };
+        if !repos.iter().any(|x| x == name) {
+            continue;
+        }
+        for tag in r["tags"].as_array().into_iter().flatten() {
+            if let Some(tag) = tag.as_str() {
+                out.push(format!("{name}:{tag}"));
+            }
+        }
+    }
+    out
+}
+
+/// The images in the account's Cloudflare registry (through Wrangler, which
+/// logs in to the registry with the login's rights).
+fn registry_images(ctx: &Ctx, cf: &Cf) -> Result<Value> {
+    let out = wrangler(ctx, cf, &["containers", "images", "list", "--json"])
+        .output()
+        .context(crate::tr!(
+            "Wrangler を起動できません",
+            "cannot start Wrangler"
+        ))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() {
+        bail!(crate::tr!(
+            "Cloudflare のレジストリのイメージを読めません: {}{}",
+            "cannot list the images in Cloudflare's registry: {}{}",
+            text,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let json = text.find('[').map(|i| &text[i..]).unwrap_or("[]");
+    Ok(serde_json::from_str(json).unwrap_or(Value::Null))
+}
+
 fn run_wrangler(mut cmd: std::process::Command, what: String) -> Result<()> {
     let out = cmd.output().context(crate::tr!(
         "Wrangler を起動できません",
@@ -954,6 +1019,70 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
         }
     }
 
+
+    // 6. A repository Cloudflare's registry no longer has (after a
+    //    down --purge): its image is pushed first with `wrangler containers
+    //    push`. The registry still answers for a deleted digest, so the
+    //    deploy would skip the push of an unchanged image and then find no
+    //    image to run (measured 2026-10-13, DES-021).
+    if dockerfiles {
+        let list = match registry_images(ctx, &cf) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                say(crate::tr!(
+                    "Cloudflare のレジストリの一覧を読めないので、イメージを先に送る確かめを飛ばします: {e:#}",
+                    "cannot list Cloudflare's registry, so the check for images to push first is skipped: {e:#}"
+                ));
+                None
+            }
+        };
+        for s in list.as_ref().map(|_| services.as_slice()).unwrap_or(&[]) {
+            let Kind::Worker(w) = &s.kind else { continue };
+            for k in &w.containers {
+                if !matches!(k.image, crate::compose::Image::Dockerfile(_)) {
+                    continue;
+                }
+                let repo = crate::containers::app_name(&n.workers[&s.name], &k.class);
+                if !registry_targets(
+                    list.as_ref().unwrap_or(&Value::Null),
+                    std::slice::from_ref(&repo),
+                )
+                .is_empty()
+                {
+                    continue;
+                }
+                // A new tag each time: Cloudflare's registry does not take
+                // back a tag name deleted a short while ago (measured).
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let tag = format!(
+                    "{repo}:wc-{}-{secs}",
+                    &crate::containers::content_hash(k)[..8]
+                );
+                act.run(
+                    crate::tr!(
+                        "{}: コンテナ {} のイメージを作って Cloudflare のレジストリに送る",
+                        "{}: building and pushing the image of container {} to Cloudflare's registry",
+                        s.name,
+                        k.class
+                    ),
+                    || {
+                        crate::containers::build(k, &tag)?;
+                        run_wrangler(
+                            wrangler(ctx, &cf, &["containers", "push", &tag]),
+                            crate::tr!(
+                                "{} を Cloudflare のレジストリに送れません(上の出力を見てください)",
+                                "cannot push {} to Cloudflare's registry (see the output above)",
+                                tag
+                            ),
+                        )
+                    },
+                )?;
+            }
+        }
+    }
 
     // 7. In dependency order: migrations, then Workers (REQ-010). A failed
     //    migration stops everything after it.
@@ -2020,7 +2149,35 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         ours.iter().filter(|f| wanted.contains(f.name.as_str())).collect()
     };
 
-    if workers.is_empty() && resources.is_empty() {
+    // With --purge, the images of this environment's containers in
+    // Cloudflare's registry go too (REQ-011, REQ-020): the repositories named
+    // after the applications of the Workers taken down, and of the compose
+    // file's containers (whose Workers may have gone with an earlier down).
+    let mut images = Vec::new();
+    if purge && seen.apps_error.is_none() {
+        let mut repos: Vec<String> = Vec::new();
+        for (_, script) in &workers {
+            for c in seen.classes.get(script).into_iter().flatten() {
+                repos.push(crate::containers::app_name(script, c));
+            }
+        }
+        for s in ctx
+            .compose
+            .services
+            .iter()
+            .filter(|s| only.is_empty() || only.contains(&s.name))
+        {
+            if let Kind::Worker(w) = &s.kind {
+                for k in &w.containers {
+                    repos.push(crate::containers::app_name(&n.workers[&s.name], &k.class));
+                }
+            }
+        }
+        if !repos.is_empty() {
+            images = registry_targets(&registry_images(ctx, &cf)?, &repos);
+        }
+    }
+    if workers.is_empty() && resources.is_empty() && images.is_empty() {
         say(crate::tr!(
             "環境 {} に下ろすものはありません",
             "nothing to take down in environment {}",
@@ -2047,6 +2204,12 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
     // Names only: the contents are not counted remotely (REQ-011).
     for r in &resources {
         eprintln!("  {} {}", kind_label(r.kind), r.name);
+    }
+    for i in &images {
+        eprintln!(
+            "  {}",
+            crate::tr!("レジストリのイメージ {i}", "registry image {i}")
+        );
     }
     if ctx.dry_run {
         say(crate::tr!(
@@ -2083,6 +2246,23 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
     }
     for r in &resources {
         delete_found(&cf, &act, &seen, &ours, r)?;
+    }
+    for i in &images {
+        act.run(
+            crate::tr!(
+                "消す: レジストリのイメージ {i}",
+                "deleting registry image {i}"
+            ),
+            || {
+                run_wrangler(
+                    wrangler(ctx, &cf, &["containers", "images", "delete", i]),
+                    crate::tr!(
+                        "レジストリのイメージ {i} を消せません(上の出力を見てください)",
+                        "cannot delete registry image {i} (see the output above)"
+                    ),
+                )
+            },
+        )?;
     }
     write_records(ctx, &records)?;
     say(crate::tr!("下ろしました", "taken down"));
@@ -2572,6 +2752,57 @@ mod tests {
             code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h),
             code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h2)
         );
+    }
+
+    #[test]
+    fn applications_are_found_by_their_durable_object_namespace() {
+        let mut seen = Seen::default();
+        seen.classes
+            .insert("shop--stg--api".into(), vec!["Pinger".into()]);
+        seen.namespaces
+            .insert(("shop--stg--api".into(), "Pinger".into()), "ns-1".into());
+        let app = |id: &str, name: &str, ns: &str| {
+            (
+                name.to_string(),
+                json!({ "id": id, "name": name, "durable_objects": { "namespace_id": ns } }),
+            )
+        };
+        let ours = crate::containers::app_name("shop--stg--api", "Pinger");
+        for (name, v) in [
+            app("a1", "renamed-by-hand", "ns-1"), // ours by namespace
+            app("a2", &ours, "ns-other"),         // our name, another's namespace
+            app("a3", "shop-stg-api-v2-pinger-x", "ns-2"), // a look-alike name
+            app(
+                "a4",
+                &crate::containers::app_name("shop--stg--api", "Gone"),
+                "ns-gone",
+            ), // a deleted class, by name
+        ] {
+            seen.apps.insert(name, v);
+        }
+        let mut found: Vec<String> = seen
+            .apps_of("shop--stg--api", &["Gone".to_string()])
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        found.sort();
+        assert_eq!(found, vec!["a1", "a4"]);
+    }
+
+    #[test]
+    fn registry_images_to_purge_are_only_this_environments() {
+        let ours = crate::containers::app_name("shop--stg--api", "Pinger");
+        let list = json!([
+            { "name": ours, "tags": ["1b5aa97e", "5bd0d054"] },
+            { "name": crate::containers::app_name("shop--prod--api", "Pinger"), "tags": ["aaaa"] },
+            { "name": "my-prebuilt-image", "tags": ["1.0"] },
+        ]);
+        assert_eq!(
+            registry_targets(&list, &[ours.clone()]),
+            vec![format!("{ours}:1b5aa97e"), format!("{ours}:5bd0d054")]
+        );
+        assert!(registry_targets(&list, &[]).is_empty());
+        assert!(registry_targets(&json!(null), &[ours]).is_empty());
     }
 
 }

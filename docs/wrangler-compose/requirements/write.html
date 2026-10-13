@@ -155,6 +155,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>環境は <code>--env</code> で選ぶ。<code>local</code> は手元、それ以外はリモート(名前は自由。<code>pr-123</code> のように並べて建てられる)</li>
   <li>リモートの Worker と資源の Cloudflare での名前は、既定で環境の名前を付けて道具が決める: Worker も資源も <code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code>。名前は <code>name</code>、省けばサービスの名前(例: <code>cache</code> は <code>shop--staging--cache</code>、<code>name: incoming</code> の <code>uploads</code> は <code>shop--staging--incoming</code>)。同じアカウントに複数のプロジェクトと環境を並べても名前がぶつからない(利用者の決定)</li>
   <li>名前から、どのプロジェクトのどの環境のものかが必ず分かる(以前の版の名前(<code>-</code> 1 つの区切り)で作った環境は扱わない。利用者の決定 2026-10-13): 区切りは <code>--</code> で、プロジェクト名・環境名・サービス名・<code>name</code> には <code>--</code> を使えない(先頭と末尾の <code>-</code> も使えない)。プロジェクト名は 3 文字以上(Worker の名前が URL になるとき、3〜4 文字目の <code>--</code> は予約されているため)。道具が作る・使う・消すのは、名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる、その環境のものだけ。ほかの名前のものには触らない(利用者の決定 2026-10-13「必ず名前から誰の持ち主か判断をできるようにして下さい。削除も同様です」)</li>
+  <li>コンテナのアプリケーション(REQ-020)は、Cloudflare が名前に <code>--</code> を許さないので、<code>&lt;プロジェクト&gt;-&lt;環境&gt;-&lt;サービス&gt;-&lt;クラス&gt;-&lt;印&gt;</code>(<code>--</code> を <code>-</code> にし、末尾に <code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;サービス&gt;</code> とクラスから作る 8 文字の印を付ける)にする。持ち主は名前の頭ではなく、そのアプリケーションが結び付いた Durable Object がこの環境の Worker のものかで判断する(利用者の決定 2026-10-13。本物の Cloudflare で確かめた)</li>
   <li>決めた名前が Cloudflare の名前の決まり(長さなど)に合わなければ、何もせずに止まり、<code>name</code> で短い名前を書くよう示す</li>
   <li>同じ名前のものがすでにあれば、それを使う(作り直さない)。名前がこの環境のものなので、ほかのプロジェクト・環境のものを使うことは無い</li>
   <li>手元では、資源はサービスの名前(<code>cache</code>・<code>files</code> など)をそのまま使う。Worker には、道具がプロジェクトごとに違う名前を付ける(手元のコンテナがほかのプロジェクトと混ざらないため。同じリポジトリを 2 か所に取り出して同時に動かしても混ざらない)。画面のログ・<code>ps</code>・<code>logs</code> の引数では、今までどおりサービスの名前で示す(利用者の決定 2026-10-13)</li>
@@ -186,6 +187,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>リモート: compose ファイルから消したコンテナと、<code>down</code> で下ろした Worker のコンテナは、道具がアプリケーションごと消す(Cloudflare は Worker を消してもコンテナを消さないため)。消すのは名前がこの環境のものだけ</li>
   <li><code>--dry-run</code> はイメージを作らず送らず、作る・変える・消すコンテナと、イメージが変わるかを示す(REQ-014)</li>
   <li><code>ps</code> は、コンテナがあるかと、compose ファイルとの違いを示す(REQ-012)</li>
+  <li>Cloudflare のレジストリに置いたイメージは、リモートの <code>down --purge</code> で消す(REQ-011)。<code>up</code> と <code>down</code> では消さない</li>
   <li><code>backup</code>・<code>restore</code> はコンテナを扱わない。コンテナは残すデータを持たない(ディスクは止まると消える)</li>
   <li>コンテナを使えないアカウント(Workers の有料プランでない)では、Cloudflare の答えを示して止まる</li>
 </ul>

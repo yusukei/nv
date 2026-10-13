@@ -260,6 +260,9 @@ def route(method, path, raw, headers):
         if os.environ.get("FAKE_NO_CONTAINERS"): return err(403, "Containers are not enabled for this account", 1000)
         return ok(list(S["apps"].values()), info)
     if r == "/containers/applications" and method == "POST":
+        # As on Cloudflare (measured 2026-10-13): no "--" in a name.
+        if "--" in (j or {}).get("name", ""):
+            return err(400, f'VALIDATE_INPUT name "{j["name"]}" has two consecutive dashes', 1000)
         app = dict(j); app["id"] = uuid.uuid4().hex; app["version"] = 1
         S["apps"][app["id"]] = app
         sys.stderr.write("  APP+ " + json.dumps(app)[:600] + "\n")

@@ -135,12 +135,25 @@ pub fn container_listing() -> Option<String> {
     docker_out(&["ps", "-a", "--format", "{{.Names}}\t{{.State}}"])
 }
 
-/// The name Wrangler gives a container application on Cloudflare when the
-/// config sets none (and no Wrangler environment is used): `<Worker>-<class>`,
-/// lowercased. The Worker name starts with `<project>--<env>--`, so the name
-/// says whose it is (REQ-006).
+/// The name of a container application on Cloudflare (REQ-006, DES-021):
+/// `<Worker>-<class>` lowercased with every run of `-` made one (Cloudflare
+/// refuses `--`), then the first 8 hex digits of the SHA-256 of
+/// `<Worker>-<class>`, so that `a-b`+`c` and `a`+`b-c` never meet. At most
+/// 63 characters. Whose it is, is told by its Durable Object, not its name.
 pub fn app_name(script: &str, class: &str) -> String {
-    format!("{script}-{class}").to_lowercase().replace(' ', "-")
+    use sha2::{Digest, Sha256};
+    let full = format!("{script}-{class}");
+    let mark = &crate::files::hex(&Sha256::digest(full.as_bytes()))[..8];
+    let mut readable = String::new();
+    for c in full.to_lowercase().chars() {
+        let c = if c.is_ascii_alphanumeric() { c } else { '-' };
+        if !(c == '-' && (readable.is_empty() || readable.ends_with('-'))) {
+            readable.push(c);
+        }
+    }
+    readable.truncate(63 - 1 - mark.len());
+    let readable = readable.trim_end_matches('-');
+    format!("{readable}-{mark}")
 }
 
 /// What an image is made from, by content (12 hex digits): the Dockerfile,
@@ -175,6 +188,59 @@ pub fn content_hash(k: &Container) -> String {
         }
     }
     crate::files::hex(&h.finalize())[..12].to_string()
+}
+
+/// `docker build` arguments for a Dockerfile container, as Wrangler builds
+/// it for a deploy (linux/amd64, no provenance, the build variables).
+pub fn build_args(k: &Container, tag: &str) -> Option<Vec<String>> {
+    let Image::Dockerfile(f) = &k.image else {
+        return None;
+    };
+    let mut a: Vec<String> = [
+        "build",
+        "--load",
+        "-t",
+        tag,
+        "--platform",
+        "linux/amd64",
+        "--provenance=false",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    for (name, value) in &k.image_vars {
+        a.push("--build-arg".into());
+        a.push(format!("{name}={value}"));
+    }
+    a.push("-f".into());
+    a.push(f.display().to_string());
+    let ctx = k
+        .build_context
+        .clone()
+        .or_else(|| f.parent().map(Path::to_path_buf));
+    a.push(ctx.unwrap_or_default().display().to_string());
+    Some(a)
+}
+
+/// Build an image with Docker (its output shown), for `wrangler containers
+/// push` (DES-021).
+pub fn build(k: &Container, tag: &str) -> Result<()> {
+    let Some(args) = build_args(k, tag) else {
+        return Ok(());
+    };
+    let status = docker()
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .map_err(|e| anyhow::anyhow!("docker: {e}"))?;
+    if !status.success() {
+        bail!(crate::tr!(
+            "コンテナ {} のイメージを作れません(上の出力を見てください)",
+            "cannot build the image of container {} (see the output above)",
+            k.class
+        ));
+    }
+    Ok(())
 }
 
 /// Add images to the record `down --purge` deletes from.
@@ -500,10 +566,18 @@ workerd-api-Pinger-ff66\trunning
         );
     }
     #[test]
-    fn applications_are_named_as_wrangler_names_them() {
-        assert_eq!(
-            app_name("shop--staging--api", "Pinger"),
-            "shop--staging--api-pinger"
+    fn application_names_have_no_double_dash_and_never_collide() {
+        let n = app_name("shop--staging--api", "Pinger");
+        assert!(n.starts_with("shop-staging-api-pinger-"), "{n}");
+        assert!(!n.contains("--"), "{n}");
+        assert_eq!(n.len(), "shop-staging-api-pinger-".len() + 8);
+        assert_eq!(n, app_name("shop--staging--api", "Pinger"), "stable");
+        // a-b + c and a + b-c read the same without the mark.
+        assert_ne!(app_name("a-b--c--api", "K"), app_name("a--b-c--api", "K"));
+        let long = app_name(&format!("{}--staging--api", "p".repeat(80)), "Pinger");
+        assert!(
+            long.len() <= 63 && !long.contains("--") && !long.starts_with('-'),
+            "{long}"
         );
     }
 
@@ -550,5 +624,36 @@ workerd-api-Pinger-ff66\trunning
             content_hash(&reg("docker.io/library/busybox:1.37"))
         );
         assert_eq!(content_hash(&ka).len(), 12);
+    }
+    #[test]
+    fn images_are_built_as_wrangler_builds_them() {
+        let d = dir("args");
+        let mut k = box_at(&d.0, "v1");
+        k.image_vars.insert("V".into(), "1".into());
+        let f = d.0.join("box/Dockerfile");
+        let ctx = d.0.join("box");
+        assert_eq!(
+            build_args(&k, "repo:wc-push").unwrap(),
+            vec![
+                "build".to_string(),
+                "--load".into(),
+                "-t".into(),
+                "repo:wc-push".into(),
+                "--platform".into(),
+                "linux/amd64".into(),
+                "--provenance=false".into(),
+                "--build-arg".into(),
+                "V=1".into(),
+                "-f".into(),
+                f.display().to_string(),
+                ctx.display().to_string(),
+            ]
+        );
+        let reg = Container {
+            image: Image::Registry("busybox:1".into()),
+            build_context: None,
+            ..k
+        };
+        assert!(build_args(&reg, "x:y").is_none());
     }
 }

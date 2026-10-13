@@ -44,12 +44,15 @@
 <article class="item" id="des-021"><h3><span class="id">DES-021</span>コンテナ(リモート) <span class="refs"><a href="../requirements/write.html#req-020">REQ-020</a>・<a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/commands.html#req-014">REQ-014</a></span></h3>
 <ul>
   <li>作る設定に <code>containers</code> を入れ(DES-020 と同じ。絶対パス)、<code>wrangler deploy</code> に任せる。Wrangler は Worker を上げたあと、Dockerfile からイメージを作って Cloudflare のコンテナのレジストリに送り(中身が同じなら送らない)、上げた版の Durable Object の namespace に結び付けてアプリケーションを作る・変え、入れ替えを始める。入れ替えは <code>up</code> のあとも続く(知らせる)</li>
-  <li>アプリケーションの名前は Wrangler の決め方のまま <code>&lt;Worker の名前&gt;-&lt;クラス&gt;</code>(小文字)。Worker の名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まるので、持ち主が名前で分かる。道具が探す・消すのは、Worker の名前と(Cloudflare か compose ファイルにある)クラス名から決まる名前のものだけで、名前の頭だけでは選ばない(<code>api</code> と <code>api-v2</code> を取り違えないため)</li>
+  <li>アプリケーションの名前は道具が決めて設定の <code>name</code> に書く: <code>&lt;Worker の名前&gt;-&lt;クラス&gt;</code> を小文字にし、続く <code>-</code> を 1 つにまとめ、末尾に <code>&lt;Worker の名前&gt;-&lt;クラス&gt;</code> の SHA-256 の先頭 8 文字を付ける(63 文字まで)。Cloudflare は名前に <code>--</code> を許さない(2026-10-13 に本物で確かめた: <code>VALIDATE_INPUT ... has two consecutive dashes</code>)。印があるので、<code>a-b</code> と <code>c</code>、<code>a</code> と <code>b-c</code> のようなプロジェクトと環境の組がぶつからない</li>
+  <li>持ち主: アプリケーションが結び付いた Durable Object の namespace(<code>durable_objects.namespace_id</code>)が、この環境の Worker のクラスのものなら、この環境のもの。namespace がもう無い(クラスを消した後など)ときは、その Worker とクラスから決まる名前で探す。名前の頭だけでは選ばない</li>
   <li>変わったかの判定: 版の印(DES-015)には、コンテナを Dockerfile の場所ではなく中身のハッシュ(Dockerfile・ビルドの基点のすべてのファイル・<code>image_vars</code>。レジストリのイメージは参照)で入れる。どの PC から打っても同じ印になる。コンテナごとの中身のハッシュは展開の説明(<code>--message</code>。100 文字まで)に <code>wc-containers &lt;クラス&gt;=&lt;ハッシュ&gt; …</code> の形で残し、plan はそれと比べてイメージが変わるかを示す(説明に無ければ「変わるかもしれない」)。<code>instance_type</code>・<code>max_instances</code> は Cloudflare のアプリケーションと比べる</li>
   <li>消す: compose ファイルから消したコンテナ(クラスは残る)のアプリケーションは、その Worker を上げる前に消す。消したクラス・compose に無い Worker・<code>down</code> で下ろす Worker のアプリケーションは、Worker を消す前に消す(Cloudflare は Worker を消してもアプリケーションを消さない)</li>
   <li>Docker: Dockerfile のコンテナがあれば、Cloudflare に触れる前に確かめる(<code>--dry-run</code> も)。リモートへのビルドは Windows でもできるので、Windows では止めない</li>
   <li>コンテナを使えないアカウント: アプリケーションの一覧(<code>/containers/applications</code>)を読めなければ、compose ファイルにコンテナがあるときだけ Cloudflare の答えを示して止まる。無ければ今までどおり</li>
   <li><code>ps</code> は、コンテナのアプリケーションがあるかと、compose ファイルに無いもの(次の <code>up</code> が消す)を示す</li>
+  <li>レジストリのイメージ: <code>down --purge</code> は、下ろす Worker のクラス(Cloudflare にあるもの)と compose ファイルのコンテナのクラスから決まるアプリケーションの名前のリポジトリにあるイメージを、<code>wrangler containers images list --json</code> で探し、<code>wrangler containers images delete</code> で消す(消す前に示し、環境名の打ち直しで確かめる)。ほかの名前のリポジトリには触らない。Wrangler はレジストリの一覧と削除を HTTPS でだけ行うので、偽の API の試験では確かめられない(本物で確かめた)</li>
+  <li>イメージを先に送る: <code>up</code> は、Dockerfile のコンテナのリポジトリにイメージが 1 つも無ければ(初めて、または <code>down --purge</code> のあと)、展開の前に、Wrangler と同じ作り方(linux/amd64・provenance なし・<code>image_vars</code>)でイメージを作り、毎回新しいタグ(<code>wc-&lt;中身のハッシュ 8 文字&gt;-&lt;時刻&gt;</code>)で <code>wrangler containers push</code> する。レジストリは消したイメージのダイジェストにも答え続けるので、<code>wrangler deploy</code> は中身の同じイメージを「もうある」として送らず、Cloudflare は「イメージが無い」(<code>IMAGE_REGISTRY_DOESNT_CONTAIN_IMAGE</code>)で止まる。また、消したタグと同じ名前で送り直しても、しばらくは一覧に出ず使えない(どちらも 2026-10-13 に本物で確かめた)</li>
 </ul>
 </article>
 </section>

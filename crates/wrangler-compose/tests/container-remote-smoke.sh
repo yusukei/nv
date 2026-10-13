@@ -33,7 +33,7 @@ cleanup() {
   kill $FAKE $NOPLAN 2>/dev/null || true
   docker rm -f "$REG" >/dev/null 2>&1 || true
   # The images Wrangler built and tagged for the deploys of this test.
-  docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^(boxes--|localhost:$RPORT/)" | xargs -r docker rmi >/dev/null 2>&1 || true
+  docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^(boxes-staging-|localhost:$RPORT/)" | xargs -r docker rmi >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 for _ in $(seq 1 100); do
@@ -99,7 +99,7 @@ mv with-containers.yaml wrangler-compose.yaml
 api_at "$PORT"
 
 # Another environment's application and one made by hand are never touched.
-for name in boxes--production--api-pinger blog-app; do
+for name in boxes-production-api-pinger-12345678 blog-app; do
   curl -s -X POST -H 'Authorization: Bearer fake' -H 'content-type: application/json' \
     -d "{\"name\":\"$name\",\"configuration\":{\"image\":\"x:1\"}}" \
     "http://127.0.0.1:$PORT/client/v4/accounts/acc/containers/applications" >/dev/null
@@ -108,32 +108,32 @@ done
 # The plan builds nothing.
 before=$(docker images -q | sort | tr '\n' ' ')
 out=$(wc --env staging --dry-run up) || fail "dry-run up: $out"
-grep -q '+ create     container boxes--staging--api-pinger' <<<"$out" || fail "plan: $out"
-grep -q '+ create     container boxes--staging--api-echo' <<<"$out" || fail "plan: $out"
+grep -Eq '\+ create     container boxes-staging-api-pinger-[0-9a-f]{8}$' <<<"$out" || fail "plan: $out"
+grep -Eq '\+ create     container boxes-staging-api-echo-[0-9a-f]{8}$' <<<"$out" || fail "plan: $out"
 [[ "$(docker images -q | sort | tr '\n' ' ')" == "$before" ]] || fail "dry-run built an image"
 
 # First up: the image is built and pushed, the applications made.
 wc_yes --env staging up > up1.out || fail "up: $(cat up1.out)"
-[[ "$(apps)" == *boxes--staging--api-echo*boxes--staging--api-pinger* ]] || fail "applications: $(apps)"
-curl -s "http://127.0.0.1:$RPORT/v2/_catalog" | grep -q 'boxes--staging--api-pinger' || fail "image not in the registry"
+[[ "$(apps)" =~ boxes-staging-api-echo-[0-9a-f]{8}.*boxes-staging-api-pinger-[0-9a-f]{8} ]] || fail "applications: $(apps)"
+curl -s "http://127.0.0.1:$RPORT/v2/_catalog" | grep -Eq 'boxes-staging-api-pinger-[0-9a-f]{8}' || fail "image not in the registry"
 grep -q 'keeps replacing container' up1.out || fail "no rollout notice"
 
 # Second up: nothing changes.
 made=$(seen 'APP[+~]')
 out=$(wc --env staging up) || fail "second up: $out"
 grep -q 'unchanged, not deployed' <<<"$out" || fail "second up deployed: $out"
-grep -q '= unchanged  container boxes--staging--api-pinger' <<<"$out" || fail "second plan: $out"
+grep -Eq '= unchanged  container boxes-staging-api-pinger-' <<<"$out" || fail "second plan: $out"
 ! grep -q 'keeps replacing container' <<<"$out" || fail "rollout notice without a deploy"
 [[ $(seen 'APP[+~]') == "$made" ]] || fail "second up changed an application"
 
 # A changed image: shown for that container only, then rolled out.
 echo v9 > box/answer.txt
 out=$(wc --env staging --dry-run up) || fail "dry-run after a change: $out"
-grep -q '~ change     container boxes--staging--api-pinger' <<<"$out" || fail "changed image not planned: $out"
+grep -Eq '~ change     container boxes-staging-api-pinger-' <<<"$out" || fail "changed image not planned: $out"
 grep -q 'image: changes' <<<"$out" || fail "no image change line: $out"
-grep -q '= unchanged  container boxes--staging--api-echo' <<<"$out" || fail "echo should not change: $out"
+grep -Eq '= unchanged  container boxes-staging-api-echo-' <<<"$out" || fail "echo should not change: $out"
 wc --env staging up > up3.out || fail "up after a change: $(cat up3.out)"
-[[ $(seen 'ROLLOUT boxes--staging--api-pinger') -ge 1 ]] || fail "no rollout of the changed container"
+[[ $(seen 'ROLLOUT boxes-staging-api-pinger-') -ge 1 ]] || fail "no rollout of the changed container"
 
 # A container dropped from the compose file goes (its class stays).
 python3 - <<'PY'
@@ -142,16 +142,16 @@ t = t.replace("      # A registry image.\n      - class: Echo\n        image: do
 open("wrangler-compose.yaml", "w").write(t)
 PY
 ps=$(wc --env staging ps) || fail "ps: $ps"
-grep -Eq '^- +container +orphan \(up deletes it\) +boxes--staging--api-echo' <<<"$ps" || fail "ps before the drop: $ps"
+grep -Eq '^- +container +orphan \(up deletes it\) +boxes-staging-api-echo-' <<<"$ps" || fail "ps before the drop: $ps"
 out=$(wc --env staging --dry-run up) || fail "dry-run after the drop: $out"
-grep -q -- '- delete     container boxes--staging--api-echo' <<<"$out" || fail "drop not planned: $out"
+grep -Eq -- '- delete     container boxes-staging-api-echo-' <<<"$out" || fail "drop not planned: $out"
 wc --env staging up > up4.out || fail "up after the drop: $(cat up4.out)"
-[[ "$(apps)" != *boxes--staging--api-echo* ]] || fail "dropped container left: $(apps)"
+[[ "$(apps)" != *boxes-staging-api-echo-* ]] || fail "dropped container left: $(apps)"
 ps=$(wc --env staging ps) || fail "ps: $ps"
-grep -Eq '^api\.Pinger +container +present +boxes--staging--api-pinger' <<<"$ps" || fail "ps: $ps"
+grep -Eq '^api\.Pinger +container +present +boxes-staging-api-pinger-' <<<"$ps" || fail "ps: $ps"
 
 # down: the Worker and its containers go; nothing else.
 wc_yes --env staging down > down.out || fail "down: $(cat down.out)"
-grep -q 'container boxes--staging--api-pinger' down.out || fail "down did not list the container"
-[[ "$(apps)" == "blog-app boxes--production--api-pinger" ]] || fail "after down: $(apps)"
+grep -Eq 'container boxes-staging-api-pinger-' down.out || fail "down did not list the container"
+[[ "$(apps)" == "blog-app boxes-production-api-pinger-12345678" ]] || fail "after down: $(apps)"
 echo "container remote smoke test passed"
