@@ -182,6 +182,8 @@ pub struct Worker {
     /// Resource keys of the queues this Worker consumes.
     pub consumes: Vec<String>,
     pub durable_objects: Vec<String>,
+    /// Cloudflare Containers on its Durable Object classes (REQ-020).
+    pub containers: Vec<Container>,
     /// `secrets`: the name the Worker sees → its value (REQ-005).
     pub secrets: BTreeMap<String, String>,
     /// `environment`: values that are not secret (Wrangler's vars).
@@ -191,6 +193,27 @@ pub struct Worker {
     pub compatibility_date: String,
     pub compatibility_flags: Vec<String>,
     pub assets: Option<PathBuf>,
+}
+
+/// A container on one of a Worker's Durable Object classes (REQ-020), with
+/// the meaning of Cloudflare's `containers` settings (the `default` policy).
+#[derive(Debug, Clone)]
+pub struct Container {
+    pub class: String,
+    pub image: Image,
+    /// Where a Dockerfile is built: `image_build_context`, else the
+    /// Dockerfile's folder. None for a registry image.
+    pub build_context: Option<PathBuf>,
+    pub image_vars: BTreeMap<String, String>,
+    /// A named type (`lite`…) or `{ vcpu, memory_mib, disk_mb }`.
+    pub instance_type: Option<Value>,
+    pub max_instances: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Image {
+    Dockerfile(PathBuf),
+    Registry(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -846,6 +869,23 @@ const WORKER_KEYS: &[&str] = &[
     "compatibility_date",
     "compatibility_flags",
     "assets",
+    "containers",
+];
+const CONTAINER_KEYS: &[&str] = &[
+    "class",
+    "image",
+    "instance_type",
+    "max_instances",
+    "image_build_context",
+    "image_vars",
+];
+const INSTANCE_TYPES: &[&str] = &[
+    "lite",
+    "basic",
+    "standard-1",
+    "standard-2",
+    "standard-3",
+    "standard-4",
 ];
 const D1_KEYS: &[&str] = &["name", "migrations"];
 const BUCKET_KEYS: &[&str] = &[
@@ -1563,6 +1603,12 @@ impl Checker {
         }
         w.durable_objects =
             self.strings(&format!("{at}.durable_objects"), o.get("durable_objects"));
+        w.containers = self.containers(
+            &format!("{at}.containers"),
+            o.get("containers"),
+            root,
+            &w.durable_objects,
+        );
         match o.get("secrets") {
             None => {}
             Some(Value::Object(m)) => {
@@ -1665,6 +1711,211 @@ impl Checker {
             );
         }
         Some(w)
+    }
+
+    /// `containers` of a Worker (REQ-020): each on a Durable Object class the
+    /// Worker owns, at most one per class.
+    fn containers(
+        &mut self,
+        at: &str,
+        v: Option<&Value>,
+        root: &Path,
+        classes: &[String],
+    ) -> Vec<Container> {
+        let list = match v {
+            None => return Vec::new(),
+            Some(Value::Array(a)) => a,
+            Some(_) => {
+                self.err(
+                    at,
+                    crate::tr!("一覧にしてください([...])", "must be a list ([...])"),
+                );
+                return Vec::new();
+            }
+        };
+        let mut out: Vec<Container> = Vec::new();
+        for (i, item) in list.iter().enumerate() {
+            let at = format!("{at}[{i}]");
+            let Value::Object(o) = item else {
+                self.err(&at, crate::tr!("対応表にしてください", "must be a mapping"));
+                continue;
+            };
+            self.unknown_keys(&at, o, CONTAINER_KEYS);
+            let class = self
+                .opt_string(&format!("{at}.class"), o.get("class"))
+                .unwrap_or_default();
+            if class.is_empty() {
+                self.err(
+                    &format!("{at}.class"),
+                    crate::tr!(
+                        "付ける Durable Object のクラスを書いてください",
+                        "name the Durable Object class it belongs to"
+                    ),
+                );
+            } else if !classes.contains(&class) {
+                self.err(
+                    &format!("{at}.class"),
+                    crate::tr!(
+                        "{class} はこの Worker の durable_objects にありません",
+                        "{class} is not in this Worker's durable_objects"
+                    ),
+                );
+            } else if out.iter().any(|c| c.class == class) {
+                self.err(
+                    &format!("{at}.class"),
+                    crate::tr!(
+                        "{class} にはもうコンテナがあります(1 つのクラスに 1 つ)",
+                        "{class} already has a container (one per class)"
+                    ),
+                );
+            }
+            let image = match self.opt_string(&format!("{at}.image"), o.get("image")) {
+                None => {
+                    self.err(
+                        &format!("{at}.image"),
+                        crate::tr!(
+                            "Dockerfile の場所か、レジストリのイメージ(<名前>:<タグ>)を書いてください",
+                            "give a Dockerfile path or a registry image (<name>:<tag>)"
+                        ),
+                    );
+                    None
+                }
+                Some(s) if root.join(&s).is_file() => Some(Image::Dockerfile(root.join(&s))),
+                Some(s) if is_image_ref(&s) => Some(Image::Registry(s)),
+                Some(s) => {
+                    self.err(
+                        &format!("{at}.image"),
+                        crate::tr!(
+                            "Dockerfile {} がありません(レジストリのイメージなら <名前>:<タグ> の形で書きます)",
+                            "Dockerfile {} does not exist (a registry image is written as <name>:<tag>)",
+                            root.join(&s).display()
+                        ),
+                    );
+                    None
+                }
+            };
+            let dockerfile = matches!(image, Some(Image::Dockerfile(_)));
+            for key in ["image_build_context", "image_vars"] {
+                if o.contains_key(key) && matches!(image, Some(Image::Registry(_))) {
+                    self.err(
+                        &format!("{at}.{key}"),
+                        crate::tr!(
+                            "Dockerfile から作るときだけ書けます",
+                            "only for an image built from a Dockerfile"
+                        ),
+                    );
+                }
+            }
+            let mut build_context = match (
+                &image,
+                self.opt_string(
+                    &format!("{at}.image_build_context"),
+                    o.get("image_build_context"),
+                ),
+            ) {
+                (Some(Image::Dockerfile(_)), Some(dir)) => Some(root.join(dir)),
+                (Some(Image::Dockerfile(f)), None) => f.parent().map(Path::to_path_buf),
+                _ => None,
+            };
+            if let Some(dir) = &build_context
+                && dockerfile
+                && !dir.is_dir()
+            {
+                self.err(
+                    &format!("{at}.image_build_context"),
+                    crate::tr!(
+                        "フォルダ {} がありません",
+                        "folder {} does not exist",
+                        dir.display()
+                    ),
+                );
+                build_context = None;
+            }
+            let mut image_vars = BTreeMap::new();
+            match o.get("image_vars") {
+                None => {}
+                Some(Value::Object(m)) => {
+                    for (k, v) in m {
+                        match v {
+                            Value::String(s) => {
+                                image_vars.insert(k.clone(), s.clone());
+                            }
+                            Value::Number(n) => {
+                                image_vars.insert(k.clone(), n.to_string());
+                            }
+                            _ => self.err(
+                                &format!("{at}.image_vars.{k}"),
+                                crate::tr!("文字列にしてください", "must be a string"),
+                            ),
+                        }
+                    }
+                }
+                Some(_) => self.err(
+                    &format!("{at}.image_vars"),
+                    crate::tr!(
+                        "「名前: 値」の対応表にしてください",
+                        "must be a mapping of name: value"
+                    ),
+                ),
+            }
+            let instance_type =
+                self.instance_type(&format!("{at}.instance_type"), o.get("instance_type"));
+            let max_instances = self.number(&format!("{at}.max_instances"), o.get("max_instances"));
+            if max_instances == Some(0) {
+                self.err(
+                    &format!("{at}.max_instances"),
+                    crate::tr!("1 以上にしてください", "must be 1 or more"),
+                );
+            }
+            if let Some(image) = image {
+                out.push(Container {
+                    class,
+                    image,
+                    build_context,
+                    image_vars,
+                    instance_type,
+                    max_instances,
+                });
+            }
+        }
+        out
+    }
+
+    /// A named instance type, or `{ vcpu, memory_mib, disk_mb }` (REQ-020).
+    fn instance_type(&mut self, at: &str, v: Option<&Value>) -> Option<Value> {
+        match v {
+            None => None,
+            Some(Value::String(s)) if INSTANCE_TYPES.contains(&s.as_str()) => Some(v?.clone()),
+            Some(Value::Object(o)) => {
+                self.unknown_keys(at, o, &["vcpu", "memory_mib", "disk_mb"]);
+                let mut ok = true;
+                for (k, x) in o {
+                    let fine = match k.as_str() {
+                        "vcpu" => x.as_f64().is_some_and(|n| n > 0.0),
+                        _ => x.as_u64().is_some_and(|n| n > 0),
+                    };
+                    if !fine {
+                        ok = false;
+                        self.err(
+                            &format!("{at}.{k}"),
+                            crate::tr!("0 より大きい数にしてください", "must be a number above 0"),
+                        );
+                    }
+                }
+                ok.then(|| v.cloned()).flatten()
+            }
+            Some(_) => {
+                self.err(
+                    at,
+                    crate::tr!(
+                        "{} のどれか、または vcpu・memory_mib・disk_mb の対応表にしてください",
+                        "must be one of {} or a mapping of vcpu, memory_mib and disk_mb",
+                        INSTANCE_TYPES.join("・")
+                    ),
+                );
+                None
+            }
+        }
     }
 
     fn ports(&mut self, at: &str, v: Option<&Value>) -> Vec<Port> {
@@ -1956,6 +2207,20 @@ fn resolve_resource(t: &str, want: &str, types: &Types) -> std::result::Result<S
 /// `"8787:8787"` or `"127.0.0.1:8787:8787"` (docker's short syntax; a
 /// Worker has no inner port, so both numbers must match). Without an
 /// address it listens on every address, as docker does (REQ-009).
+/// A registry image as Wrangler takes it: not a path, with a tag or a
+/// digest (`docker.io/library/busybox:1.36`, `…@sha256:…`).
+fn is_image_ref(s: &str) -> bool {
+    if s.starts_with('.')
+        || s.starts_with('/')
+        || s.contains("://")
+        || s.contains(char::is_whitespace)
+    {
+        return false;
+    }
+    let last = s.rsplit('/').next().unwrap_or(s);
+    s.contains("@sha256:") || last.contains(':')
+}
+
 fn parse_port(s: &str) -> std::result::Result<Port, String> {
     let s = s.strip_suffix("/tcp").unwrap_or(s);
     let (ip, rest) = if let Some(r) = s.strip_prefix('[') {
@@ -2673,5 +2938,113 @@ services:
         assert_eq!(parse_port("[::1]:9:9").unwrap().ip, "::1");
         assert!(parse_port("8787").is_err());
         assert!(parse_port("1:2").is_err());
+    }
+    /// A project whose `web` Worker owns the Durable Object class `Pinger`,
+    /// with a Dockerfile at `box/Dockerfile` (REQ-020).
+    fn container_project(containers: &str) -> (tempdir::Dir, Result<Compose>) {
+        let d = tempdir::Dir::new();
+        for f in ["web", "box"] {
+            std::fs::create_dir_all(d.0.join(f)).unwrap();
+        }
+        std::fs::write(d.0.join("box/Dockerfile"), "FROM busybox\n").unwrap();
+        let yaml =
+            format!("{ONE_WORKER}    durable_objects: [Pinger]\n    containers:\n{containers}");
+        std::fs::write(d.0.join("wrangler-compose.yaml"), yaml).unwrap();
+        let r = load(&d.0.join("wrangler-compose.yaml"), "local");
+        (d, r)
+    }
+
+    fn web(c: &Compose) -> &Worker {
+        match &c.services.iter().find(|s| s.name == "web").unwrap().kind {
+            Kind::Worker(w) => w,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_container_with_a_dockerfile_is_read() {
+        let (d, c) = container_project(
+            "      - class: Pinger\n        image: ./box/Dockerfile\n        instance_type: basic\n        max_instances: 2\n        image_vars: { V: \"1\" }\n",
+        );
+        let c = c.unwrap();
+        let k = &web(&c).containers[0];
+        assert_eq!(k.class, "Pinger");
+        assert_eq!(k.image, Image::Dockerfile(d.0.join("./box/Dockerfile")));
+        assert_eq!(k.build_context, Some(d.0.join("./box")));
+        assert_eq!(k.instance_type, Some(serde_json::json!("basic")));
+        assert_eq!(k.max_instances, Some(2));
+        assert_eq!(k.image_vars.get("V").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn a_container_from_a_registry_is_read() {
+        let (_d, c) = container_project(
+            "      - class: Pinger\n        image: docker.io/library/busybox:1.36\n        instance_type: { vcpu: 1, memory_mib: 3072, disk_mb: 4000 }\n",
+        );
+        let c = c.unwrap();
+        let k = &web(&c).containers[0];
+        assert_eq!(
+            k.image,
+            Image::Registry("docker.io/library/busybox:1.36".into())
+        );
+        assert_eq!(k.build_context, None);
+        assert_eq!(k.instance_type.as_ref().unwrap()["memory_mib"], 3072);
+    }
+
+    #[test]
+    fn container_mistakes_stop_with_where_and_why() {
+        for (containers, want) in [
+            // a class the Worker does not own
+            (
+                "      - class: Other\n        image: ./box/Dockerfile\n",
+                "durable_objects",
+            ),
+            // two containers on one class
+            (
+                "      - class: Pinger\n        image: ./box/Dockerfile\n      - class: Pinger\n        image: ./box/Dockerfile\n",
+                "Pinger",
+            ),
+            // an unknown key
+            (
+                "      - class: Pinger\n        image: ./box/Dockerfile\n        scheduling_policy: durable_object\n",
+                "scheduling_policy",
+            ),
+            // an unknown instance type
+            (
+                "      - class: Pinger\n        image: ./box/Dockerfile\n        instance_type: huge\n",
+                "instance_type",
+            ),
+            // a Dockerfile that is not there
+            (
+                "      - class: Pinger\n        image: ./box/Missing\n",
+                "Dockerfile",
+            ),
+            // build settings on a registry image
+            (
+                "      - class: Pinger\n        image: docker.io/library/busybox:1.36\n        image_vars: { V: \"1\" }\n",
+                "image_vars",
+            ),
+            // no image
+            ("      - class: Pinger\n", "image"),
+            // max_instances must be 1 or more
+            (
+                "      - class: Pinger\n        image: ./box/Dockerfile\n        max_instances: 0\n",
+                "max_instances",
+            ),
+        ] {
+            let err = container_project(containers).1.unwrap_err().to_string();
+            assert!(
+                err.contains("containers") && err.contains(want),
+                "{want}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_instance_is_the_smallest_max() {
+        let (_d, c) = container_project(
+            "      - class: Pinger\n        image: ./box/Dockerfile\n        max_instances: 1\n",
+        );
+        assert_eq!(web(&c.unwrap()).containers[0].max_instances, Some(1));
     }
 }

@@ -472,6 +472,18 @@ fn run_wrangler(mut cmd: std::process::Command, what: String) -> Result<()> {
 
 pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> {
     let services = ctx.compose.closure(only)?;
+    // Containers run locally only for now (REQ-020): an up that left them
+    // out would deploy Workers whose containers never start.
+    if let Some(s) = services
+        .iter()
+        .find(|s| matches!(&s.kind, Kind::Worker(w) if !w.containers.is_empty()))
+    {
+        bail!(crate::tr!(
+            "{}: コンテナのリモートへの展開はまだ対応していません(手元の --env local だけで動きます)。何もしていません",
+            "{}: deploying containers to a remote environment is not supported yet (they run with --env local only); nothing was done",
+            s.name
+        ));
+    }
     let n = names(&ctx.compose, &ctx.env)?;
     let act = Act::new(ctx.dry_run);
 

@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/write.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>01. compose ファイルを書く</h1>
-<p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007。</p></section>
+<p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007・REQ-020。</p></section>
 
 <section class="section"><h2 id="example">compose ファイルの例</h2>
 <pre><code># wrangler-compose.yaml
@@ -87,7 +87,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <article class="item" id="req-002"><h3><span class="id">REQ-002</span>サービスの型</h3>
 <table>
   <tr><th style="width:12%">型</th><th>書けるキー</th><th style="width:26%">建つもの</th></tr>
-  <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>compatibility_date</code>(必須)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>environment</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_flags</code>・<code>assets</code></td><td>Worker 1 つ</td></tr>
+  <tr><td><code>worker</code></td><td><code>build</code>(必須。コードのフォルダ)・<code>compatibility_date</code>(必須)・<code>name</code>・<code>ports</code>・<code>depends_on</code>・<code>bindings</code>・<code>consumes</code>・<code>durable_objects</code>・<code>secrets</code>・<code>environment</code>・<code>routes</code>・<code>crons</code>・<code>compatibility_flags</code>・<code>assets</code>・<code>containers</code>(REQ-020)</td><td>Worker 1 つ(とそのコンテナ)</td></tr>
   <tr><td><code>d1</code></td><td><code>name</code>・<code>migrations</code>(移行の SQL のフォルダ)</td><td>D1 データベース 1 つ</td></tr>
   <tr><td><code>r2</code></td><td><code>name</code>・<code>ports</code>(手元の R2 の口)・<code>public</code>・<code>public_port</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ</td></tr>
   <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
@@ -157,7 +157,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>名前から、どのプロジェクトのどの環境のものかが必ず分かる(以前の版の名前(<code>-</code> 1 つの区切り)で作った環境は扱わない。利用者の決定 2026-10-13): 区切りは <code>--</code> で、プロジェクト名・環境名・サービス名・<code>name</code> には <code>--</code> を使えない(先頭と末尾の <code>-</code> も使えない)。プロジェクト名は 3 文字以上(Worker の名前が URL になるとき、3〜4 文字目の <code>--</code> は予約されているため)。道具が作る・使う・消すのは、名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる、その環境のものだけ。ほかの名前のものには触らない(利用者の決定 2026-10-13「必ず名前から誰の持ち主か判断をできるようにして下さい。削除も同様です」)</li>
   <li>決めた名前が Cloudflare の名前の決まり(長さなど)に合わなければ、何もせずに止まり、<code>name</code> で短い名前を書くよう示す</li>
   <li>同じ名前のものがすでにあれば、それを使う(作り直さない)。名前がこの環境のものなので、ほかのプロジェクト・環境のものを使うことは無い</li>
-  <li>手元では、サービスの名前(<code>cache</code>・<code>files</code> など)をそのまま使う</li>
+  <li>手元では、資源はサービスの名前(<code>cache</code>・<code>files</code> など)をそのまま使う。Worker には、道具がプロジェクトごとに違う名前を付ける(手元のコンテナがほかのプロジェクトと混ざらないため。同じリポジトリを 2 か所に取り出して同時に動かしても混ざらない)。画面のログ・<code>ps</code>・<code>logs</code> の引数では、今までどおりサービスの名前で示す(利用者の決定 2026-10-13)</li>
   <li>リモートの環境は、<code>.env.&lt;環境&gt;</code> に <code>CLOUDFLARE_ACCOUNT_ID=&lt;アカウントの ID&gt;</code> を書いたアカウントでだけ操作する(<code>--dry-run</code> も含む、Cloudflare に触れるすべての操作。<code>build</code> は触れないので確かめない)。書いていなければ、何もせずに止まり、ログインで使えるアカウントを示す。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> がそれと違うとき、ログインがそのアカウントを使えないときも止まる。意図しないアカウントへの展開・削除を防ぐため(利用者の決定。2026-10-12)。手元では要らない</li>
   <li>違う環境どうしは混ざらない。ID などの実際の値は道具が扱い、利用者は書かない。別の PC からでも、同じ環境の同じ資源につながる</li>
   <li>1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れる、リモートのものが手元に触れる、ということをしない(道具が中で行うことも含む)</li>
@@ -168,6 +168,26 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>Worker のフォルダ(<code>build</code>)には、コードと、環境に依存しない組み立てのためのもの(どのファイルから組み立てるか、組み立ての手順など)だけを置いてよい</li>
   <li>振る舞いに関わる設定(名前・つながり・値・ルート・定期実行・環境など)がフォルダの中にあれば、何もせずに止まり、compose ファイルのどこに書くかを示す</li>
   <li>道具はプロジェクトのファイルを書き換えない。道具が作るものは、プロジェクトの中の決まった場所(<code>.wrangler/compose/</code>)に置く。git のリポジトリの中なら、そこが git から外れていなければ止まる。リポジトリでなければ確かめない(2026-10-13)</li>
+</ul>
+</article>
+<article class="item" id="req-020"><h3><span class="id">REQ-020</span>コンテナ</h3>
+<ul>
+  <li>Worker のサービスに <code>containers</code> を書くと、その Worker の Durable Object のクラスに Cloudflare Containers のコンテナを付けられる。ほかのサービスと同じ程度の基本的な対応とし、手元でもリモートでも同じに建てる(利用者の決定 2026-10-13)</li>
+  <li>書き方は項目の並び。キーは <code>class</code>(必須。同じ Worker の <code>durable_objects</code> にあるクラス)・<code>image</code>(必須。Dockerfile の場所(compose ファイルから見た相対)か、レジストリのイメージ)・<code>instance_type</code>(<code>lite</code>・<code>basic</code>・<code>standard-1</code>〜<code>standard-4</code>、または <code>vcpu</code>・<code>memory_mib</code>・<code>disk_mb</code>)・<code>max_instances</code>・<code>image_build_context</code>・<code>image_vars</code>。意味は本物のコンテナの設定と同じ。1 つのクラスに付けられるコンテナは 1 つ</li>
+  <li>イメージは、Dockerfile から作るのを基本とする。作ったイメージは、手元では手元の Docker に、リモートでは Cloudflare のコンテナのレジストリに置き、外部のレジストリには置かない(Cloudflare で動かすなら外部に置く利点が無いため)。<code>image</code> にレジストリのイメージを書くのは、すでにビルドされたイメージ(外部のレジストリにあるものなど)を使うときだけ(利用者の決定 2026-10-13)</li>
+  <li><code>durable_objects</code> に無いクラスを指すもの、同じクラスに 2 つ付けるもの、知らないキー、無い Dockerfile は、何もせずに止まり、どこの何がいけないかを示す</li>
+  <li>動かし方の方針は Cloudflare の <code>default</code> だけを扱う(<code>durable_object</code> 方針は範囲外)</li>
+  <li>手元: <code>--env local up</code> は、コンテナを Docker(か互換のもの)で、本物と同じイメージ(linux/amd64)から動かす。Worker のコードからは本物と同じに使える。Dockerfile・ビルドの基点の中身・<code>image</code> が変われば、作り直して動かし直す</li>
+  <li>手元: Ctrl+C や <code>down</code> で止めたら、そのプロジェクトのコンテナを残さない。手元で作ったイメージは <code>down --purge</code> のときだけ消す(利用者の決定 2026-10-13)。ほかのプロジェクトのコンテナとイメージには触らない(定義 3)</li>
+  <li>Docker は compose ファイルにコンテナがあるときだけ要る。要るのに Docker につながらなければ、手元では何も動かさずに、リモートでは Cloudflare に触れる前に止まり、そのことを示す。コンテナの無い compose ファイルは、Docker が無くても今までどおり動く</li>
+  <li>手元で本物と違う点(<code>max_instances</code>・<code>instance_type</code> の大きさが効かない、置き場・段階的な入れ替え・ssh が無い、Windows の手元では動かない、Apple Silicon では linux/amd64 をまねて動かす)は、<a href="../detail/local-support.html">手元で使えないもの</a>に理由とともに書き、<code>--env local up</code> が知らせる(REQ-018)</li>
+  <li>リモート: <code>up</code> は、Dockerfile からイメージを作って Cloudflare のコンテナのレジストリに置き、コンテナのアプリケーションを作る・変える。利用者が手でイメージを作る・レジストリに登録することはない(REQ-016)。名前は道具が決め、名前からこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)と分かる(REQ-006)。イメージも設定も変わっていなければ変えない</li>
+  <li>リモート: 途中で止まったとき(Worker は上がったがイメージを送れなかったなど)は、どこまで済み、どこでなぜ止まったかを示す。もう一度 <code>up</code> すれば揃う</li>
+  <li>リモート: compose ファイルから消したコンテナと、<code>down</code> で下ろした Worker のコンテナは、道具がアプリケーションごと消す(Cloudflare は Worker を消してもコンテナを消さないため)。消すのは名前がこの環境のものだけ</li>
+  <li><code>--dry-run</code> はイメージを作らず送らず、作る・変える・消すコンテナと、イメージが変わるかを示す(REQ-014)</li>
+  <li><code>ps</code> は、コンテナがあるかと、compose ファイルとの違いを示す(REQ-012)</li>
+  <li><code>backup</code>・<code>restore</code> はコンテナを扱わない。コンテナは残すデータを持たない(ディスクは止まると消える)</li>
+  <li>コンテナを使えないアカウント(Workers の有料プランでない)では、Cloudflare の答えを示して止まる</li>
 </ul>
 </article>
 </section>

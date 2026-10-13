@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d02-local.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D02. build と手元の up</h1>
-<p>組み立てたものを作り、手元ですべてのサービスを 1 つの実行環境で動かす仕組み。DES-007・008・011・019。</p></section>
+<p>組み立てたものを作り、手元ですべてのサービスを 1 つの実行環境で動かす仕組み。DES-007・008・011・019・020。</p></section>
 
 <section class="section"><h2>設計</h2><article class="item" id="des-007"><h3><span class="id">DES-007</span>build <span class="refs"><a href="../requirements/commands.html#req-008">REQ-008</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
 <ul>
@@ -80,6 +80,18 @@
   <li><strong>外(LAN)から届いた要求</strong>: 手元の模擬は、<code>/cdn-cgi/</code> への要求の <code>Host</code> と <code>Origin</code> のホスト名が <code>localhost</code>・<code>127.0.0.1</code>・<code>[::1]</code>(か Worker の routes のホスト名)でなければ、署名を見る前に 403(<code>Invalid Host header</code>・<code>Invalid Origin header</code>)で断る(実測 2026-10-12・miniflare の entry worker。routes にアドレスを足すと Wrangler が要求の URL をそのホストに書き換えるので使えない)。そこで、<code>Host</code> か <code>Origin</code> がそれ以外の要求のうち、ホスト名が IP アドレス(か手元の名前)のものは、道具が手元の S3 の鍵で、届いたままの見出し(つないだアドレスの <code>Host</code>)で署名を計算して確かめる。合えば、<code>Host</code> を <code>localhost:&lt;ポート&gt;</code> に替え、<code>Origin</code> を外し、署名し直して手元の模擬へ渡す(見出しの署名は <code>Authorization</code> の <code>Signature</code>、署名付き URL は <code>X-Amz-Signature</code> を替える)。合わない・署名の無い要求は署名し直さずに同じく替えて渡し、手元の模擬に本物と同じ理由で拒ませる。ホスト名が IP アドレスでない名前(DNS の名前)の要求は、何も替えずに渡して手元の模擬に 403 で断らせる(悪いページが自分の名前を 127.0.0.1 に向け直したときに送るのが、この形。<code>Origin: null</code> は今までどおり外す)。日時・期限・鍵の範囲・本体のハッシュの検査は手元の模擬に任せる。署名の計算は手元の模擬と同じ(パスはそのまま・問い合わせはフォームの形で読んでから符号化して並べる・見出しの値は前後の空白を落とし続く空白を 1 つにする)。CORS の見出しは、外した <code>Origin</code> ではなく届いた <code>Origin</code> で <code>cors</code> どおりに付ける</li>
   <li><strong>公開の URL</strong>: <code>Host</code> が <code>&lt;バケット名&gt;.localhost</code> の要求は、<code>public: true</code> のバケットだけ、データのサービスから中身を取って配る(内容の種類などの見出しを付ける)。HTTP の決まり(RFC 9110)どおりに、<code>ETag</code>・<code>Last-Modified</code>・条件つきの取得(<code>If-Match</code>・<code>If-Unmodified-Since</code> は 412、<code>If-None-Match</code>・<code>If-Modified-Since</code> は 304)・1 つの範囲指定(<code>Range</code>・<code>If-Range</code>。206、満たせなければ 416)に答える(データのサービスが R2 の <code>head</code> と範囲つきの <code>get</code> で答える)。<code>public_port</code> を書いたバケットは、r2 の <code>ports</code> と同じアドレスのそのポートで、<code>Host</code> によらずパスをキーとして同じに配る(LAN の機械がアドレスで届く)</li>
   <li>1 つの接続で 1 つの要求だけを受け、答えたら閉じる(<code>Connection: close</code>)。HTTP の読み取りを見出しだけにするため</li>
+</ul>
+</article>
+<article class="item" id="des-020"><h3><span class="id">DES-020</span>コンテナ(手元) <span class="refs"><a href="../requirements/write.html#req-020">REQ-020</a>・<a href="../requirements/write.html#req-006">REQ-006</a>・<a href="../requirements/commands.html#req-009">REQ-009</a></span></h3>
+<ul>
+  <li>compose ファイル: Worker の <code>containers</code> を DES-002 の形で確かめる。<code>image</code> は、compose ファイルから見た場所にファイルがあれば Dockerfile、無ければレジストリのイメージ(<code>&lt;名前&gt;:&lt;タグ&gt;</code> か <code>@sha256:</code> を含む形)。どちらでもなければ「Dockerfile がありません」で止める。<code>image_build_context</code>・<code>image_vars</code> は Dockerfile のときだけ。<code>instance_type</code> は名前か <code>vcpu</code>・<code>memory_mib</code>・<code>disk_mb</code> の対応表。<code>max_instances</code> は 1 以上</li>
+  <li>手元の Worker の名前: <code>&lt;プロジェクト&gt;--&lt;印&gt;--&lt;サービス&gt;</code>。印は compose ファイルのあるフォルダの絶対パスの SHA-256 の先頭 8 文字。Worker どうしのつながり・Durable Object の <code>script_name</code>・入口(wc-gateway)の振り分けは、この名前で指す。画面のログ・<code>ps</code>・<code>logs</code> はサービスの名前で出す</li>
+  <li>前の版の Durable Object の手元のデータ(<code>state/v3/do/&lt;サービス&gt;-&lt;クラス&gt;</code>)は、新しい名前の置き場が無ければ、動かす前に新しい名前へ移す。<code>down --purge</code> で消す置き場も新しい名前</li>
+  <li>作る設定: <code>containers</code> に <code>class_name</code>・<code>image</code>・<code>image_build_context</code>(どちらも絶対パス。Wrangler は設定ファイルのフォルダから解くため)・<code>image_vars</code>・<code>instance_type</code>・<code>max_instances</code> を入れる。Durable Object の宣言は今と同じ(DES-010)</li>
+  <li>Docker: compose ファイルにコンテナがあるときだけ、<code>wrangler dev</code> の前に <code>docker info</code>(環境変数 <code>WRANGLER_DOCKER_BIN</code> があればそのコマンド)で確かめ、つながらなければ何も動かさずに止める。Windows では動かす前に止める(Wrangler が手元のコンテナに対応していない)</li>
+  <li>作り直し: Dockerfile と、ビルドの基点のフォルダの中のファイルの変化を、コードと同じく見張る。変われば <code>wrangler dev</code> を動かし直す(Wrangler は動いている間の変化を拾わず、作り直しの <code>[r]</code> キーは標準入力が無いので使えない)</li>
+  <li>片付け: 手元のコンテナの名前は <code>workerd-&lt;Worker の名前&gt;-&lt;クラス&gt;-&lt;ID&gt;</code> と、中継役の <code>…-proxy</code>。<code>wrangler dev</code> を止めたあとと、動かす前(前回の残り)に、名前が <code>workerd-&lt;プロジェクト&gt;--&lt;印&gt;--</code> で始まるコンテナを <code>docker rm -f</code> で消す(TERM で止めると中継役が残るため。実測)</li>
+  <li>イメージ: Wrangler の出力の <code>naming to …cloudflare-dev/&lt;クラス&gt;:&lt;乱数&gt;</code>(古いビルダーでは <code>Successfully tagged …</code>)と、片付ける前のこのプロジェクトのコンテナが使っているイメージを、<code>.wrangler/compose/local/container-images.json</code> に記録する。レジストリのイメージに Wrangler が付ける別名(<code>cloudflare-dev/&lt;クラス&gt;:&lt;乱数&gt;</code>)は出力に出ないので、起動の前と後の別名の一覧を比べ、増えたもののうち取ってきたイメージと同じ中身を指すものを記録する(同じクラス名・同じイメージのほかのプロジェクトがまったく同じ時に起動したときだけ、その別名を取り違えうる。別名はディスクを使わず、動いているものも壊れない)。<code>down --purge</code> で、記録したものだけを <code>docker rmi</code> する。乱数の入った名前で、ほかのプロジェクトのイメージと見分ける</li>
 </ul>
 </article>
 </section>

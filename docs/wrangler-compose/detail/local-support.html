@@ -39,6 +39,7 @@
 <section class="section"><h2 id="prepare">手元で動かすのに追加の用意が要るもの</h2>
 <table>
   <tr><th style="width:22%">機能</th><th>要るもの・手元での使い方</th><th style="width:14%">根拠</th></tr>
+      <tr><td>コンテナ(<code>containers</code>)</td><td>Docker(か互換のもの)が動いていること。初めて動かすときは、中継役のイメージを Docker Hub から取るので網が要る</td><td>資料・実測</td></tr>
       <tr><td>Cron Triggers</td><td>手元では時刻が来ても動かない。<code>curl "http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/scheduled?cron=*+*+*+*+*"</code> で呼ぶ</td><td>資料</td></tr>
   </table>
 </section>
@@ -47,6 +48,8 @@
   <tr><th style="width:30%">設定</th><th>手元で起きること・代わり</th><th style="width:14%">根拠</th></tr>
   <tr><td>ルート・カスタムドメイン(<code>routes</code>)・<code>workers_dev</code>・プレビューの URL</td><td>手元の URL(<code>http://127.0.0.1:&lt;ポート&gt;</code>)だけで応える。ホスト名で振り分ける作りは、要求の <code>Host</code> を手で付けて試す</td><td>推測</td></tr>
   <tr><td>Cron(<code>triggers.crons</code>)</td><td>自動では動かない(<a href="#prepare">上</a>)</td><td>資料</td></tr>
+  <tr><td>コンテナの <code>max_instances</code>・<code>instance_type</code></td><td>効かない。数も大きさも本物の上限で止まらない</td><td>資料</td></tr>
+  <tr><td>コンテナの動く場所</td><td>手元は Docker、本物は Cloudflare の microVM。Apple Silicon では linux/amd64 をまねて動くので遅い。Windows の手元では動かない(Wrangler の制限)。置き場・段階的な入れ替え・ssh は無い</td><td>資料・実装</td></tr>
         </table>
 </section>
 <section class="section"><h2 id="platform">設定に出ないが本番と違うもの</h2>

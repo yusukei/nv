@@ -47,6 +47,7 @@
   <li>使わない型(Vectorize・Workers AI・Hyperdrive・Workflows など)。使うときに型を足す</li>
   <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code>(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
   <li>DNS・WAF・Access などゾーンの設定</li>
+  <li>コンテナの <code>durable_object</code> 方針(公開ベータ)と、<code>containers</code> の細かいキー(段階的な入れ替え・ssh・置き場の制限・観測の上書き)。要るときに足す</li>
   <li>Wrangler のコマンドでも Cloudflare の API でも行えない操作</li>
 </ul>
 </section>

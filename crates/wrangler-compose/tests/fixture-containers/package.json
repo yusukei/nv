@@ -1,0 +1,7 @@
+{
+  "name": "wrangler-compose-fixture-containers",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  }
+}

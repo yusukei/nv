@@ -15,6 +15,23 @@ const QUEUE_DEFAULTS: (u64, u64, u64) = (10, 5, 3);
 
 pub const GATEWAY: &str = "wc-gateway";
 
+/// What every local Worker name of this project starts with (DES-020):
+/// `<project>--<mark>--`, the mark being the first 8 hex digits of the
+/// SHA-256 of the project folder's absolute path. Two checkouts of one
+/// project then never share a Worker name, and so never share a local
+/// container (Wrangler names containers after the Worker).
+pub fn local_prefix(c: &Compose) -> String {
+    use sha2::{Digest, Sha256};
+    let root = std::fs::canonicalize(&c.root).unwrap_or_else(|_| c.root.clone());
+    let hash = Sha256::digest(root.to_string_lossy().as_bytes());
+    format!("{}--{}--", c.name, &crate::files::hex(&hash)[..8])
+}
+
+/// The local Worker name of a service (REQ-006, DES-020).
+pub fn local_name(c: &Compose, svc: &str) -> String {
+    format!("{}{svc}", local_prefix(c))
+}
+
 pub fn logs_worker(svc: &str) -> String {
     format!("wc-logs-{svc}")
 }
@@ -22,7 +39,7 @@ pub fn logs_worker(svc: &str) -> String {
 /// The local config of one user Worker, running its built bundle.
 pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value {
     let mut cfg = Map::new();
-    cfg.insert("name".into(), json!(svc));
+    cfg.insert("name".into(), json!(local_name(c, svc)));
     cfg.insert("main".into(), json!(built.dir.join(&built.entry)));
     cfg.insert("no_bundle".into(), json!(true));
     cfg.insert("compatibility_date".into(), json!(w.compatibility_date));
@@ -55,11 +72,13 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
             }
             Target::Kv(k) => kv.push(json!({ "binding": binding, "id": k })),
             Target::Queue(k) => producers.push(json!({ "binding": binding, "queue": k })),
-            Target::Worker(other) => services.push(json!({ "binding": binding, "service": other })),
+            Target::Worker(other) => {
+                services.push(json!({ "binding": binding, "service": local_name(c, other) }))
+            }
             Target::DurableObject { service, class } => {
                 let mut b = json!({ "name": binding, "class_name": class });
                 if service != svc {
-                    b["script_name"] = json!(service);
+                    b["script_name"] = json!(local_name(c, service));
                 }
                 dos.push(b);
             }
@@ -117,12 +136,50 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     if !w.crons.is_empty() {
         cfg.insert("triggers".into(), json!({ "crons": w.crons }));
     }
+    if !w.containers.is_empty() {
+        cfg.insert("containers".into(), containers(&w.containers));
+    }
     cfg.insert(
         "tail_consumers".into(),
         json!([{ "service": logs_worker(svc) }]),
     );
-    let _ = c;
     Value::Object(cfg)
+}
+
+/// Wrangler's `containers` (REQ-020, DES-020). Paths are absolute: Wrangler
+/// resolves them from the config file's folder, and the tool writes its
+/// configs elsewhere.
+fn containers(list: &[crate::compose::Container]) -> Value {
+    use crate::compose::Image;
+    Value::Array(
+        list.iter()
+            .map(|k| {
+                let mut o = Map::new();
+                o.insert("class_name".into(), json!(k.class));
+                match &k.image {
+                    Image::Dockerfile(f) => {
+                        o.insert("image".into(), json!(f));
+                        if let Some(dir) = &k.build_context {
+                            o.insert("image_build_context".into(), json!(dir));
+                        }
+                        if !k.image_vars.is_empty() {
+                            o.insert("image_vars".into(), json!(k.image_vars));
+                        }
+                    }
+                    Image::Registry(r) => {
+                        o.insert("image".into(), json!(r));
+                    }
+                }
+                if let Some(t) = &k.instance_type {
+                    o.insert("instance_type".into(), t.clone());
+                }
+                if let Some(n) = k.max_instances {
+                    o.insert("max_instances".into(), json!(n));
+                }
+                Value::Object(o)
+            })
+            .collect(),
+    )
 }
 
 /// The Cloudflare config of one user Worker (DES-005, DES-009): its built
@@ -797,3 +854,119 @@ export default {
   },
 };
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compose::{Compose, Kind};
+
+    struct Dir(PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Two Workers: `web` calls `api`, and `api` owns `Pinger` with a
+    /// container built from `box/Dockerfile` (REQ-020).
+    fn project(tag: &str) -> (Dir, Compose) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "wc-configs-{}-{}-{tag}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        for f in ["web", "api", "box"] {
+            std::fs::create_dir_all(d.join(f)).unwrap();
+        }
+        std::fs::write(d.join("box/Dockerfile"), "FROM busybox\n").unwrap();
+        std::fs::write(
+            d.join("wrangler-compose.yaml"),
+            r#"
+name: shop
+services:
+  web:
+    type: worker
+    build: ./web
+    compatibility_date: "2026-09-01"
+    bindings:
+      API: api
+      PING: api.Pinger
+  api:
+    type: worker
+    build: ./api
+    compatibility_date: "2026-09-01"
+    durable_objects: [Pinger]
+    containers:
+      - class: Pinger
+        image: ./box/Dockerfile
+        instance_type: basic
+        max_instances: 2
+        image_vars: { V: "1" }
+"#,
+        )
+        .unwrap();
+        let c = crate::compose::load(&d.join("wrangler-compose.yaml"), "local").unwrap();
+        (Dir(d), c)
+    }
+
+    fn worker<'a>(c: &'a Compose, svc: &str) -> &'a Worker {
+        match &c.services.iter().find(|s| s.name == svc).unwrap().kind {
+            Kind::Worker(w) => w,
+            _ => unreachable!(),
+        }
+    }
+
+    fn built() -> Built {
+        Built {
+            dir: PathBuf::from("/b"),
+            entry: "index.js".into(),
+            hash: "h".into(),
+        }
+    }
+
+    #[test]
+    fn local_worker_names_differ_per_project_folder() {
+        let (_a, a) = project("a");
+        let (_b, b) = project("b");
+        let (na, nb) = (local_name(&a, "api"), local_name(&b, "api"));
+        assert!(na.starts_with("shop--") && na.ends_with("--api"), "{na}");
+        assert_ne!(
+            na, nb,
+            "same project name in two folders must not share names"
+        );
+        assert_eq!(na, local_name(&a, "api"), "stable for one folder");
+        assert!(na.starts_with(&local_prefix(&a)));
+    }
+
+    #[test]
+    fn local_configs_name_workers_and_their_links_by_local_names() {
+        let (_d, c) = project("links");
+        let cfg = local_worker(&c, "web", worker(&c, "web"), &built());
+        assert_eq!(cfg["name"], json!(local_name(&c, "web")));
+        assert_eq!(cfg["services"][0]["service"], json!(local_name(&c, "api")));
+        let dos = cfg["durable_objects"]["bindings"].as_array().unwrap();
+        assert_eq!(dos[0]["script_name"], json!(local_name(&c, "api")));
+    }
+
+    #[test]
+    fn local_configs_carry_containers_with_absolute_paths() {
+        let (d, c) = project("box");
+        let cfg = local_worker(&c, "api", worker(&c, "api"), &built());
+        let k = &cfg["containers"][0];
+        assert_eq!(k["class_name"], "Pinger");
+        assert_eq!(k["image"], json!(d.0.join("./box/Dockerfile")));
+        assert!(Path::new(k["image"].as_str().unwrap()).is_absolute());
+        assert_eq!(k["image_build_context"], json!(d.0.join("./box")));
+        assert_eq!(k["image_vars"]["V"], "1");
+        assert_eq!(k["instance_type"], "basic");
+        assert_eq!(k["max_instances"], 2);
+        // The class is declared and bound, so other Workers reach it.
+        assert!(cfg["exports"]["Pinger"].is_object());
+        assert!(cfg.get("dev").is_none(), "containers stay enabled locally");
+        let web = local_worker(&c, "web", worker(&c, "web"), &built());
+        assert!(web.get("containers").is_none());
+    }
+}

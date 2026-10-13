@@ -25,7 +25,7 @@
 <tr><td><a class="rid" href="d05-test.html#des-016">DES-016</a></td><td>0.1 系から引き継ぐもの</td><td></td><td><a href="d05-test.html">D05. 引き継ぎ・試験・確かめていないこと</a></td></tr>
 <tr><td><a class="rid" href="d05-test.html#des-017">DES-017</a></td><td>試験</td><td></td><td><a href="d05-test.html">D05. 引き継ぎ・試験・確かめていないこと</a></td></tr>
 <tr><td><a class="rid" href="d03-remote.html#des-018">DES-018</a></td><td>R2 のバケットの設定</td><td><a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/commands.html#req-009">REQ-009</a></td><td><a href="d03-remote.html">D03. リモートの up</a></td></tr>
-<tr><td><a class="rid" href="d02-local.html#des-019">DES-019</a></td><td>手元の R2 の口</td><td><a href="../requirements/commands.html#req-009">REQ-009</a></td><td><a href="d02-local.html">D02. build と手元の up</a></td></tr></tbody></table></section>
+<tr><td><a class="rid" href="d02-local.html#des-019">DES-019</a></td><td>手元の R2 の口</td><td><a href="../requirements/commands.html#req-009">REQ-009</a></td><td><a href="d02-local.html">D02. build と手元の up</a></td></tr><tr><td><a class="rid" href="d02-local.html#des-020">DES-020</a></td><td>コンテナ(手元)</td><td><a href="../requirements/write.html#req-020">REQ-020</a>・<a href="../requirements/write.html#req-006">REQ-006</a>・<a href="../requirements/commands.html#req-009">REQ-009</a></td><td><a href="d02-local.html">D02. build と手元の up</a></td></tr></tbody></table></section>
 <section class="section"><h2 id="facts">確かめた事実</h2>
 <table>
   <tr><th>事実</th><th style="width:22%">出典</th></tr>
@@ -40,6 +40,11 @@
   <tr><td>手元のデータの置き場は <code>--persist-to</code> で決まり、<code>d1 migrations apply</code>・<code>d1 export</code>・<code>d1 execute</code> は <code>--local --persist-to</code> で同じ置き場を扱う</td><td>実測</td></tr>
   <tr><td>D1 の書き出しは表の作りと中身と <code>d1_migrations</code> を含み、表を消した D1 に流して移行を当てると、バックアップのあとの移行だけが当たる(手元・Cloudflare とも)</td><td>実測(0.1 系)</td></tr>
   <tr><td>Wrangler の標準入力を空にすると、確かめの問いは既定の答えで進み、資源の ID を設定ファイルへ書き戻さない。<code>deploy --secrets-file</code> はファイルに無いシークレットを消さない</td><td>実装(0.1 系)</td></tr>
+  <tr><td>手元のコンテナは <code>wrangler dev</code> が Docker で動かす。Docker のコンテナの名前は <code>workerd-&lt;Worker の名前&gt;-&lt;クラス&gt;-&lt;DO の ID&gt;</code> と中継役の <code>…-proxy</code> で、ラベルは無い。<code>containers</code> の <code>name</code> は Docker の名前に効かない</td><td>実測(2026-10-13。Wrangler 4.149.0・Docker Desktop 29.8.2 arm64)</td></tr>
+  <tr><td>Worker の名前とクラス名が同じ 2 つのプロジェクトを同時に動かすと、あとから動かした方が先の方のコンテナにつながる(中身の違うイメージでも、先の方の返事が返る)</td><td>実測(2026-10-13)</td></tr>
+  <tr><td><code>wrangler dev</code> を TERM で止めると、コンテナ本体は消えるが中継役は残る。イメージ <code>cloudflare-dev/&lt;クラス&gt;:&lt;起動ごとの乱数&gt;</code> は残る。出力に <code>naming to …</code> の行でイメージの名前が出る</td><td>実測(2026-10-13)</td></tr>
+  <tr><td>Durable Object の手元のデータは <code>state/v3/do/&lt;Worker の名前&gt;-&lt;クラス&gt;</code> に置かれる</td><td>実測(2026-10-13)</td></tr>
+  <tr><td>手元のイメージも <code>--platform linux/amd64</code> で作る(Apple Silicon ではまねて動く)。動いている間の Dockerfile の変化は <code>[r]</code> キーでしか作り直さない</td><td>実装(4.149.0)</td></tr>
 </table>
 </section>
 <section class="section"><h2 id="pages">この冊のページ</h2>

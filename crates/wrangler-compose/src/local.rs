@@ -51,6 +51,11 @@ impl Paths {
     fn log(&self) -> PathBuf {
         self.dir.join("logs").join("up.log")
     }
+    /// The images `wrangler dev` built for this project's containers, for
+    /// `down --purge` (DES-020).
+    fn container_images(&self) -> PathBuf {
+        self.dir.join("container-images.json")
+    }
     /// Workers taken down with `down <service>` while `up` runs.
     fn stopped(&self) -> PathBuf {
         self.dir.join("stopped.json")
@@ -260,6 +265,15 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             "there is no Worker to run"
         ));
     }
+    // Containers need Docker before anything starts (REQ-020).
+    let containers: Vec<crate::compose::Container> = workers
+        .iter()
+        .flat_map(|(_, w)| w.containers.iter().cloned())
+        .collect();
+    let prefix = configs::local_prefix(&ctx.compose);
+    if !containers.is_empty() {
+        crate::containers::check_docker()?;
+    }
     let mut builts: BTreeMap<String, Built> = BTreeMap::new();
     for (s, w) in &workers {
         if rebuild {
@@ -319,9 +333,13 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let mut configs = Vec::new();
     let gw_dir = run.join(configs::GATEWAY);
     std::fs::create_dir_all(&gw_dir)?;
+    let gw_map: Vec<(u16, String)> = port_map
+        .iter()
+        .map(|(port, svc)| (*port, configs::local_name(&ctx.compose, svc)))
+        .collect();
     configs.push(write_cfg(
         &gw_dir,
-        &configs::gateway(&gw_dir, &port_map, gateway_port)?,
+        &configs::gateway(&gw_dir, &gw_map, gateway_port)?,
     )?);
     let token = new_token()?;
     configs.push(data_config(ctx, &run, &token)?);
@@ -368,15 +386,48 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         }
     }
 
+    // Durable Object storage kept under the Worker names of earlier
+    // versions moves to the local names (DES-020); containers a run left
+    // behind go away first.
+    let moves: Vec<(String, String)> = workers
+        .iter()
+        .flat_map(|(s, w)| {
+            let local = configs::local_name(&ctx.compose, &s.name);
+            w.durable_objects
+                .iter()
+                .map(move |c| (format!("{}-{c}", s.name), format!("{local}-{c}")))
+        })
+        .collect();
+    crate::containers::move_do_state(&p.state(), &moves)?;
+    if !containers.is_empty() {
+        crate::containers::clean_up(&prefix, &p.container_images());
+    }
+
     // 5. One `wrangler dev` for everything: one runtime, so Workers sharing
     //    a resource never corrupt it (DES facts).
     std::fs::create_dir_all(p.log().parent().unwrap())?;
     let log_file = Arc::new(Mutex::new(
         OpenOptions::new().create(true).append(true).open(p.log())?,
     ));
+    let registry = containers
+        .iter()
+        .any(|k| matches!(k.image, crate::compose::Image::Registry(_)));
+    let aliases_before = if registry {
+        crate::containers::alias_listing()
+    } else {
+        String::new()
+    };
     let Some(mut child) = spawn_runtime(ctx, p, &configs, gateway_port, Some(log_file))? else {
         return Ok(Stop::Done);
     };
+    if registry {
+        let made = crate::containers::new_aliases(
+            &aliases_before,
+            &crate::containers::alias_listing(),
+            &crate::containers::registry_ids(&containers),
+        );
+        crate::containers::remember(&p.container_images(), &made)?;
+    }
 
     // 6. Forward every declared port to the gateway, then say where things
     //    are. The listeners close when this run ends, so a restart can bind
@@ -464,6 +515,7 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
     let notifier = has_notify.then(|| {
         crate::data::Client::new(format!("http://127.0.0.1:{gateway_port}"), token.clone())
     });
+    let images_from = crate::containers::inputs_stamp(&containers);
     let mut last_tick = Instant::now();
     let mut last_watch = Instant::now();
     let result = loop {
@@ -519,6 +571,15 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
             continue;
         }
         last_watch = Instant::now();
+        // Wrangler builds images only when it starts (DES-020).
+        let now_images = crate::containers::inputs_stamp(&containers);
+        if now_images != images_from {
+            say(crate::tr!(
+                "コンテナのイメージの元が変わったので、作り直して動かし直します",
+                "what a container image is built from changed; rebuilding and restarting"
+            ));
+            break Stop::Restart;
+        }
         let mut restart = false;
         let mut rebuilt = false;
         for (s, w) in &workers {
@@ -557,6 +618,9 @@ fn run_once(ctx: &Ctx, p: &Paths, services: &[&Service], rebuild: bool) -> Resul
         }
     };
     drop(child);
+    if !containers.is_empty() {
+        crate::containers::clean_up(&prefix, &p.container_images());
+    }
     stop.store(true, Ordering::SeqCst);
     for a in accepters {
         let _ = a.join();
@@ -753,6 +817,31 @@ fn notices(services: &[&Service]) {
                     w.routes.join(", ")
                 ));
             }
+            for k in &w.containers {
+                let mut set = Vec::new();
+                if k.max_instances.is_some() {
+                    set.push("max_instances");
+                }
+                if k.instance_type.is_some() {
+                    set.push("instance_type");
+                }
+                if !set.is_empty() {
+                    say(crate::tr!(
+                        "{}: コンテナ {} の {} は手元では効きません(数も大きさも本物の上限で止まりません)",
+                        "{}: container {}: {} do not apply locally (no real limits on count or size)",
+                        s.name,
+                        k.class,
+                        set.join(", ")
+                    ));
+                }
+            }
+            if !w.containers.is_empty() && cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+                say(crate::tr!(
+                    "{}: コンテナは linux/amd64 で作り、この Mac ではまねて動かすので遅くなります",
+                    "{}: containers are built for linux/amd64 and emulated on this Mac, so they run slower",
+                    s.name
+                ));
+            }
             if !w.crons.is_empty() {
                 let port = w.ports.first().map(|p| p.port).unwrap_or(8787);
                 say(crate::tr!(
@@ -894,9 +983,13 @@ fn start_runtime(
         let (ready, in_use) = (ready.clone(), in_use.clone());
         let tx = tx.clone();
         let log_file = log_file.clone();
+        let images = p.container_images();
         std::thread::spawn(move || {
             let mut f = LogFilter::default();
             for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
+                if let Some(tag) = crate::containers::image_tag_in(&line) {
+                    let _ = crate::containers::remember(&images, &[tag]);
+                }
                 if line.contains("Ready on") && !ready.swap(true, Ordering::SeqCst) {
                     let _ = tx.send(());
                 }
@@ -1106,6 +1199,12 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
     }
     if names.is_empty() {
         stop_running(&p)?;
+        if has_containers(ctx) {
+            crate::containers::clean_up(
+                &configs::local_prefix(&ctx.compose),
+                &p.container_images(),
+            );
+        }
     } else {
         stop_services(ctx, &p, names)?;
     }
@@ -1121,6 +1220,8 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
                     crate::tr!("{} を消せません", "cannot delete {}", p.state().display())
                 })?;
             }
+            // The images this project's runs built (REQ-020).
+            crate::containers::purge_images(&p.container_images())?;
         }
         Some(targets) if p.state().exists() => {
             let state = p.state();
@@ -1150,10 +1251,17 @@ pub fn down(ctx: &Ctx, purge: bool, names: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn has_containers(ctx: &Ctx) -> bool {
+    ctx.compose
+        .services
+        .iter()
+        .any(|s| matches!(&s.kind, Kind::Worker(w) if !w.containers.is_empty()))
+}
+
 /// The data a service holds or uses: its own D1 databases, R2 buckets and
 /// KV namespaces, and for a Worker, what it binds and its Durable Objects'
 /// storage (`<worker>-<Class>`).
-fn data_of(s: &Service) -> Vec<(&'static str, String)> {
+fn data_of(c: &crate::compose::Compose, s: &Service) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     match &s.kind {
         Kind::Worker(w) => {
@@ -1163,13 +1271,13 @@ fn data_of(s: &Service) -> Vec<(&'static str, String)> {
                     Target::R2(k) => out.push(("r2", k.clone())),
                     Target::Kv(k) => out.push(("kv", k.clone())),
                     Target::DurableObject { service, class } => {
-                        out.push(("do", format!("{service}-{class}")))
+                        out.push(("do", format!("{}-{class}", configs::local_name(c, service))))
                     }
                     Target::Worker(_) | Target::Queue(_) => {}
                 }
             }
             for class in &w.durable_objects {
-                out.push(("do", format!("{}-{class}", s.name)));
+                out.push(("do", format!("{}-{class}", configs::local_name(c, &s.name))));
             }
         }
         Kind::D1(l) => out.extend(l.iter().map(|r| ("d1", r.key.clone()))),
@@ -1188,7 +1296,7 @@ pub(crate) fn purge_targets(
 ) -> Result<Vec<(&'static str, String)>> {
     let mut targets: Vec<(&'static str, String)> = Vec::new();
     for s in c.services.iter().filter(|s| names.contains(&s.name)) {
-        for d in data_of(s) {
+        for d in data_of(c, s) {
             if !targets.contains(&d) {
                 targets.push(d);
             }
@@ -1199,7 +1307,7 @@ pub(crate) fn purge_targets(
         if !matches!(s.kind, Kind::Worker(_)) {
             continue;
         }
-        for d in data_of(s) {
+        for d in data_of(c, s) {
             if targets.contains(&d) {
                 shared.push(format!("{} ({})", d.1, s.name));
             }
@@ -1315,13 +1423,39 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
         );
         pending = crate::data::pending_migrations(ctx, &client).unwrap_or_default();
     }
+    // Containers are counted from Docker (REQ-020); nothing to ask when
+    // the compose file has none.
+    let prefix = configs::local_prefix(&ctx.compose);
+    let wanted: Vec<(String, String)> = ctx
+        .compose
+        .services
+        .iter()
+        .flat_map(|s| match &s.kind {
+            Kind::Worker(w) => w
+                .containers
+                .iter()
+                .map(|k| (configs::local_name(&ctx.compose, &s.name), k.class.clone()))
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    let docker = if has_containers(ctx) {
+        crate::containers::container_listing()
+    } else {
+        None
+    };
+    let (counts, strays) = match &docker {
+        Some(listing) => crate::containers::instances(listing, &prefix, &wanted),
+        None => (vec![0; wanted.len()], Vec::new()),
+    };
+    let mut next = 0;
     crate::out!(
         "{:<16} {:<8} {:<10} URL / RESOURCES",
         "SERVICE", "TYPE", "STATE"
     );
     for s in &ctx.compose.services {
         match &s.kind {
-            Kind::Worker(_) => {
+            Kind::Worker(w) => {
                 // Running only when the up runs it (not taken down by name).
                 let listed = rec
                     .as_ref()
@@ -1339,6 +1473,35 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                     state,
                     url_of(&s.name).unwrap_or_else(|| "-".into())
                 );
+                for k in &w.containers {
+                    let n = counts[next];
+                    next += 1;
+                    let state = if docker.is_none() {
+                        crate::tr!("不明", "unknown")
+                    } else if n > 0 {
+                        crate::tr!("動作中 {n}", "running {n}")
+                    } else if running && listed {
+                        // A container starts with its first request.
+                        crate::tr!("待機", "idle")
+                    } else {
+                        crate::tr!("停止", "stopped")
+                    };
+                    let image = match &k.image {
+                        crate::compose::Image::Dockerfile(f) => f
+                            .strip_prefix(ctx.root())
+                            .unwrap_or(f)
+                            .display()
+                            .to_string(),
+                        crate::compose::Image::Registry(r) => r.clone(),
+                    };
+                    crate::out!(
+                        "{:<16} {:<8} {:<10} {}",
+                        format!("{}.{}", s.name, k.class),
+                        "container",
+                        state,
+                        image
+                    );
+                }
             }
             Kind::D1(list) => {
                 let parts: Vec<String> = list
@@ -1374,6 +1537,22 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                 );
             }
         }
+    }
+    if has_containers(ctx) && docker.is_none() {
+        say(crate::tr!(
+            "Docker につながらないので、コンテナの状態は分かりません",
+            "Docker does not answer, so the containers' state is unknown"
+        ));
+    }
+    if !strays.is_empty() {
+        // Containers of this project that the compose file no longer has.
+        crate::out!(
+            "{:<16} {:<8} {:<10} {}",
+            crate::tr!("(残り)", "(left over)"),
+            "container",
+            "-",
+            strays.join(", ")
+        );
     }
     if running {
         for tool in [configs::GATEWAY, configs::DATA] {

@@ -169,6 +169,23 @@
   <li>日本語の PC では日本語、<code>NV_LANG=en</code> では英語で出る。打ち直しは環境名で進む</li>
 </ul>
 </article>
+<article class="item" id="ac-020"><h3><span class="id">AC-020</span>コンテナ <span class="refs"><a href="write.html#req-020">REQ-020</a></span></h3>
+<ul>
+  <li>コンテナ用の試験のプロジェクト(<code>tests/fixture-containers</code>。Docker の無い CI の機械でも今の試験用のプロジェクトが動くよう、分けて置く)の <code>api</code> に、Durable Object のクラス <code>Pinger</code> と、それに付けるコンテナ(Dockerfile。HTTP に決まった文字を返す)がある。<code>--env local up</code> のあと、<code>api</code> の URL から <code>Pinger</code> を通してコンテナの返事が届く</li>
+  <li>動いている手元の <code>up</code> の間に、コンテナの返す文字を Dockerfile で変えると、作り直して動かし直し、新しい文字が返る</li>
+  <li>Ctrl+C のあと、そのプロジェクトのコンテナが <code>docker ps -a</code> に残らない。<code>down</code> のあとも手元で作ったイメージは残り、<code>down --purge</code> のあとは消える</li>
+  <li>2 つのプロジェクトがそれぞれコンテナを持って同時に <code>--env local up</code> しても、片方を止める・<code>down --purge</code> しても、もう片方のコンテナとイメージは動き続ける・残る</li>
+  <li><code>image</code> にレジストリのイメージ(<code>docker.io/library/…</code>)を書いても、手元とリモートで同じに動く</li>
+  <li>リモート(試験用のアカウントの使い捨ての環境): <code>up</code> のあと、Worker から <code>Pinger</code> を通してコンテナの返事が届く。Cloudflare にあるコンテナのアプリケーションの名前は <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる</li>
+  <li>リモート: 何も変えずに 2 度目の <code>up</code> をすると、イメージを送らず、アプリケーションも変えない。Dockerfile を変えると、<code>--dry-run up</code> がそのコンテナを「変える」と示し、<code>up</code> のあと新しい文字が返る</li>
+  <li>リモート: compose ファイルからコンテナを消して <code>up</code> すると、そのアプリケーションが Cloudflare から消える。<code>down</code> のあと、その環境のアプリケーションが残らない。名前がこの環境のものでないアプリケーション(手で作ったもの)は消えない</li>
+  <li><code>--dry-run</code> はイメージを作らない(<code>docker images</code> が増えない)。<code>ps</code> はコンテナがあるかと、compose ファイルとの違いを示す</li>
+  <li>失敗: Docker を止めた PC では、<code>--env local up</code> は何も動かさずに止まり、Docker が要ると示す。Dockerfile を指すコンテナのあるリモートの <code>up</code> も、Cloudflare に触れる前に止まる</li>
+  <li>失敗: <code>durable_objects</code> に無いクラスを指す、同じクラスに 2 つ付ける、知らないキー(<code>scheduling_policy</code> など)を書く、知らない <code>instance_type</code> の名前を書く、無い Dockerfile を指す、のどれも、何もせずに止まり、場所と理由を示す</li>
+  <li>境界: <code>max_instances: 1</code> は受け、<code>0</code> は止まる。コンテナの無い compose ファイルは、Docker が無い PC でも今までどおり <code>up</code> できる</li>
+  <li>境界: 途中で止めたリモートの <code>up</code>(イメージを送る前に止める)は、どこまで済んだかを示し、もう一度の <code>up</code> でコンテナの返事が届く状態に揃う</li>
+</ul>
+</article>
 </section>
 
 <div class="footer" id="pager"></div>

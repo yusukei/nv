@@ -1,0 +1,21 @@
+# Containers in a local environment (AC-020). Needs Docker.
+name: boxes
+services:
+  api:
+    type: worker
+    build: ./api
+    compatibility_date: "2026-09-01"
+    ports: ["${API_PORT:-18790}:${API_PORT:-18790}"]
+    bindings:
+      PINGER: api.Pinger
+      ECHO: api.Echo
+    durable_objects: [Pinger, Echo]
+    containers:
+      # Built from a Dockerfile.
+      - class: Pinger
+        image: ./box/Dockerfile
+        instance_type: lite
+        max_instances: 1
+      # A registry image.
+      - class: Echo
+        image: docker.io/library/busybox:1.36

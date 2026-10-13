@@ -6,6 +6,7 @@ mod build;
 mod cf;
 mod compose;
 mod configs;
+mod containers;
 mod confirm;
 mod ctx;
 mod data;

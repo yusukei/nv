@@ -36,7 +36,7 @@ running() { grep -c 'running locally' up.out || true; }
 web=$(curl -fsS localhost:8787/)
 [[ "$web" == "web <- api hello do=1 secret=yes | file=from-api | secret=none" ]] || fail "web: $web"
 # Workers are registered in the project's own dev registry, not the machine's.
-[[ -f .wrangler/compose/local/registry/web ]] || fail "project dev registry"
+ls .wrangler/compose/local/registry/shop--*--web >/dev/null 2>&1 || fail "project dev registry"
 # Same D1 written from two Workers at once: nothing lost (AC-009).
 pids=()
 for _ in $(seq 1 100); do
