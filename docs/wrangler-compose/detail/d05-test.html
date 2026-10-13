@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D05. 引き継ぎ・試験・確かめていないこと｜wrangler-compose 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d05-test.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D05. 引き継ぎ・試験・確かめていないこと</h1>
+<p>0.1 系から引き継ぐもの、試験の分け方、作る前・受け入れの前に確かめること。DES-016・017。</p></section>
+
+<section class="section"><h2>設計</h2>
+<article class="item" id="des-016"><h3><span class="id">DES-016</span>0.1 系から引き継ぐもの</h3>
+<ul>
+  <li>引き継ぐ: <code>.env</code> の読み・git の確かめ・打ち直しの確かめ・止め方・表示の言語・D1 の書き出しと戻しと履歴の表の読み・バックアップの目録と書きかけの扱い</li>
+  <li>作り直す: 設定の読み方(compose ファイルから作る)・<code>up</code>・<code>down</code>・<code>restore</code>・コマンド</li>
+  <li>捨てる: S3 互換の API で R2 を扱う部分(データのサービスに置き換える)</li>
+  <li>0.1 系の使い方との互換は持たない。版は 0.2.0</li>
+</ul>
+</article>
+<article class="item" id="des-017"><h3><span class="id">DES-017</span>試験</h3>
+<ul>
+  <li>単体: compose ファイルの確かめ・値の展開・サービスの順・作る設定・Worker のフォルダの確かめ・Durable Objects のクラスの宣言・バックアップの目録</li>
+  <li>試験だけのための環境変数(利用者向けの README・要求には書かない。利用者の決定 2026-10-13): <code>WRANGLER_COMPOSE_NV</code>(同じフォルダ以外の nv を使う)・<code>CLOUDFLARE_API_BASE_URL</code>(Cloudflare の API の送り先を偽の API に向ける)。nv の <code>NV_HOME</code> は nv の設計(DES-002)に書く</li>
+  <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
+  <li>リモートの流れ(CI。Linux): 偽の Cloudflare の API(<code>tests/fake-cloudflare.py</code>。<code>CLOUDFLARE_API_BASE_URL</code> で道具と Wrangler の両方を向ける)に対し、新しい環境の <code>up</code>(打ち直しを含む)・2 回目は何も上げない・シークレット/受け手/クラスを消す・移行の失敗で止まる・残りの Worker・<code>ps</code>・<code>down web</code>・<code>down</code> を通す。道具の段を確かめるもので、Cloudflare の本当の振る舞いではない</li>
+  <li>リモートの本物: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
+</ul>
+</article>
+</section>
+<section class="section"><h2 id="unverified">確かめていないこと(作る前・受け入れの前に確かめる)</h2>
+<ul>
+  <li>リモートのすべて(本物の Cloudflare では一度も動かしていない。偽の API と、Cloudflare の公開の API 定義・Wrangler 4.149.0 の作りに合わせて書いた): 資源の作成と設定の答えの形、R2 の設定の比べ方(Cloudflare が足す既定の値で毎回「違う」とならないか)、<code>exports</code> での Durable Object のクラスの作成と墓標、Queue の受け手の付け外し、<code>wrangler auth token</code> の資格で各 API が通るか(ログインの権限の範囲)、<code>wrangler tail --format json</code> の出し方、データのサービスへの合言葉の入れ直しが効くまでの時間</li>
+  <li>組み立てたものを組み直さずに使えること(<code>deploy --no-bundle</code> でのリモートの展開、<code>wrangler dev</code> での手元の実行と、コードが変わったときの組み直し)</li>
+  <li>入口と中継を通しても、WebSocket・大きな本体・Server-Sent Events が届くこと</li>
+  <li>手元のログから、どの Worker の行かを見分けられること</li>
+  <li>リモートの backup・restore と <code>--purge</code>: R2 のオブジェクトの一覧の API(<code>/r2/buckets/&lt;名前&gt;/objects</code>。Wrangler 自身は使っていない)がログインの資格で呼べること。使えなければ、R2 の backup・restore・空にすることは止まる。R2 のオブジェクトの独自のメタデータ(<code>customMetadata</code>)は、リモートでは書き出し・戻しをしていない(API での渡し方を確かめていない)。D1 の <code>/raw</code> に複数の文を送ったときの答えの形</li>
+  <li>plan: Worker の設定(<code>/settings</code>)・cron(<code>/schedules</code>)・版の印(<code>/deployments</code> と <code>/versions/&lt;ID&gt;</code> の <code>workers/tag</code>)を、本物が偽の API と同じ形で返すこと</li>
+  <li>前回展開した Durable Object のクラスの一覧を Cloudflare から読めること</li>
+  <li>Windows で、中継・錠・止め方が同じに動くこと</li>
+  <li>R2 の手元の機能: Worker のバインディングからの書き込み・消去を道具のサービスが見られるか(イベント通知とロックのため)。Wrangler の手元の模擬に公開・CORS・ライフサイクル・通知・ロック・保管の種類が本当に無いか(あればそれを使う)</li>
+</ul>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

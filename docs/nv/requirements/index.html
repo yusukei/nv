@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全体像｜nv 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/requirements/index.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 要求仕様</div><h1>全体像</h1>
+<p>Node・npm を uv のように扱う道具。</p></section>
+
+<section class="section"><h2 id="purpose">何のためのものか</h2><p>コマンドの名前は <code>nv</code>(利用者の決定)。uv が Python 本体の取得・版の固定・依存の導入・実行を 1 つのコマンドにまとめているのと同じく、Node について同じことをする。
+利用者とエージェントは <code>nv</code> だけを打ち、<code>node</code>・<code>npm</code>・<code>npx</code> を直接打たない。Windows・macOS・Linux で同じ動きをする。</p></section><section class="section"><h2 id="flow">全体の流れ</h2>
+<div class="legend"><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">プロジェクト</span><span class="tool" style="background:#efedff;border-color:#5b5bd6">nv</span><span class="tool" style="background:#e6f4f8;border-color:#0e7490">~/.nv/cache</span><span class="tool" style="background:#fff4e0;border-color:#b26a00">nodejs.org</span> ／ 箱の右下は関係する要求の番号</div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 690" role="img" aria-label="nv が Node を揃えて動かす流れ"><defs><marker id="mk-nvflow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="10" y="10" width="230" height="670" rx="8" fill="#f5f8ff" stroke="#a9c4f5"/><text class="lt" x="125" y="34">プロジェクト</text><text class="ls" x="125" y="51">package.json のあるフォルダ</text>
+<rect x="250" y="10" width="230" height="670" rx="8" fill="#f7f6ff" stroke="#cbc4f5"/><text class="lt" x="365" y="34">nv</text><text class="ls" x="365" y="51">利用者とエージェントが打つ</text>
+<rect x="490" y="10" width="230" height="670" rx="8" fill="#f3f9fb" stroke="#a6d4df"/><text class="lt" x="605" y="34">~/.nv/cache</text><text class="ls" x="605" y="51">Node と道具の置き場</text>
+<rect x="730" y="10" width="240" height="670" rx="8" fill="#fffaf2" stroke="#f0d3a3"/><text class="lt" x="850" y="34">nodejs.org</text><text class="ls" x="850" y="51">Node の公式の配布物</text>
+
+<rect x="20" y="78" width="210" height="64" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="125" y="102">.node-version</text><text class="s" x="125" y="120">版を 1 か所で決める(3 つの数)</text><text class="rref" x="224" y="136">REQ-001</text>
+<path class="ar" d="M125,142 V154 H365 V164" marker-end="url(#mk-nvflow)"/>
+<rect x="260" y="166" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="190">nv sync・nv run</text><text class="s" x="365" y="208">版を読み、Node を揃える</text><text class="rref" x="464" y="224">REQ-003・004</text>
+<path class="ar" d="M365,230 V242 H850 V252" marker-end="url(#mk-nvflow)"/>
+<rect x="745" y="254" width="210" height="64" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="850" y="278">配布物を取って照らす</text><text class="s" x="850" y="296">SHASUMS256.txt と合わなければ止まる</text><text class="rref" x="949" y="312">REQ-002</text>
+<path class="ar" d="M850,318 V330 H605 V340" marker-end="url(#mk-nvflow)"/>
+<rect x="500" y="342" width="210" height="64" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="605" y="366">cache/node/&lt;版&gt;</text><text class="s" x="605" y="384">置き場に無いときだけ取る</text><text class="rref" x="704" y="400">REQ-002</text>
+<path class="ar" d="M605,406 V418 H365 V428" marker-end="url(#mk-nvflow)"/>
+<rect x="260" y="430" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="454">npm ci</text><text class="s" x="365" y="472">package-lock.json のとおりに入れる</text><text class="rref" x="464" y="488">REQ-003</text>
+<path class="ar" d="M365,494 V506 H125 V516" marker-end="url(#mk-nvflow)"/>
+<rect x="20" y="518" width="210" height="64" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="125" y="542">node_modules</text><text class="s" x="125" y="560">依存が揃う</text><text class="rref" x="224" y="576">REQ-003</text>
+<path class="ar" d="M125,582 V594 H365 V604" marker-end="url(#mk-nvflow)"/>
+<rect x="260" y="606" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="630">コマンドを動かす</text><text class="s" x="365" y="648">揃えた Node と .bin を優先する</text><text class="rref" x="464" y="664">REQ-004</text>
+<rect x="500" y="430" width="210" height="64" rx="7" fill="#fff" stroke="#0e7490" stroke-dasharray="5 4"/><text class="t" x="605" y="454">cache/npm</text><text class="s" x="605" y="472">nv が動かす npm のキャッシュ</text><text class="rref" x="704" y="488">REQ-003</text>
+<line class="ar dash" x1="470" y1="462" x2="497" y2="462" marker-end="url(#mk-nvflow)"/>
+</svg></div>
+<p class="lead">nv run は、依存が package-lock.json と合っていれば入れ直さない。nv sync は揃っていても毎回入れ直す(REQ-003・004)。</p>
+</section><section class="section"><h2 id="commands">コマンド体系</h2>
+<table>
+  <tr><th style="width:38%">コマンド</th><th>すること</th><th style="width:12%">条項</th></tr>
+  <tr><td><code>nv sync</code></td><td>Node を揃え、<code>package-lock.json</code> のとおりに依存を入れる</td><td><a href="node.html#req-003">REQ-003</a></td></tr>
+  <tr><td><code>nv run &lt;コマンド&gt; [引数…]</code></td><td>揃えた Node・npm・<code>node_modules/.bin</code> でコマンドを動かす(足りなければ先に揃える)</td><td><a href="node.html#req-004">REQ-004</a></td></tr>
+  <tr><td><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code><br><code>[--node &lt;版&gt;]</code></td><td>プロジェクトに入れずに道具を 1 回動かす</td><td><a href="node.html#req-005">REQ-005</a></td></tr>
+  <tr><td><code>nv add &lt;パッケージ&gt;[@版]… [--dev] [--exact]</code></td><td>依存を足し、<code>package.json</code> と <code>package-lock.json</code> に書く</td><td><a href="node.html#req-012">REQ-012</a></td></tr>
+  <tr><td><code>nv remove &lt;パッケージ&gt;…</code></td><td>依存を外し、<code>package.json</code> と <code>package-lock.json</code> から消す</td><td><a href="node.html#req-012">REQ-012</a></td></tr>
+  <tr><td><code>nv node list</code></td><td>置き場にある Node の版を並べる</td><td><a href="node.html#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node list --remote [&lt;系列&gt;] [--all] [--lts]</code></td><td>入れられる Node の版を並べる(既定は系列ごとの最新)</td><td><a href="node.html#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node install &lt;版&gt;</code></td><td>その版の Node を取る</td><td><a href="node.html#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv node uninstall &lt;版&gt;</code></td><td>その版の Node を置き場から消す</td><td><a href="node.html#req-006">REQ-006</a></td></tr>
+  <tr><td><code>nv install skill</code></td><td>Claude Code と Codex に、nv と wrangler-compose のスキルを入れる(利用者全体)</td><td><a href="tool.html#req-008">REQ-008</a></td></tr>
+  <tr><td><code>nv uninstall skill</code></td><td>nv が入れたスキルを消す</td><td><a href="tool.html#req-008">REQ-008</a></td></tr>
+  <tr><td><code>nv self update [--check]</code></td><td>nv と wrangler-compose を最新の版に入れ替える(<code>--check</code> は調べるだけ)</td><td><a href="tool.html#req-010">REQ-010</a></td></tr>
+</table>
+<p>Node の版はプロジェクトの <code>.node-version</code> が決める(<a href="node.html#req-001">REQ-001</a>)。コマンドに版を渡すのは、プロジェクトの外で使う <code>nv x --node</code> と <code>nv node</code> だけ。</p>
+</section><section class="section"><h2 id="req-list">要求の一覧</h2><p class="lead">番号を押すと本文へ移る。右は載っているページ。</p><div class="rqbox"><ul class="rq">
+<li><a class="rid" href="node.html#req-001">REQ-001</a><span class="rt">Node の版の固定</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="node.html#req-002">REQ-002</a><span class="rt">Node の取得</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="node.html#req-003">REQ-003</a><span class="rt">sync(依存を揃える)</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="node.html#req-004">REQ-004</a><span class="rt">run(揃えた環境で動かす)</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="node.html#req-005">REQ-005</a><span class="rt">x(プロジェクトに入れずに道具を動かす)</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="node.html#req-006">REQ-006</a><span class="rt">Node の版の管理</span><span class="rs">01. Node と依存</span></li>
+<li><a class="rid" href="tool.html#req-007">REQ-007</a><span class="rt">利用者の環境に手を出さない</span><span class="rs">02. 道具としての決まり</span></li>
+<li><a class="rid" href="tool.html#req-008">REQ-008</a><span class="rt">エージェント用のスキル</span><span class="rs">02. 道具としての決まり</span></li>
+<li><a class="rid" href="tool.html#req-009">REQ-009</a><span class="rt">配り方</span><span class="rs">02. 道具としての決まり</span></li>
+<li><a class="rid" href="tool.html#req-010">REQ-010</a><span class="rt">更新</span><span class="rs">02. 道具としての決まり</span></li>
+<li><a class="rid" href="tool.html#req-011">REQ-011</a><span class="rt">表示の言語</span><span class="rs">02. 道具としての決まり</span></li>
+<li><a class="rid" href="node.html#req-012">REQ-012</a><span class="rt">add・remove(依存を足す・外す)</span><span class="rs">01. Node と依存</span></li>
+</ul></div></section>
+<section class="section"><h2 id="pages">この冊のページ</h2>
+<div class="idxgrid">
+<a class="idxcard" href="node.html"><div class="idxnum">要求</div><h3>01. Node と依存</h3><p>Node の版の固定と取得、依存を揃える・足す・外す、揃えた環境で動かす。REQ-001〜006・REQ-012。</p></a>
+<a class="idxcard" href="tool.html"><div class="idxnum">要求</div><h3>02. 道具としての決まり</h3><p>利用者の環境・エージェント用のスキル・配り方・更新・表示の言語と、範囲外。REQ-007〜011。</p></a>
+<a class="idxcard" href="basis.html"><div class="idxnum">確認</div><h3>決定と用語</h3><p>すべての要求のもとになる利用者の決定と用語。</p></a>
+<a class="idxcard" href="acceptance.html"><div class="idxnum">確認</div><h3>受け入れ条件</h3><p>確かめは Windows x64 と macOS arm64 の両方で行う。Windows では PowerShell と cmd の両方から打つ。</p></a>
+</div>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

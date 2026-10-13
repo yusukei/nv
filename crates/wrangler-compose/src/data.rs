@@ -845,7 +845,7 @@ fn dump_d1(client: &Client, db: &str, dest: &Path) -> Result<u64> {
                 .is_some_and(|s| s.to_uppercase().starts_with("CREATE VIRTUAL"))
     }) {
         bail!(crate::tr!(
-            "D1 {db} の表 {name} は仮想表(FTS など)なので控えられません",
+            "D1 {db} の表 {name} は仮想表(FTS など)なのでバックアップできません",
             "D1 {db}: table {name} is a virtual table (FTS etc.), which cannot be backed up"
         ));
     }
@@ -1232,7 +1232,7 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
     crate::git::require_ignored(
         ctx.root(),
         &dir,
-        crate::tr!("控えの書き出し先", "the backup folder").as_str(),
+        crate::tr!("バックアップの書き出し先", "the backup folder").as_str(),
     )?;
     let list = resources(&ctx.compose);
     if ctx.dry_run {
@@ -1321,7 +1321,7 @@ pub fn backup(ctx: &crate::ctx::Ctx, client: &Client, dest: Option<PathBuf>) -> 
     fs::write(&tmp, serde_json::to_vec_pretty(&manifest)?)?;
     fs::rename(&tmp, dir.join(MANIFEST))?;
     say(crate::tr!(
-        "控えました: {}",
+        "バックアップしました: {}",
         "backed up to {}",
         dir.display()
     ));
@@ -1332,7 +1332,7 @@ pub fn read_manifest(dir: &Path) -> Result<Value> {
     let path = dir.join(MANIFEST);
     if !path.is_file() {
         bail!(crate::tr!(
-            "{} に {MANIFEST} がありません。控えではないか、書き出しが終わっていません(何もしていません)",
+            "{} に {MANIFEST} がありません。バックアップではないか、書き出しが終わっていません(何もしていません)",
             "{} has no {MANIFEST}: it is not a backup, or the backup did not finish (nothing was done)",
             dir.display()
         ));
@@ -1364,7 +1364,7 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
         let key = e["key"].as_str().unwrap_or_default();
         if !have.iter().any(|(ht, hk)| *ht == t && hk == key) {
             bail!(crate::tr!(
-                "控えの {t} {key} に当たるものが compose ファイルにありません(何もしていません)",
+                "バックアップの {t} {key} に当たるものが compose ファイルにありません(何もしていません)",
                 "the backup's {t} {key} has no match in the compose file (nothing was done)"
             ));
         }
@@ -1395,14 +1395,14 @@ pub fn plan_restore(c: &Compose, from: &Path) -> Result<RestorePlan> {
                     .all(|c| matches!(c, std::path::Component::Normal(_)));
             if !inside {
                 bail!(crate::tr!(
-                    "控えの目録が、控えのフォルダの外のファイル {rel} を指しています(何もしていません)",
+                    "バックアップの目録が、バックアップのフォルダの外のファイル {rel} を指しています(何もしていません)",
                     "the backup's manifest points outside the backup folder: {rel} (nothing was done)"
                 ));
             }
             let path = from.join(&rel);
             if sha256_file(&path).ok().as_deref() != Some(sha.as_str()) {
                 bail!(crate::tr!(
-                    "控えの {} が無いか、目録と合いません(何もしていません)",
+                    "バックアップの {} が無いか、目録と合いません(何もしていません)",
                     "{} in the backup is missing or does not match the manifest (nothing was done)",
                     path.display()
                 ));
@@ -1525,7 +1525,7 @@ pub fn load(client: &Client, plan: &RestorePlan, from: &Path) -> Result<()> {
                     let value = base64_lite::decode(v["value"].as_str().unwrap_or_default())
                         .ok_or_else(|| {
                             anyhow!(crate::tr!(
-                                "KV {key} の控えが壊れています",
+                                "KV {key} のバックアップが壊れています",
                                 "KV {key}'s backup is damaged"
                             ))
                         })?;

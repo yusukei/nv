@@ -4,8 +4,8 @@ Node・npm を uv のように扱う `nv` と、Cloudflare Workers の環境を 
 
 | コマンド | 受け持つもの | 持たないもの | 要求仕様 |
 |---|---|---|---|
-| `nv` | Node・npm を uv のように扱う(Node の版の固定と取得、`sync`・`run`・`x`、スキル、`self update`) | Cloudflare に触れること・Wrangler を動かすこと | [docs/nv](docs/nv/requirements.html) |
-| `wrangler-compose` | 手元で開発した Workers のサービス群を docker compose のように動かし、リモートへ展開する(`--env <環境名> up / build / down [--purge] / ps / logs / backup / restore`) | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements.html) |
+| `nv` | Node・npm を uv のように扱う(Node の版の固定と取得、`sync`・`run`・`x`、スキル、`self update`) | Cloudflare に触れること・Wrangler を動かすこと | [docs/nv](docs/nv/requirements/index.html) |
+| `wrangler-compose` | 手元で開発した Workers のサービス群を docker compose のように動かし、リモートへ展開する(`--env <環境名> up / build / down [--purge] / ps / logs / backup / restore`) | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements/index.html) |
 
 ## 2 つの境目
 
@@ -95,8 +95,8 @@ wrangler-compose --env staging logs api
 wrangler-compose --env staging down
 ```
 
-リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/local-support.html](docs/wrangler-compose/local-support.html) にある。
+リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/detail/local-support.html](docs/wrangler-compose/detail/local-support.html) にある。
 
 ## 進め方
 
-仕様書は HTML で、ブラウザで [docs/index.html](docs/index.html) を開いて読む。要求仕様と受け入れ条件(`docs/<コマンド>/requirements.html`・`acceptance.html`)を決めてから、設計とコードに入る。nv から作る(wrangler-compose は nv に頼る)。
+仕様書は HTML で、ブラウザで [docs/index.html](docs/index.html) を開いて読む。要求仕様と受け入れ条件(`docs/<コマンド>/requirements/`)を決めてから、設計とコードに入る。nv から作る(wrangler-compose は nv に頼る)。

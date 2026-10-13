@@ -1440,7 +1440,7 @@ pub fn backup(ctx: &Ctx, dest: Option<PathBuf>) -> Result<()> {
 pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
     let plan = crate::data::plan_restore(&ctx.compose, from)?;
     say(crate::tr!(
-        "{} の控え(環境 {})を {} へ戻します",
+        "{} のバックアップ(環境 {})を {} へ戻します",
         "restoring the backup {} (taken from environment {}) into {}",
         from.display(),
         plan.from_env,
@@ -1480,7 +1480,7 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
             crate::confirm::retype_env(
                 &ctx.env,
                 &crate::tr!(
-                    "いまの中身を消して控えに入れ替える",
+                    "いまの中身を消してバックアップに入れ替える",
                     "replace the current contents with the backup"
                 ),
             )?;
@@ -1489,13 +1489,13 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
         // half-way puts it back instead of leaving half of each.
         let before = if drop && !full.is_empty() {
             say(crate::tr!(
-                "失敗したときに戻せるよう、いまの中身を控えます",
+                "失敗したときに戻せるよう、いまの中身をバックアップします",
                 "keeping the current contents, to put back if this fails"
             ));
             let dir =
                 crate::data::backup(ctx, c, Some(Paths::new(ctx).dir.join("before-restore")))?;
             say(crate::tr!(
-                "いまの中身を {} に控えました",
+                "いまの中身を {} にバックアップしました",
                 "the current contents are kept in {}",
                 dir.display()
             ));
@@ -1532,13 +1532,13 @@ pub fn restore(ctx: &Ctx, from: &Path, drop: bool) -> Result<()> {
             }
             if let Some(dir) = &before {
                 say(crate::tr!(
-                    "元の中身に戻しました(控え: {})",
+                    "元の中身に戻しました(バックアップ: {})",
                     "the previous contents are back (kept in {})",
                     dir.display()
                 ));
             }
             bail!(crate::tr!(
-                "控えを戻せませんでした(中身は戻す前のままです)",
+                "バックアップを戻せませんでした(中身は戻す前のままです)",
                 "the backup was not restored (the contents are as before)"
             ));
         }

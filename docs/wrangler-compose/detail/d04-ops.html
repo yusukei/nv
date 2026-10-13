@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D04. down・ps・logs・backup・restore・dry-run｜wrangler-compose 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d04-ops.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D04. down・ps・logs・backup・restore・dry-run</h1>
+<p>下ろす・見る・バックアップする・戻す・確かめる。DES-012〜015。</p></section>
+
+<section class="section"><h2>設計</h2><article class="item" id="des-012"><h3><span class="id">DES-012</span>down <span class="refs"><a href="../requirements/commands.html#req-011">REQ-011</a></span></h3>
+<ul>
+  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる</li>
+  <li>リモートでは消す前に中身を数えない(名前だけを示す)。打ち直しは 0.1 系のものを引き継ぐ</li>
+  <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>down web</code> のように名前を付けると、動いている <code>up</code> がその Worker を外して動かし直し、ほかは動き続ける(データのサービスは手元では止めるものが無い)。下ろした Worker は、もう一度 <code>up</code>(<code>up web</code>)を打つと動いている <code>up</code> に戻る。下ろしたものが無いときの 2 つ目の <code>up</code> は止まる。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す。サービスを名前で指すと、そのサービスの資源とつなぐ資源(Durable Object の保存先を含む)だけを空にし、名前に無い Worker もつながる資源があれば、何も止めず何も消さずに止まる</li>
+</ul>
+</article>
+<article class="item" id="des-013"><h3><span class="id">DES-013</span>ps・logs <span class="refs"><a href="../requirements/commands.html#req-012">REQ-012</a></span></h3>
+<ul>
+  <li><code>ps</code>(リモート): Worker・資源は DES-004 の一覧、未適用の移行は D1 の履歴の表を API で <code>SELECT</code> で読む。compose に無い Worker は「残り」として出す。手元: 動いている記録と URL</li>
+  <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す(手元の受け手と同じ形)。過去のログは読めないので、<code>-f</code> が無くても今から追う。手元: <code>up</code> が書く <code>.wrangler/compose/local/logs/up.log</code> を読む(<code>-f</code> なら追う)</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">backup・restore の受け渡し</h4>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 280" role="img" aria-label="backup と restore の受け渡し"><defs><marker id="mk7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<text class="sec" x="20" y="26">その環境の中</text>
+<rect x="20" y="40" width="260" height="70" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="150" y="64">手元: データのサービス(wc-data)</text><text class="s" x="150" y="82">D1・R2・KV をその環境の中から</text><text class="s" x="150" y="98">書き出し・読み込む</text><text class="rref" x="274" y="104">DES-011</text>
+<rect x="20" y="150" width="260" height="70" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="150" y="174">リモート: Cloudflare の API</text><text class="s" x="150" y="192">Wrangler のログインの資格で</text><text class="s" x="150" y="208">D1・KV・R2 を読み書きする</text><text class="rref" x="274" y="214">DES-014</text>
+<path class="ar" d="M283,75 H320 V120 H357" marker-start="url(#mk7)" marker-end="url(#mk7)"/>
+<path class="ar" d="M283,185 H320 V140 H357" marker-start="url(#mk7)" marker-end="url(#mk7)"/>
+<rect x="360" y="95" width="240" height="70" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="480" y="120">wrangler-compose</text><text class="s" x="480" y="138">バックアップのファイルとの受け渡しだけ</text><text class="s" x="480" y="154">名前がその環境のものだけを扱う</text><text class="rref" x="594" y="160">DES-014</text>
+<line class="ar" x1="603" y1="130" x2="677" y2="130" marker-start="url(#mk7)" marker-end="url(#mk7)"/>
+<rect x="680" y="20" width="280" height="240" rx="10" fill="#fff" stroke="#5b6573"/><text class="t" x="820" y="46">バックアップのフォルダ</text><text class="s" x="820" y="64">既定は backups/&lt;環境&gt;/&lt;日時&gt;/</text>
+<line x1="696" y1="78" x2="944" y2="78" stroke="#e3e5f8"/>
+<text class="mono" x="700" y="104">manifest.json</text><text class="lbl" x="700" y="122">最後に書く。資源ごとの型・ファイル・SHA-256</text>
+<text class="mono" x="700" y="152">d1/&lt;key&gt;.jsonl</text><text class="lbl" x="700" y="170">表の作り・行・索引など</text>
+<text class="mono" x="700" y="200">r2/&lt;key&gt;/</text><text class="lbl" x="700" y="218">オブジェクトとメタデータ</text>
+<text class="mono" x="700" y="242">kv/&lt;key&gt;.jsonl</text><text class="lbl" x="800" y="242">キー・値・期限</text>
+</svg></div></div>
+<article class="item" id="des-014"><h3><span class="id">DES-014</span>backup・restore <span class="refs"><a href="../requirements/commands.html#req-013">REQ-013</a></span></h3>
+<ul>
+  <li>手元は、D1・R2・KV のどれも、データのサービスで、その環境の中から書き出し・読み込む(手元で <code>up</code> が動いている最中に別のプロセスから D1 を書き出す・戻すと、同時の書き込みで失敗するため。SQLITE_BUSY。実測)。リモートは、Wrangler 自身がログインの資格で呼ぶ Cloudflare の API で読み書きする(D1 は <code>/raw</code> と <code>/query</code>。値を SQL に書き込んだ文をまとめて 1 回で送り、D1 は 1 つの batch として実行する。KV は <code>keys</code>・<code>values</code>・<code>metadata</code>・<code>bulk</code>。R2 はオブジェクトの一覧・取得・書き込み・消去)。どちらも、名前がその環境のもの(REQ-006)だけを扱い、まだ無いものがあれば先に <code>up</code> するよう示して止まる。道具はバックアップのファイルとの受け渡しだけを行う</li>
+  <li>バックアップの形(<code>format: 3</code>。環境によらず同じ): <code>manifest.json</code>(最後に書く。無いフォルダは書きかけ)に <code>project</code>・<code>environment</code>・<code>created</code>・資源ごとの <code>type</code>・<code>key</code>・ファイルと SHA-256。D1 は <code>d1/&lt;key&gt;.jsonl</code>(表の作り・行・索引など。1 行 1 つの JSON。BLOB は base64)、R2 は <code>r2/&lt;key&gt;/</code> にオブジェクトとメタデータ、KV は <code>kv/&lt;key&gt;.jsonl</code>(キー・値(base64)・メタデータ・期限)</li>
+  <li>戻すときは、資源の名前と型で compose ファイルに照らし、すべてのファイルの SHA-256 を確かめてから始める。D1 は表の作り → 行(50 行ずつ。外部キーは確かめを後回しにする)→ 索引などの順に入れ、最後にバックアップのあとの移行を当てる(移行の SQL の分け方は Wrangler の <code>unstable_splitSqlQuery</code>)。KV は戻す時点で期限が切れたものを戻さない</li>
+  <li>D1 は、すべての表と AUTOINCREMENT の数え(<code>sqlite_sequence</code>)を 1 つの batch(1 つのトランザクション)で読むので、<code>up</code> が動いている最中のバックアップも 1 つの時点のものになる。生成列は書き出さない(入れるときに計算し直される)。整数の主キーを持たない表は、隠れた rowid も残す</li>
+  <li>JSON では正しく運べない値(2^53 を超える整数、整数に見える実数・無限大、印の文字で始まる文字列、BLOB(16 進で書き、戻すときに <code>unhex</code>))は、印(文字コード 1)を付けた文字列で書き、戻すときに <code>CAST</code> で元の型に戻す</li>
+  <li><code>restore --drop</code> は消す前にいまの中身を <code>.wrangler/compose/&lt;環境&gt;/before-restore/</code> にバックアップし、途中で失敗すれば消してバックアップを戻す(成功すればバックアップは消す)。空の先への <code>restore</code> が失敗したときは空に戻す</li>
+  <li>D1 の仮想表(FTS など)はバックアップできない(止まって示す)</li>
+  <li>手元で <code>up</code> が動いていなければ、操作の間だけ入口とデータのサービスだけの実行環境を立てる</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">どの操作も 3 段</h4><div class="steps">
+<div class="step"><div class="n">1</div><div class="t">確かめ</div><div class="d">止まる条件は本番と同じ</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">2</div><div class="t">することの一覧を作る</div><div class="d">--dry-run はここで示して終わる</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">3</div><div class="t">変える</div><div class="d">消すものがあれば先に打ち直し</div></div>
+</div></div>
+<article class="item" id="des-015"><h3><span class="id">DES-015</span>dry-run と確かめ <span class="refs"><a href="../requirements/commands.html#req-014">REQ-014</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
+<ul>
+  <li>どの操作も「確かめ → することの一覧を作る → 変える」の 3 段にし、<code>--dry-run</code> は 2 段目で一覧を示して終わる(止まる条件を本番と別に書かない)</li>
+  <li>消すものを含む一覧は、変える前に環境名の打ち直しで確かめる(端末でなければ止まる)</li>
+  <li>リモートの <code>up</code> の一覧は terraform plan の形にする: 2 段目で Cloudflare にいまある値を読み(資源の一覧・バケットの設定・Worker の設定(bindings・environment・互換日付)・スケジュール(crons)・経路(routes)・シークレットの名前・版の印・D1 の移行の履歴)、compose ファイルから作る値と比べて、<code>+</code> 作る・<code>~</code> 変える(項目ごとに前と後)・<code>-</code> 消す・<code>=</code> 変わらない、と数を示す。<code>--dry-run</code> はここで終わる。<code>up</code> は確かめを求めずに 3 段目に進む(初めての環境と消すものがあるときの打ち直しは今までどおり)</li>
+  <li>コードの違い: 展開のときに組み立てたもののハッシュを Worker の版の印(<code>wrangler deploy --tag</code>)に入れ、次の一覧で読み戻して比べる。この PC の記録には頼らないので、どの PC からでも同じ結果になる。シークレットは Cloudflare が値を返さないので、名前の増減だけを比べる</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

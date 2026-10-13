@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>決定と用語｜wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/basis.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>決定と用語</h1>
+<p>すべての要求のもとになる定義、docker compose から受け継ぐ理念、利用者の決定、用語。</p></section>
+
+<section class="section"><h2 id="definition">定義</h2>
+<div class="box decision">
+<p>(利用者の決定。すべての要求はこの定義から決める。定義するのはここまで)</p>
+<ol>
+  <li><strong>wrangler-compose は、docker compose のように「手元(<code>local</code>)で開発したサービス」を、安全に「リモート(Cloudflare の環境)へ展開する」ためのもの。</strong></li>
+  <li><strong>wrangler-compose は、内部では Wrangler が稼働している。</strong></li>
+  <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、プロジェクト(compose ファイル)の単位で分離している。</strong></li>
+  <li><strong>wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は <code>wrangler login</code> で付与される API のみとする。</strong>(2026-10-13)</li>
+</ol>
+<p>これをどう使うかは、使うアプリの側の責任である。</p>
+</div>
+</section>
+<section class="section"><h2 id="principles">理念(docker compose から)</h2>
+<ul>
+  <li><strong>ファイルが唯一の正</strong>: アプリの構成は compose ファイルだけが持つ。compose ファイルとコードと <code>.env.&lt;環境&gt;</code> があれば、どこでも同じものが建つ</li>
+  <li><strong>コマンド 1 つで揃う</strong>: 書いたあとは <code>up</code> だけで動く。人が手で行う段取りを持たない</li>
+  <li><strong>宣言した状態に合わせる</strong>: <code>up</code> は何度打っても同じ結果になり、変わったところだけを変える</li>
+  <li><strong>作り直せるものとデータを分ける</strong>: <code>down</code> はデータを残し、データは明示したときだけ消す</li>
+  <li><strong>論理名で書き、名前で呼び合う</strong>: compose ファイルにはサービスの名前だけを書き、サービスは互いを名前で指す。実際の名前は道具が決める</li>
+  <li><strong>環境を混ぜない</strong>: 1 つの環境のものは、すべてその環境の中で動く。手元のものがリモートの資源に触れることも、その逆もない</li>
+  <li><strong>1 つの compose ファイルが 1 つの塊</strong>: 1 つの compose ファイル(プロジェクト)は、それだけで完結した 1 つの塊として動く。その中のサービスは、compose ファイルに書いたつながり(<code>bindings</code>・<code>consumes</code>)で、互いの資源(D1・R2・KV・Queue・Worker の呼び出し)を使う。塊の外(別の compose ファイル・別のプロジェクト)のものとは、資源を一切共有しない。プロセス・待ち受けのポート・データの置き場・Worker の呼び出し先の登録(Wrangler の dev registry)も共有しない(docker compose のプロジェクトどうしが混ざらないのと同じ)</li>
+</ul>
+</section>
+<section class="section"><h2 id="decisions">決定(利用者)</h2>
+<div class="box decision">
+<ul>
+  <li>定義: docker compose のように手元で開発したサービスを、安全にリモートへ展開するためのもの(最も重要)</li>
+  <li>コマンドと書式は docker compose に合わせる。勝手に足したり変えたりしない</li>
+  <li>何ができるべきかから決め、中で使う道具の都合で要求を変えない</li>
+  <li>人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない</li>
+  <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code></li>
+  <li>主に使うのは Workers・D1・R2・KV・Queues・Durable Objects・シークレット。使うものだけを作り、作るものは本物と互換にする</li>
+  <li>手元では、ふつうのプロダクトを作るのに無いと困る機能を本物と同じに提供する。ほとんど使わない機能は再現しない</li>
+  <li>Cloudflare の操作には Wrangler と Cloudflare の API を使う。使える API は <code>wrangler login</code> で付与される API のみ(2026-10-13。2026-10-12 の決定を改める)</li>
+  <li>リモートの環境の Worker は、利用者のサービスのものだけ(2026-10-12)</li>
+  <li>環境の違いは、compose ファイルの中の変数(<code>${VAR}</code>)を <code>.env.&lt;環境&gt;</code> から展開して表す。切り替えの口は <code>--env</code> 1 つ</li>
+  <li>手元とリモートを混ぜない。1 つの環境のものは、すべてその環境の中で動かす</li>
+  <li>1 つの compose ファイルが 1 つの塊。中のサービスはつながり(<code>bindings</code>・<code>consumes</code>)で互いの資源を使い、塊の外(別の compose ファイル・別のプロジェクト)とは、プロセス・ポート・データの置き場・Worker の呼び出し先の登録を含めて資源を一切共有しない(2026-10-12)</li>
+  <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
+  <li>シークレットは Worker ごとのシークレットとして入れる</li>
+  <li>r2 のサービスにも <code>ports</code> を書ける。そのポートが手元の R2 の口(S3 互換の API とバケットの CORS・公開の URL)になる</li>
+  <li>実際の名前は、道具がプロジェクトと環境の名前を前に付けて決める(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code>)。名前は <code>name</code> に書き、省けばサービスの名前(利用者の決定 2026-10-13)</li>
+  <li>1 つのサービスは 1 つの Worker か 1 つの資源。同じ型の資源を増やすときはサービスを足す(利用者の決定 2026-10-13「名前で指定すれば良いだけ」)</li>
+  <li>R2 のバケットの設定(公開・CORS・ライフサイクル・通知・ロック・保管の種類)は compose ファイルの r2 のサービスに書き、手元にもリモートにも同じに入れる</li>
+  <li><code>down</code> はデータを残し、データは <code>--purge</code> のときだけ消す。手元の <code>--purge</code> も、リモートと同じく環境名を打ち直して確かめる</li>
+  <li>Queue の受け手の細かい設定は今は持たず、Cloudflare の既定に任せる</li>
+  <li>Node・npm の扱いは nv が受け持つ。GitHub の Release で nv と一緒に配り、更新とエージェント用のスキルは nv に寄せる</li>
+</ul>
+</div>
+</section>
+<section class="section"><h2 id="terms">用語</h2>
+<table>
+  <tr><th style="width:22%">語</th><th>意味</th></tr>
+  <tr><td>compose ファイル</td><td><code>wrangler-compose.yaml</code>。アプリの構成を書く唯一のファイル</td></tr>
+  <tr><td>プロジェクト</td><td>compose ファイルのあるフォルダと、その中のすべて。名前は compose ファイルの <code>name</code></td></tr>
+  <tr><td>サービス</td><td>compose ファイルの <code>services</code> の 1 つ。型(<code>type</code>)を持つ</td></tr>
+  <tr><td>環境</td><td>建てる先。<code>local</code>(この PC)か、リモートの環境(<code>staging</code>・<code>production</code>・<code>pr-123</code> など、名前は自由)</td></tr>
+  <tr><td>組み立てたもの</td><td><code>build</code> が Worker のコードから作るもの。docker のイメージに当たり、環境によらず同じ</td></tr>
+  <tr><td>作り直せるもの</td><td>Worker。compose ファイルとコードから <code>up</code> で同じものができる</td></tr>
+  <tr><td>データ</td><td>D1・R2・KV・Queue の中身と、Durable Objects の中身。作り直せない</td></tr>
+</table>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

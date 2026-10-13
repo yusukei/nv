@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D01. compose ファイルを読み、設定を作る｜wrangler-compose 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d01-read.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D01. compose ファイルを読み、設定を作る</h1>
+<p>compose ファイルを読み、値を展開し、実際の名前を決め、Wrangler に渡す設定を作るまで。DES-001〜006。</p></section>
+
+<section class="section"><h2>設計</h2><div class="figs"><h4 class="figttl">作りの流れ</h4><div class="steps">
+<div class="step"><div class="n">DES-002</div><div class="t">compose ファイルを読む</div><div class="d">確かめてから型のある形へ</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">DES-003</div><div class="t">値を展開する</div><div class="d">環境変数 → .env.&lt;環境&gt;</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">DES-002</div><div class="t">サービスの順を決める</div><div class="d">つながりと depends_on</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">DES-005</div><div class="t">中で使う設定を作る</div><div class="d">環境ごと・Worker ごと</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">DES-001</div><div class="t">Wrangler を動かす</div><div class="d">nv run wrangler …</div></div>
+</div></div>
+<article class="item" id="des-001"><h3><span class="id">DES-001</span>作りの全体 <span class="refs"><a href="../requirements/write.html#req-001">REQ-001</a>・<a href="../requirements/write.html#req-007">REQ-007</a>・<a href="../requirements/common.html#req-019">REQ-019</a></span></h3>
+<ul>
+  <li>流れ: compose ファイルを読む(DES-002) → 値を展開する(DES-003) → サービスの順を決める → 環境ごとに中で使う設定を作る(DES-005) → Wrangler を <code>nv run wrangler …</code> で動かす</li>
+  <li>道具が作るものは、すべてプロジェクトの <code>.wrangler/compose/</code> の下に置く(組み立てたもの・中で使う設定・名前の記録・手元のデータ・手元のログ)。プロジェクトのファイルは書き換えない</li>
+  <li>Wrangler は <code>context</code>(省けば compose ファイルのあるフォルダ)の <code>package.json</code> の版を使い、<code>nv run</code> をそのフォルダで動かす。組み立ての見分けに入れるロックファイルも同じフォルダのもの。Worker のフォルダに別の <code>package.json</code> があれば、組み立ての前にそこで <code>nv sync</code> を動かす</li>
+</ul>
+</article>
+<article class="item" id="des-002"><h3><span class="id">DES-002</span>compose ファイルを読む <span class="refs"><a href="../requirements/write.html#req-001">REQ-001</a>・<a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/write.html#req-003">REQ-003</a></span></h3>
+<ul>
+  <li>YAML を読むクレートを 1 つ足す(<code>serde-saphyr</code> か <code>serde_yaml_ng</code>。作る時点で手入れが続いている方)。手入れの止まった <code>serde_yaml</code> は使わない</li>
+  <li>値の木に読み、自前で確かめてから型のある形へ移す(<code>x-</code> を許しつつ知らないキーで止まるため)。止まるときは場所と理由を示す</li>
+  <li>サービスの <code>environment</code>・<code>secrets</code> は、値を展開する前に「名前: 値」の対応表へそろえる(並びの <code>NAME=値</code> は値、名前だけは <code>${NAME}</code>)。シークレットは書いたままの値に変数の参照が無ければ止める(値を表に出さない)</li>
+  <li>1 つのサービスは 1 つの資源。中では資源の並び(1 つ)として持つ。<code>buckets</code> などの複数形のキーは、サービスを分けるよう示して止める</li>
+  <li>サービスの順: <code>bindings</code>・<code>consumes</code> の相手と <code>depends_on</code> を依存として並べる(決まらないところはファイルの順。輪は止まる)。<code>up</code> に名前を渡せば依存をたどった集まり、<code>down</code> は渡した名前だけ</li>
+</ul>
+</article>
+<article class="item" id="des-003"><h3><span class="id">DES-003</span>値の展開 <span class="refs"><a href="../requirements/write.html#req-004">REQ-004</a>・<a href="../requirements/write.html#req-005">REQ-005</a></span></h3>
+<ul>
+  <li>道具の変数(<code>WC_R2_…_S3</code>)は、展開の時点ではまだ実際の名前が決まらないので、目印の文字で囲んだ仮の値にしておく。サービスを読み終えたあと、Worker の <code>environment</code> の値の中の目印だけを接続先に置き換える。鍵の変数(<code>WC_R2_…_S3_KEY</code>・<code>_S3_SECRET</code>)は同じ目印で <code>secrets</code> の値の中だけを置き換える。目印が置ける場所(接続先は <code>environment</code>、鍵は <code>secrets</code>)の外に残っていれば止める。手元の鍵は <code>.wrangler/compose/local/s3-keys.json</code> から読み、無ければ読み込むときに乱数(鍵 10 バイト・秘密 32 バイト)で作る。ファイルに書く(0600)のは <code>up</code> だけ(<code>--dry-run</code> は何も変えない)。リモートでは鍵の変数に値が無いので、<code>${変数:-…}</code> の既定として使われずに残れば止める。リモートの実際の名前は DES-004 と同じ決め方(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;name、無ければサービスの名前&gt;</code>)、アカウントは <code>.env.&lt;環境&gt;</code> の <code>CLOUDFLARE_ACCOUNT_ID</code></li>
+  <li>docker compose の展開の決まり(<code>${VAR}</code>・<code>${VAR:-既定}</code>・<code>${VAR-既定}</code>・<code>${VAR:?説明}</code>・<code>${VAR?説明}</code>・<code>$VAR</code>・<code>$$</code>)を自前で書く。展開するのは文字列の値だけで、型の確かめの前に行う</li>
+  <li>値は環境変数 → <code>.env.&lt;環境&gt;</code>。無い変数は集めてからまとめて示す(シークレットの変数も同じ一覧に入れる)。<code>$5</code>・<code>${}</code>・閉じていない <code>${</code> など書き方の誤りは、docker compose と同じく止める(<code>$</code> そのものは <code>$$</code>)</li>
+  <li><code>x-</code> で始まるキーは、どの階層でも展開の前に取り除く。真偽・数の欄は、展開で文字列になった <code>"true"</code>・<code>"600"</code> も受ける</li>
+  <li><code>.env.&lt;環境&gt;</code> の読み方も docker compose に合わせる: 引用符の無い値は <code> #</code> の前まで、<code>'…'</code> は書いたまま、<code>"…"</code> は複数行にでき <code>\n</code> などを文字にし、閉じた引用符のあとは注釈。引用符の無い値と <code>"…"</code> の中の <code>${VAR}</code> は、環境変数とそれより前に書いた値から展開する</li>
+  <li>シークレットの値は、表に出す場面(<code>--dry-run</code> など)で伏せる</li>
+</ul>
+</article>
+<article class="item" id="des-004"><h3><span class="id">DES-004</span>実際の名前と見つけ直し <span class="refs"><a href="../requirements/write.html#req-006">REQ-006</a></span></h3>
+<ul>
+  <li>実際の名前は、Worker も資源も <code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;name、無ければサービスの名前&gt;</code>。手元ではサービスの名前のまま。Cloudflare の名前の決まりに合わなければ止まる。この環境のものは、名前が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まるものだけとして扱う(Cloudflare の一覧を名前の頭で絞る。PC の記録には頼らない)</li>
+  <li>道具は ID を覚えない。操作のたびに名前で Cloudflare を引き直す(Worker・D1・KV・R2(使う管轄ごと)・Queue・Durable Object の名前空間の一覧)ので、別の PC からでも同じものにつながる。無ければ作り、あれば使う。道具が覚えるのは、前回上げた Worker の要約(<code>.wrangler/compose/&lt;環境&gt;/deployed.json</code>。変わっていない Worker を上げないためと、compose から消えた Worker を見つけるため)とデータのサービスの合言葉だけで、失っても上げ直すだけで結果は変わらない</li>
+  <li>一覧・作成・設定は Cloudflare の API で行う(Wrangler の一覧の多くは JSON で答えないため)。資格は <code>wrangler auth token --json</code> で Wrangler のログイン(期限切れなら Wrangler が更新)か <code>CLOUDFLARE_API_TOKEN</code> から受け取り、表に出さない。アカウントは <code>.env.&lt;環境&gt;</code> に書いた <code>CLOUDFLARE_ACCOUNT_ID</code> だけ(compose ファイルを読むときに、環境変数でなくファイルの値を覚えておく)。無ければ止まり、<code>/accounts</code> の一覧を示す。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> が違えば止まり、<code>/accounts</code> が読めてその中に無ければ止まる(一覧を読めないトークンでは確かめを省く)。Wrangler にも同じ ID を渡す。<code>CLOUDFLARE_API_BASE_URL</code> があれば Wrangler と同じくその API を使う。展開(<code>deploy</code>)と移行(<code>d1 migrations apply --remote</code>)は Wrangler で行う</li>
+  <li>初めての環境かは、その環境の名前の Worker か資源が Cloudflare にあるかで見る(REQ-015)</li>
+</ul>
+</article>
+<article class="item" id="des-005"><h3><span class="id">DES-005</span>中で使う設定を作る <span class="refs"><a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/write.html#req-003">REQ-003</a>・<a href="../requirements/write.html#req-007">REQ-007</a></span></h3>
+<ul>
+  <li>Worker のサービスごと・環境ごとに Wrangler の設定(JSON)を <code>.wrangler/compose/&lt;環境&gt;/&lt;サービス&gt;/wrangler.json</code> に作る。Wrangler の環境の階層(<code>env</code>)は使わない</li>
+  <li>中身: 実際の名前、<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>vars</code>・<code>routes</code>・<code>triggers.crons</code>・<code>assets</code>、相手の型と実際の名前・ID から作るバインディング、<code>queues.consumers</code>、<code>durable_objects</code> と移行(DES-010)。別の Worker の Durable Object には <code>script_name</code> を入れる</li>
+  <li>手元では、ID の代わりにサービスの名前を使い、R2 にはプロジェクトの手元の鍵(DES-003。<code>local_dev.experimental_s3_credentials</code>)を入れる</li>
+  <li>リモート・手元とも、<code>remote</code> の指定は入れない(REQ-006)</li>
+</ul>
+</article>
+<article class="item" id="des-006"><h3><span class="id">DES-006</span>Worker のフォルダの確かめ <span class="refs"><a href="../requirements/write.html#req-007">REQ-007</a></span></h3>
+<ul>
+  <li>Worker のフォルダに Wrangler の設定ファイルがあれば、Wrangler の読み方で読み、組み立てのためのキーだけを受ける: <code>main</code>・<code>build</code>・<code>rules</code>・<code>find_additional_modules</code>・<code>base_dir</code>・<code>preserve_file_names</code>・<code>no_bundle</code>・<code>minify</code>・<code>tsconfig</code>・<code>alias</code>・<code>upload_source_maps</code>・<code>$schema</code></li>
+  <li>ほかのキーがあれば止まり、compose ファイルのどこに書くか(<code>vars</code> → <code>services.&lt;名前&gt;.environment</code> など)を示す。<code>define</code> は値が振る舞いを変えるので受けない</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

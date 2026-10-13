@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02. コマンド｜wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/commands.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>02. コマンド</h1>
+<p>build・up・down・ps・logs・backup・restore・--dry-run が何をするか。REQ-008〜014。</p></section>
+
+<section class="section"><h2 id="flow">使い方の流れ</h2>
+<pre><code>wrangler-compose --env local up              # 手元で開発する(全サービスが手元で動く)
+wrangler-compose --env staging --dry-run up  # staging に何が起きるかを見る
+wrangler-compose --env staging up            # 手元で動いたものを staging へ展開する
+wrangler-compose --env production --dry-run up
+wrangler-compose --env production up         # 同じものを本番へ展開する</code></pre>
+</section>
+<section class="section"><h2 id="commands">コマンド</h2>
+<p>形はどの場合も <code>wrangler-compose --env &lt;環境&gt; [--dry-run] &lt;操作&gt; [&lt;引数&gt;…] [サービス…]</code>。<code>--env</code>(短く <code>-e</code>、または環境変数 <code>CLOUDFLARE_ENV</code>)はどの操作にも要る。コマンドは docker compose に合わせる。下の表に無い操作・引数は、利用者の決定なしに足さない。表にある操作の意味も docker compose と変えない。</p>
+<table>
+  <tr><th style="width:24%">docker compose</th><th style="width:28%">wrangler-compose</th><th>すること</th><th style="width:9%">条項</th></tr>
+  <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>どの組み合わせを扱うかを選ぶ。compose ファイルは 1 つで、<code>-f</code> は持たない</td><td><a href="write.html#req-006">REQ-006</a></td></tr>
+  <tr><td><code>build</code></td><td><code>build [サービス…]</code></td><td>Worker を組み立てるだけ。組み立てたものは環境によらず同じ</td><td><a href="#req-008">REQ-008</a></td></tr>
+  <tr><td><code>up</code></td><td><code>up [--build] [--purge] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
+  <tr><td><code>down</code>・<code>down -v</code></td><td><code>down [サービス…]</code>・<code>down --purge [サービス…]</code></td><td>下ろす。<code>--purge</code> ならデータも消す</td><td><a href="#req-011">REQ-011</a></td></tr>
+  <tr><td><code>ps</code>・<code>logs [-f]</code></td><td><code>ps</code>・<code>logs [-f] [サービス…]</code>(<code>ps</code> はサービスを受けない)</td><td>状態とログを見る</td><td><a href="#req-012">REQ-012</a></td></tr>
+  <tr><td><code>--dry-run</code></td><td><code>--dry-run</code></td><td>何も変えずに、何が変わるかを示す</td><td><a href="#req-014">REQ-014</a></td></tr>
+  <tr><td>(無し)</td><td><code>backup [書き出し先]</code>・<code>restore [--drop] &lt;バックアップのフォルダ&gt;</code></td><td>データをバックアップする・戻す(0.1 系からの利用者の決定)</td><td><a href="#req-013">REQ-013</a></td></tr>
+</table>
+</section>
+<section class="section"><h2>要求</h2><article class="item" id="req-008"><h3><span class="id">REQ-008</span>build</h3>
+<ul>
+  <li><code>build [サービス…]</code> は、docker compose の <code>build</code> と同じく、Worker を組み立てるだけで、何も建てない・動かさない</li>
+  <li>組み立てたものは環境によらず同じ。環境ごとの値は組み立てたものに入れず、<code>up</code> が環境に合わせて渡す</li>
+  <li>組み立てられなければ、どのサービスがなぜかを示して止まる</li>
+</ul>
+</article>
+<article class="item" id="req-009"><h3><span class="id">REQ-009</span>up(手元)</h3>
+<ul>
+  <li><code>--env local up</code> は、Cloudflare に触れず(ログインも網も要らず)、すべてのサービスを手元で動かす。前面で動き、Ctrl+C ですべてのプロセスが止まる(データ・組み立てたもの・手元の S3 の鍵は残る)</li>
+  <li>手元では、<strong>ふつうのプロダクトを作るのに無いと困る機能</strong>を、本物と同じに提供し、同じに振る舞わせる(動作が違えば手元で開発する意義が薄れるため。利用者の決定)。本物にあって手元の模擬に無いものは、道具のサービス(REQ-017)で補う</li>
+  <li>実際のプロダクトでほとんど使わない機能は、手元で再現しない(利用者の決定)。再現しないものは <a href="../detail/local-support.html">手元で使えないもの</a>に理由とともに書く</li>
+  <li>r2 のサービスに <code>ports</code> を書くと、そのポートが手元の R2 の口になる: S3 互換の API(署名付き URL を含む)は <code>http://127.0.0.1:&lt;ポート&gt;/cdn-cgi/local/r2/s3</code> で、CORS はバケットの <code>cors</code> どおりに答える。<code>public: true</code> のバケットは <code>http://&lt;バケット名&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で配る(利用者の決定)。<code>public_port</code> を書いたバケットは、そのポートでも <code>http://&lt;PC のアドレス&gt;:&lt;public_port&gt;/&lt;キー&gt;</code> で配る。待ち受けるアドレスは r2 のサービスの <code>ports</code> と同じで、<code>0.0.0.0</code> なら HMD・スマートフォンなど LAN の機械から届く(手元だけ。リモートでは使わない)(利用者の決定 2026-10-13「LAN で使えないと困ります」)。<code>ports</code> が無いと CORS と公開の URL は本番と同じにならず、<code>up</code> がそのことを知らせる</li>
+  <li><code>ports</code> にアドレスを書いて外(LAN)にも開いた口(<code>0.0.0.0:9050:9050</code> など)は、ほかの機械(HMD・スマートフォン・別の PC)から、その機械のアドレスで届いた要求にも同じに応える。そのアドレスで作った署名付き URL は通り、署名が合わなければ本物と同じに拒む(利用者の決定 2026-10-12「LAN経由で動作しなければ意味がないです」)。ほかの機械が届くのは IP アドレスで、名前(DNS の名前)で届いた要求は手元の模擬と同じに拒む(悪いページが自分の名前を 127.0.0.1 に向け直して手元の口を読むのを防ぐ。利用者の決定 2026-10-12)</li>
+  <li>R2 は、手元でも本物と同じに使える: バインディングの API、S3 互換の API(署名付き URL を含む)、CORS、公開の URL、イベント通知(Queue へ)。ライフサイクル・オブジェクトのロック・保管の種類は手元では再現しない(リモートには設定を入れる)(利用者の決定)</li>
+  <li>D1・KV・Queue は、ふだん使う API(読み書き・一覧・一括処理・移行・送受信・やり直しなど)を手元でも本物と同じに使える。Queue の受け手は、手元でも本物の既定値(1 回にまとめる数 10・待つ時間 5 秒・やり直し 3 回)で動く。D1 の上限の一部・KV の結果整合・Queue の同時処理などは手元で再現しない(<a href="../detail/local-support.html">手元で使えないもの</a>に理由とともに書く)(利用者の決定)</li>
+  <li>それでも本物と違うところは、<a href="../detail/local-support.html">手元で使えないもの</a>に理由とともに書き、無くしていく(REQ-018)</li>
+  <li>同じ資源を使うサービスが同時に書いても、データが失われない</li>
+  <li><code>ports</code> を書いた Worker は、それぞれその手元の URL で応える</li>
+  <li>コード・compose ファイル・<code>.env.local</code> が変われば組み立て直して動かし直す(読めない compose ファイルのあいだは今のまま動かす)。移行は動かす前に当てる</li>
+  <li>手元のデータは <code>down</code> では残り、<code>down --purge</code> で消える</li>
+  <li>同じプロジェクトで 2 つ目の <code>--env local up</code> は止まる。ただし <code>down &lt;サービス&gt;</code> で外したサービスがあれば、それを動いている <code>up</code> に戻す(REQ-011)。ほかの端末からの <code>--env local down</code> で止められる</li>
+  <li>別のプロジェクトの <code>--env local up</code> とは、同時に動かせる(定義 3)。<code>ports</code> のポートをほかのもの(別のプロジェクト・ほかのプログラム)が使っているときは、その通信を横取りせず、何も動かさずに止まり、どのポートかを示す</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">リモートの up の順</h4>
+<div class="legend"><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">利用者</span><span class="tool" style="background:#efedff;border-color:#5b5bd6">wrangler-compose</span><span class="tool" style="background:#fff4e0;border-color:#b26a00">Cloudflare(この環境)</span><span class="tool" style="background:#fdecea;border-color:#b5473d">止まる</span> ／ 点線の箱は --purge のときだけ</div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 830" role="img" aria-label="リモートの up の順"><defs><marker id="mk2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="10" y="10" width="310" height="810" rx="8" fill="#f5f8ff" stroke="#a9c4f5"/><text class="lt" x="165" y="34">利用者</text><text class="ls" x="165" y="51">打つ・確かめる</text>
+<rect x="330" y="10" width="310" height="810" rx="8" fill="#f7f6ff" stroke="#cbc4f5"/><text class="lt" x="485" y="34">wrangler-compose</text><text class="ls" x="485" y="51">Cloudflare に触れる前の段</text>
+<rect x="650" y="10" width="320" height="810" rx="8" fill="#fffaf2" stroke="#f0d3a3"/><text class="lt" x="810" y="34">Cloudflare(この環境)</text><text class="ls" x="810" y="51">名前が &lt;プロジェクト&gt;--&lt;環境&gt;-- のものだけ</text>
+
+<rect x="40" y="78" width="250" height="60" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="165" y="101">--env staging up</text><text class="s" x="165" y="119">--build なら必ず組み立て直す</text><text class="rref" x="284" y="133">REQ-010</text>
+<path class="ar" d="M165,138 V150 H485 V160" marker-end="url(#mk2)"/>
+<rect x="360" y="162" width="250" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="485" y="185">組み立てる</text><text class="s" x="485" y="203">無いか、コードが変わっていれば</text><text class="rref" x="604" y="217">REQ-008・010</text>
+<line class="ar" x1="485" y1="222" x2="485" y2="244" marker-end="url(#mk2)"/>
+<rect x="360" y="246" width="250" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="485" y="269">アカウントを確かめる</text><text class="s" x="485" y="287">.env.&lt;環境&gt; の CLOUDFLARE_ACCOUNT_ID</text><text class="rref" x="604" y="301">REQ-006</text>
+<path class="ar" d="M485,306 V318 H165 V328" marker-end="url(#mk2)"/>
+<rect x="40" y="330" width="250" height="60" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="165" y="353">初めての環境なら確かめる</text><text class="s" x="165" y="371">新しく作ることを示して確かめる</text><text class="rref" x="284" y="385">REQ-015</text>
+<path class="ar" d="M165,390 V402 H810 V412" marker-end="url(#mk2)"/>
+<rect x="685" y="414" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="437">資源が無ければ作る</text><text class="s" x="810" y="455">あれば使う(作り直さない)</text><text class="rref" x="929" y="469">REQ-006・010</text>
+<line class="ar" x1="810" y1="474" x2="810" y2="496" marker-end="url(#mk2)"/>
+<rect x="685" y="498" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="521">移行を当てる</text><text class="s" x="810" y="539">確認を求めない</text><text class="rref" x="929" y="553">REQ-010</text>
+<line class="ar dash" x1="685" y1="528" x2="612" y2="528" marker-end="url(#mk2)"/><text class="lbl halo" x="648" y="520" text-anchor="middle">失敗</text>
+<rect x="360" y="498" width="250" height="60" rx="7" fill="#fdecea" stroke="#b5473d"/><text class="t" x="485" y="521">そこで止まる</text><text class="s" x="485" y="539">その D1 を使う Worker は展開しない</text><text class="rref" x="604" y="553">REQ-010</text>
+<line class="ar" x1="810" y1="558" x2="810" y2="580" marker-end="url(#mk2)"/>
+<rect x="685" y="582" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="605">Worker を展開する</text><text class="s" x="810" y="623">シークレットとともに。消えたものは消す</text><text class="rref" x="929" y="637">REQ-005・010</text>
+<line class="ar" x1="810" y1="642" x2="810" y2="664" marker-end="url(#mk2)"/>
+<rect x="685" y="666" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="689">compose に無い Worker を消す</text><text class="s" x="810" y="707">Durable Object を持つなら選ばせる</text><text class="rref" x="929" y="721">REQ-010</text>
+<line class="ar dash" x1="810" y1="726" x2="810" y2="748" marker-end="url(#mk2)"/>
+<rect x="685" y="750" width="250" height="60" rx="7" fill="#fff" stroke="#b26a00" stroke-dasharray="5 4"/><text class="t" x="810" y="773">compose に無い資源も消す</text><text class="s" x="810" y="791">消すものを示し、環境名を打ち直す</text><text class="rref" x="929" y="805">REQ-010・015</text>
+</svg></div></div>
+<article class="item" id="req-010"><h3><span class="id">REQ-010</span>up(リモート)</h3>
+<ul>
+  <li>リモートの <code>up</code> は、手元と同じ組み立てたもの(REQ-008)を展開する。組み立てたものが無いか、コードが変わっていれば組み立て、<code>--build</code> なら必ず組み立て直す</li>
+  <li>依存の順に: 資源が無ければ作る → 移行を当てる → Worker をシークレットとともに展開する(compose ファイルから消えたシークレットは展開のあとで消す)</li>
+  <li>何度打っても同じ結果になる。変わっていないものは変えない</li>
+  <li>移行が失敗したら、その D1 を使う Worker は展開しない。どこまで済み、どこでなぜ止まったかを示し、それより後は行わない</li>
+  <li>名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)で、compose ファイルに無い Worker は、<code>up</code> が消す(Cloudflare には切り離しが無く、残った Worker は公開の URL で動き続けるため。利用者の決定 2026-10-13)。どの PC から打っても同じものを消す。Durable Object を持つ Worker は、消すと保存データも消えるので、Durable Object のクラスと同じく、消す・残す・やめるを選ばせる(端末で選べない場では止まる)</li>
+  <li><code>up --purge</code> は、さらに、名前がこの環境のもので compose ファイルに無い D1・KV・R2・Queue も消す。データが消えるので、消すものを示して環境名の打ち直しで確かめる(端末で打ち直せない場では止まる)。<code>--purge</code> の無い <code>up</code> は、それらを示すだけで消さない(利用者の決定 2026-10-13)</li>
+  <li>compose ファイルから消えた Durable Object のクラスは、<code>up</code> がその場で、消す・残す・やめるのどれかを選ばせる。消すと保存データも消える(消すときは環境名を打つ)。残すときは、コードからもクラスを消さない。やめると何も変えずに止まる。端末で選べない場(CI)では止まる。保存データの形の移行はアプリの側で扱う(利用者の決定 2026-10-13)</li>
+  <li>移行を当てるときに確認を求めない</li>
+</ul>
+</article>
+<article class="item" id="req-011"><h3><span class="id">REQ-011</span>down</h3>
+<ul>
+  <li><code>down [サービス…]</code> は Worker を依存の逆の順に下ろし、データは残す。そのあとの <code>up</code> で元に戻る</li>
+  <li><code>down --purge [サービス…]</code> はデータも消す。下ろさないサービスがつながる資源は消さずに止まる</li>
+  <li>サービスを指定しない <code>down --purge</code> は、名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker と資源をすべて消す。compose ファイルから消したものも含み、環境に何も残らない(利用者の決定 2026-10-13)</li>
+  <li>消す前に消すもの(Worker・資源の名前。手元は中身の数も。リモートは中身の数を出さない(利用者の決定 2026-10-13))を示し、環境名を打ち直して確かめる(手元の <code>--purge</code> も)。打ち直しを受けられない場では止まる。リモートの <code>down</code> は Worker を消すので、<code>--purge</code> が無くても確かめる。手元の <code>down</code>(データを消さない)は確かめない</li>
+</ul>
+</article>
+<article class="item" id="req-012"><h3><span class="id">REQ-012</span>ps・logs</h3>
+<ul>
+  <li><code>ps</code> は、サービスごとの状態(あるか・動いているか・URL・未適用の移行)と、compose ファイルとの違い(足りないもの・残っているもの)を示す。何も変えない</li>
+  <li><code>logs [-f] [サービス…]</code> は、Worker のログを docker compose と同じく行の頭にサービス名を付けて出す。リモートは Cloudflare から過去のログが取れないので、<code>-f</code> の有無によらず今からのログを追う(Ctrl+C で止まる)(利用者の決定 2026-10-13)</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">restore --drop の流れ</h4>
+<div class="legend"><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">利用者</span><span class="tool" style="background:#efedff;border-color:#5b5bd6">wrangler-compose</span><span class="tool" style="background:#fff4e0;border-color:#b26a00">戻す先の環境</span><span class="tool" style="background:#fdecea;border-color:#b5473d">失敗したとき</span></div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 670" role="img" aria-label="restore --drop の流れ"><defs><marker id="mk3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="10" y="10" width="310" height="650" rx="8" fill="#f5f8ff" stroke="#a9c4f5"/><text class="lt" x="165" y="34">利用者</text><text class="ls" x="165" y="51">打つ・確かめる</text>
+<rect x="330" y="10" width="310" height="650" rx="8" fill="#f7f6ff" stroke="#cbc4f5"/><text class="lt" x="485" y="34">wrangler-compose</text><text class="ls" x="485" y="51">バックアップのファイルとの受け渡し</text>
+<rect x="650" y="10" width="320" height="650" rx="8" fill="#fffaf2" stroke="#f0d3a3"/><text class="lt" x="810" y="34">戻す先の環境</text><text class="ls" x="810" y="51">サービスの名前で照らす</text>
+
+<rect x="40" y="78" width="250" height="60" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="165" y="101">restore --drop &lt;バックアップ&gt;</text><text class="s" x="165" y="119">どの環境のバックアップでも、どの環境へでも</text><text class="rref" x="284" y="133">REQ-013</text>
+<path class="ar" d="M165,138 V150 H485 V160" marker-end="url(#mk3)"/>
+<rect x="360" y="162" width="250" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="485" y="185">バックアップを確かめる</text><text class="s" x="485" y="203">書きかけ・SHA-256 が合わないものは戻さない</text><text class="rref" x="604" y="217">REQ-013</text>
+<path class="ar" d="M485,222 V234 H165 V244" marker-end="url(#mk3)"/>
+<rect x="40" y="246" width="250" height="60" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="165" y="269">環境名を打ち直す</text><text class="s" x="165" y="287">消す前の確かめ</text><text class="rref" x="284" y="301">REQ-013・015</text>
+<path class="ar" d="M165,306 V318 H810 V328" marker-end="url(#mk3)"/>
+<rect x="685" y="330" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="353">いまの中身をバックアップする</text><text class="s" x="810" y="371">バックアップした場所を示す</text><text class="rref" x="929" y="385">REQ-013</text>
+<line class="ar" x1="810" y1="390" x2="810" y2="412" marker-end="url(#mk3)"/>
+<rect x="685" y="414" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="437">いまの中身を消して戻す</text><text class="s" x="810" y="455">バックアップのファイルを間に置いて移す</text><text class="rref" x="929" y="469">REQ-013</text>
+<line class="ar" x1="810" y1="474" x2="810" y2="496" marker-end="url(#mk3)"/>
+<rect x="685" y="498" width="250" height="60" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="810" y="521">バックアップのあとの移行を当てる</text><text class="s" x="810" y="539">戻し終わり</text><text class="rref" x="929" y="553">REQ-013</text>
+<path class="ar dash" d="M685,444 H485 V496" marker-end="url(#mk3)"/><text class="lbl halo" x="560" y="438" text-anchor="middle">失敗</text>
+<rect x="360" y="498" width="250" height="60" rx="7" fill="#fdecea" stroke="#b5473d"/><text class="t" x="485" y="521">バックアップした中身に戻す</text><text class="s" x="485" y="539">消す前の状態へ</text><text class="rref" x="604" y="553">REQ-013</text>
+<line class="ar dash" x1="485" y1="558" x2="485" y2="580" marker-end="url(#mk3)"/><text class="lbl halo" x="493" y="574">それも失敗</text>
+<rect x="360" y="582" width="250" height="60" rx="7" fill="#fdecea" stroke="#b5473d"/><text class="t" x="485" y="605">戻し方を示して止まる</text><text class="s" x="485" y="623">restore --drop &lt;バックアップした場所&gt;</text><text class="rref" x="604" y="637">REQ-013</text>
+</svg></div>
+<p class="lead">--drop が無いときは、戻す先が空のときだけ戻す。</p></div>
+<article class="item" id="req-013"><h3><span class="id">REQ-013</span>backup・restore</h3>
+<ul>
+  <li><code>backup</code> は、その環境の D1・R2・KV の中身を手元のフォルダ(既定は <code>backups/&lt;環境&gt;/&lt;日時&gt;/</code>)へ書き出す</li>
+  <li><code>restore &lt;バックアップ&gt;</code> は、サービスの名前で照らしてその環境へ戻す。戻す先が空のときだけ戻し、<code>--drop</code> ならいまの中身を消してから戻す(打ち直しで確かめる)。消す前にいまの中身をバックアップし、その場所を示す。戻すのに失敗したらバックアップした中身に戻し、それも失敗したら、バックアップした場所と戻し方(<code>restore --drop &lt;その場所&gt;</code>)を示して止まる(利用者の決定 2026-10-13)。戻したあと、バックアップのあとの移行を当てる</li>
+  <li>バックアップはどの環境のものでも、どの環境へでも戻せる。データはバックアップのファイルを間に置いて移す(移し元の中で書き出し、移し先の中で読み込む)</li>
+  <li>リモートの環境の中身は Wrangler のコマンドか Cloudflare の API で書き出し・読み込む</li>
+  <li>バックアップは git に入れない。書きかけのバックアップと、壊れた・書き換えられたバックアップ(ファイルごとの SHA-256 が合わないもの)は戻さない(利用者の決定 2026-10-13)。Durable Objects・Queue の中身とシークレットはバックアップしない</li>
+</ul>
+</article>
+<article class="item" id="req-014"><h3><span class="id">REQ-014</span>dry-run</h3>
+<ul>
+  <li><code>--dry-run</code> はどの操作にも付き、何も変えずに何が変わるか(作る・変える・消すもの、当てる移行、入れる・消すシークレットの名前、展開した値)を示す。シークレットの値は出さない</li>
+  <li>リモートの <code>up</code> の <code>--dry-run</code> は、terraform plan のように、作る・変える・消す・変わらないものを、変わる項目の前後の値とともに示す。比べる相手は Cloudflare にいまあるもので、どの PC から打っても同じ結果になる。シークレットは名前だけを示す(値が変わったかは示さない)(利用者の決定 2026-10-13)</li>
+  <li>本番の操作がエラーで止まる条件では、dry-run も同じエラーで止まる</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

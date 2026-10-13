@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03. 全体の条件と範囲｜wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/common.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>03. 全体の条件と範囲</h1>
+<p>どの操作にも掛かる決まり(安全・手で行う段取り・道具のサービス・違いの知らせ・配り方)と、範囲外。REQ-015〜019。</p></section>
+
+<section class="section"><h2>要求</h2>
+<article class="item" id="req-015"><h3><span class="id">REQ-015</span>安全</h3>
+<ul>
+  <li>リモートに展開するのは、手元と同じ組み立てたものだけ(REQ-010)</li>
+  <li>消す操作は、消すものを示し、環境名の打ち直しで確かめる</li>
+  <li>まだ無い環境への初めての <code>up</code> は、新しく作ることを示して確かめる(環境名の打ち間違いで新しい環境を建てない)</li>
+  <li>リモートの <code>up</code> は、上の初めての環境と消す操作のほかは、確かめを求めずに進める(CI から展開できるように。利用者の決定 2026-10-13)</li>
+  <li>シークレットの値を、どの操作でも画面・ログ・バックアップに出さない</li>
+  <li><code>.env.&lt;環境&gt;</code> とバックアップが git に入る形なら止まる</li>
+</ul>
+</article>
+<article class="item" id="req-016"><h3><span class="id">REQ-016</span>手で行う段取りを持たない</h3>
+<ul>
+  <li>利用者が用意するのは、compose ファイル・コード・<code>.env.&lt;環境&gt;</code> だけ。人が行うのは Cloudflare へのログインを 1 度だけ</li>
+  <li>資源の作成、移行、シークレットの投入、手元の S3 互換の API の鍵など、ほかに要るものはすべて道具が用意する。ただし、リモートの R2 の S3 互換の API の鍵はアプリの側で扱う(REQ-004。利用者の決定 2026-10-13)</li>
+</ul>
+</article>
+<article class="item" id="req-017"><h3><span class="id">REQ-017</span>道具のサービス</h3>
+<ul>
+  <li>道具のサービスは手元(<code>--env local</code>)だけに置く。リモートの環境には置かない</li>
+</ul>
+</article>
+<article class="item" id="req-018"><h3><span class="id">REQ-018</span>手元と本番の違いの知らせ</h3>
+<ul>
+  <li>手元で動かしたときに本番と振る舞いが違う点を、<a href="../detail/local-support.html">手元で使えないもの</a>に、使う型に絞って列挙する</li>
+  <li><code>--env local up</code> は、compose ファイルにそれに当たるもの(<code>routes</code>・<code>crons</code> など)があれば、動かす前に、手元ではどうなるか・どう試すかを示す</li>
+</ul>
+</article>
+<article class="item" id="req-019"><h3><span class="id">REQ-019</span>配り方・表示の言語</h3>
+<ul>
+  <li>OS ごとの単体の実行ファイルで、nv と同じ Release で配る。nv と同じフォルダに置いて使う</li>
+  <li>メッセージと <code>--help</code> は、nv と同じ決め方で日本語か英語で出す。打ち直しの確かめで打つのは環境名そのもの</li>
+</ul>
+</article>
+</section>
+<section class="section"><h2 id="out-of-scope">範囲外</h2>
+<ul>
+  <li>使わない型(Vectorize・Workers AI・Hyperdrive・Workflows など)。使うときに型を足す</li>
+  <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code>(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
+  <li>DNS・WAF・Access などゾーンの設定</li>
+  <li>Wrangler のコマンドでも Cloudflare の API でも行えない操作</li>
+</ul>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

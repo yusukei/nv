@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>決定と用語｜nv 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/requirements/basis.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 要求仕様</div><h1>決定と用語</h1>
+<p>すべての要求のもとになる利用者の決定と用語。</p></section>
+
+<section class="section"><h2 id="decisions">決定(利用者)</h2>
+<div class="box decision">
+<ul>
+  <li>uv のスタイルで使う(別の版の管理の道具(fnm など)を入れさせない)</li>
+  <li>wrangler-compose とは別の道具として作る。同じリポジトリに置く</li>
+  <li>Cloudflare に触れず、Wrangler を自分で動かさない(Wrangler を使わないプロジェクトでも使える)。wrangler-compose は、一緒に配る実行ファイルとスキルとしてだけ扱う</li>
+  <li>個人の道具として wrangler-compose と 1 つのリポジトリにまとめ、更新(<code>self update</code>)とエージェント用のスキル(<code>install skill</code>)は nv に寄せる。nv が wrangler-compose の分も扱う</li>
+  <li>エージェント用のスキルは Claude Code と Codex に、利用者全体へ入れる。Codex 向けは共有の置き場 <code>~/.agents/skills/</code> に常に入れる</li>
+  <li>nv が利用者ごとに持つものは <code>~/.nv</code> の下に置き、Node と道具の置き場は <code>~/.nv/cache</code> に統一する(OS ごとに置き場所を変えない)</li>
+  <li>nv が動かす npm のキャッシュも <code>~/.nv/cache/npm</code> に置き、利用者がほかで使う npm のキャッシュ(<code>~/.npm</code> など)と分け合わない(uv がパッケージのキャッシュを自分で持つのと同じ考え方)</li>
+  <li>GitHub の公開のリポジトリ <code>yusukei/nv</code>(個人)に置き、GitHub Actions で Release に OS ごとの実行ファイルを置く</li>
+  <li>公開して配るので、更新の機能を持つ</li>
+</ul>
+</div>
+</section>
+<section class="section"><h2 id="terms">用語</h2>
+<table>
+  <tr><th style="width:22%">語</th><th>意味</th></tr>
+  <tr><td>プロジェクト</td><td><code>package.json</code> を持つフォルダ。いまいるフォルダから上へたどって最初に見つかるもの</td></tr>
+  <tr><td>Node の版</td><td>プロジェクトの <code>.node-version</code> に書いた、<code>24.11.1</code> のような 3 つの数の版</td></tr>
+  <tr><td>nv のフォルダ</td><td>利用者のホームの <code>~/.nv</code>(Windows は <code>%USERPROFILE%\.nv</code>)。nv が利用者ごとに持つものは、すべてこの下に置く。利用者全体の設定などが要るようになったら、ここに置く</td></tr>
+  <tr><td>置き場</td><td>nv が Node と道具を置くフォルダ。どの OS でも <code>~/.nv/cache</code></td></tr>
+</table>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

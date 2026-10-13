@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D03. スキル・配り方・更新・試験・確かめていないこと｜nv 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/detail/d03-dist.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 詳細仕様</div><h1>D03. スキル・配り方・更新・試験・確かめていないこと</h1>
+<p>エージェント用のスキル、配り方、self update、出力と終了コード、試験と確かめていないこと。DES-009〜013。</p></section>
+
+<section class="section"><h2>設計</h2><article class="item" id="des-009"><h3><span class="id">DES-009</span>エージェント用のスキル <span class="refs"><a href="../requirements/tool.html#req-008">REQ-008</a></span></h3>
+<ul>
+  <li>スキルの中身(<code>SKILL.md</code>)は、nv の実行ファイルに埋め込む(<code>include_str!</code>)。nv の版とスキルの中身が必ず一致する</li>
+  <li>スキルは 2 つ: <code>nv</code> と <code>wrangler-compose</code>。入れる先は <code>~/.agents/skills/&lt;名前&gt;/</code>(常に)と <code>~/.claude/skills/&lt;名前&gt;/</code>(<code>~/.claude</code> があるときだけ)</li>
+  <li>nv が入れたことの印として、各フォルダに <code>.nv-managed</code>(入れた nv の版)を置く。<code>uninstall skill</code> は印のあるフォルダだけを消す。入れる先に印の無い同じ名前のフォルダがあれば、上書きせずにそのことを示す(利用者が自分で置いたものを壊さない)</li>
+  <li>入れるときは、<code>tmp/</code> に作ってから付け替える(2 回打っても 1 つ)</li>
+  <li>成り立たない場合: Codex が置き場を変えたら、入れても効かない。置き場は 1 か所の定数にして、変わったら nv の版を上げて直す</li>
+</ul>
+</article>
+<article class="item" id="des-010"><h3><span class="id">DES-010</span>配り方 <span class="refs"><a href="../requirements/tool.html#req-009">REQ-009</a></span></h3>
+<ul>
+  <li>Release に置くもの: 実行ファイルそのもの(包まない)を、<code>nv-&lt;ターゲット&gt;[.exe]</code>・<code>wrangler-compose-&lt;ターゲット&gt;[.exe]</code> の名前で。検証値の一覧 <code>SHA256SUMS</code>。版の文字列だけを書いた <code>VERSION</code></li>
+  <li>ターゲット: <code>x86_64-pc-windows-msvc</code>・<code>aarch64-apple-darwin</code>・<code>x86_64-apple-darwin</code>・<code>x86_64-unknown-linux-musl</code>(静的にリンクし、どの Linux でも動く)</li>
+  <li>GitHub Actions: <code>v*</code> のタグの push で、Windows・macOS・Ubuntu の機械で組み、最後の 1 つの仕事が <code>SHA256SUMS</code> と <code>VERSION</code> を作って Release に上げる。タグの版と <code>Cargo.toml</code> の版が違えば失敗させる</li>
+  <li>最初の導入は README に、OS ごとの取り方(macOS・Linux は <code>curl</code>、Windows は PowerShell の <code>Invoke-WebRequest</code>)を書く</li>
+  <li>却下: <code>.tar.gz</code>・<code>.zip</code> に包む(展開の手間が増えるだけで、単体の実行ファイルには得が無い)</li>
+  <li>成り立たない場合: macOS でブラウザから取ると、隔離の印が付き、署名の無い実行ファイルは止められる。README の取り方は <code>curl</code> にする(印が付かない)。署名と公証は範囲外</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">self update の流れ</h4><div class="steps">
+<div class="step"><div class="n">1</div><div class="t">VERSION を取って比べる</div><div class="d">新しくなければ終わる(--check もここまで)</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">2</div><div class="t">取って照らす</div><div class="d">SHA256SUMS と 1 つでも合わなければ止まる</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">3</div><div class="t">入れ替える</div><div class="d">いまのものを .old へ付け替えてから</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">4</div><div class="t">スキルを入れ直す</div><div class="d">入っているものだけ</div></div>
+</div></div>
+<article class="item" id="des-011"><h3><span class="id">DES-011</span>self update <span class="refs"><a href="../requirements/tool.html#req-010">REQ-010</a></span></h3>
+<ol>
+  <li>取り先(ビルドの時に <code>NV_RELEASE_BASE</code> で決める。CI は <code>https://github.com/&lt;持ち主&gt;/&lt;リポジトリ&gt;/releases/latest/download</code>)から <code>VERSION</code> を取り、いまの版と比べる。新しくなければ「最新」と示して終わる。<code>--check</code> はここで終わる</li>
+  <li><code>SHA256SUMS</code> と、自分のターゲットの <code>nv-…</code>(同じフォルダに wrangler-compose があればそれも)を、入れ替える実行ファイルと同じフォルダの一時ファイルへ取り、照らす。1 つでも合わなければ全部消して止まる</li>
+  <li>入れ替え: いまのファイルを <code>&lt;名前&gt;.old</code> へ名前を付け替え、取ったものを本来の名前へ付け替える(Windows でも、動いている実行ファイルの名前の付け替えはできる)。2 つ目の付け替えに失敗したら、<code>.old</code> を戻す</li>
+  <li>新しい nv を <code>nv install skill --if-installed</code>(内部の引数)で起こし、印のあるスキルだけを新しい中身で入れ直す(古い nv は新しいスキルの中身を持たないため)</li>
+  <li>nv は起動のたびに、自分のフォルダの <code>.old</code> を消す(Windows では入れ替えたときに消せないため)</li>
+</ol>
+<ul>
+  <li>却下: GitHub の API(<code>/repos/…/releases/latest</code>)で版を調べる(認証の無い呼び出しの回数制限があり、プロキシの網で別の口が要る。<code>latest/download</code> なら資産と同じ口で済む)</li>
+  <li>成り立たない場合: 実行ファイルのフォルダに書けない(管理者の場所に置いた)と入れ替えられない。そのときは書けないことと場所を示して止まる</li>
+</ul>
+</article>
+<article class="item" id="des-012"><h3><span class="id">DES-012</span>出力と終了コード <span class="refs"><a href="../requirements/node.html#req-004">REQ-004</a>・<a href="../requirements/tool.html#req-007">REQ-007</a></span></h3>
+<ul>
+  <li>nv 自身の出力は標準エラーに出す。標準出力は動かしたコマンドのものだけにする</li>
+  <li>言語(REQ-011)は起動のはじめに 1 度だけ決める: <code>NV_LANG</code> → <code>LC_ALL</code>・<code>LC_MESSAGES</code>・<code>LANG</code>(Unix)→ macOS は <code>defaults read -g AppleLanguages</code> の先頭 → Windows は <code>GetUserDefaultUILanguage</code> の主言語。<code>ja</code> で始まれば日本語、決まらなければ英語</li>
+  <li>メッセージは、出す箇所に日本語と英語を並べて書く(<code>tr!("日本語", "English")</code>)。訳の表を別のファイルに持たない(訳し漏れと、鍵と文のずれを起こさない)</li>
+  <li><code>--help</code> の説明は、組んだコマンドの定義に日本語の説明を当て直してから引数を読む。clap 自身の出すエラーの文(未知の引数など)は英語のまま</li>
+  <li>Windows の端末へは、Rust の標準の出力が UTF-8 を端末の文字に変えて書くので日本語は化けない(Rust の資料: 端末への出力は UTF-8 だけを受ける)。ファイルやパイプへは UTF-8 のまま書く</li>
+  <li>却下: 英語だけ(日本語の環境の利用者に読みにくい。利用者の決定)。却下: 日本語だけ(公開のリポジトリで、日本語を読めない人が使えない)</li>
+  <li>nv 自身が止まったときの終了コードは 2。動かしたコマンドの終了コードはそのまま返す</li>
+</ul>
+</article>
+<article class="item" id="des-013"><h3><span class="id">DES-013</span>試験</h3>
+<ul>
+  <li>単体の試験: 版の読み取り、<code>SHASUMS256.txt</code> の照合、ロックファイルの <code>bin</code> の引き方、入口が JavaScript かの見分け</li>
+  <li>AC-002・AC-010 の検証値が合わない側は、単体の試験(照合)で確かめる。本物の取り先での取得は CI の 1 つの仕事(<code>NV_HOME</code> を一時のフォルダにして実行ファイルを動かす)で行う</li>
+  <li>CI は Windows・macOS・Linux の 3 つで回す。エージェントの振る舞い(AC-008 の 3 回)は手で確かめる</li>
+</ul>
+</article>
+</section>
+<section class="section"><h2 id="unverified">確かめていないこと(作る前に確かめる)</h2>
+<ul>
+  <li>Windows で、動いている実行ファイルの名前の付け替えが、権限の無い利用者でもできるか(一般に知られた動きだが、実機で確かめる)</li>
+  <li>npm の <code>npm_config_cache</code> が、<code>npm ci</code>・<code>npm install</code> の両方でキャッシュの場所を変えるか</li>
+  <li>macOS の隔離の印が、<code>curl</code> で取ったファイルに付かないこと</li>
+  <li>GitHub の <code>releases/latest/download/&lt;資産&gt;</code> が、リポジトリの持ち主と名前が決まった後の公開リポジトリで期待どおり転送されること(リポジトリの名前が決まるまで、取り先は仮)</li>
+</ul>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

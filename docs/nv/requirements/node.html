@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01. Node と依存｜nv 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/requirements/node.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 要求仕様</div><h1>01. Node と依存</h1>
+<p>Node の版の固定と取得、依存を揃える・足す・外す、揃えた環境で動かす。REQ-001〜006・REQ-012。</p></section>
+
+<section class="section"><h2>要求</h2>
+<article class="item" id="req-001"><h3><span class="id">REQ-001</span>Node の版の固定</h3>
+<ul>
+  <li>使う Node の版は、プロジェクトの <code>.node-version</code> の 1 か所で決める(fnm など、ほかの道具も読む書式)</li>
+  <li>版は 3 つの数で書く(先頭の <code>v</code> は受ける。fnm などが書く形。<code>24</code> や <code>lts</code> のような幅のある書き方は受けない。誰の PC でも同じ版にするため)</li>
+  <li><code>.node-version</code> が無い・書式が違うときは、何もせずに止まり、書き方を示す</li>
+</ul>
+</article>
+<article class="item" id="req-002"><h3><span class="id">REQ-002</span>Node の取得</h3>
+<ul>
+  <li>決めた版の Node が置き場に無ければ、Node の公式の配布物から取る。取ったものは、配布元の検証値の一覧(<code>SHASUMS256.txt</code>)と照らし、合わなければ使わずに止まる</li>
+  <li>OS と CPU に合う配布物を選ぶ(Windows x64、macOS arm64・x64、Linux x64)</li>
+  <li>取得や展開の途中で止まっても、壊れた版が置き場に残らない(次に取り直せば動く)</li>
+  <li>同時に複数の nv が同じ版を取りに行っても、取り合わない</li>
+  <li>社内のプロキシの設定(<code>HTTPS_PROXY</code> など)に従う</li>
+</ul>
+</article>
+<article class="item" id="req-003"><h3><span class="id">REQ-003</span>sync(依存を揃える)</h3>
+<ul>
+  <li><code>nv sync</code> は、Node を揃え(REQ-002)、その版に付いている npm で、プロジェクトの <code>package-lock.json</code> のとおりに依存を入れる(<code>npm ci</code>)。揃っていても毎回入れ直す(壊れた <code>node_modules</code> を直す手段にする。利用者の決定 2026-10-13)</li>
+  <li><code>package-lock.json</code> が無ければ、何もせずに止まる(ロックファイルを書き換える導入はしない)</li>
+  <li>nv が動かす npm(<code>nv sync</code>・<code>nv run</code>・<code>nv x</code>・<code>nv add</code>・<code>nv remove</code>)は、キャッシュに <code>~/.nv/cache/npm</code> を使う(利用者の決定)</li>
+</ul>
+</article>
+<article class="item" id="req-004"><h3><span class="id">REQ-004</span>run(揃えた環境で動かす)</h3>
+<ul>
+  <li><code>nv run &lt;コマンド&gt; [引数…]</code> は、揃えた Node・npm と、プロジェクトの依存に入れた道具(<code>node_modules/.bin</code>)を、利用者の環境にあるほかの Node・npm・道具より優先してコマンドを動かす(<code>nv run node script.js</code>・<code>nv run npm run build</code>・<code>nv run wrangler deploy</code> など)。動かしたコマンドがさらに起こす <code>node</code>・<code>npm</code> も、揃えたものになる</li>
+  <li>動かす前に、Node が無い・依存が <code>package-lock.json</code> と合っていなければ、先に揃える(REQ-003)。合っていれば入れ直さない(<code>nv run</code> のたびに依存を入れ直して遅くしない)</li>
+  <li>引数はシェルに解釈させず、そのまま渡す(<code>*</code>・<code>&amp;</code>・<code>|</code> などの記号も文字のまま)。Windows で <code>.cmd</code> などの形のコマンドも、同じ書き方で動く(ただし <code>package-lock.json</code> に入口の無い <code>.cmd</code> では、安全に渡せない引数(<code>%</code> など)は渡さずに止まる)</li>
+  <li>標準の入出力(標準入力を含む)と終了コードは、動かしたコマンドのものをそのまま返す</li>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、Node だけを揃えて動かす(<code>nv run npm install</code> でロックファイルを作れるように。利用者の決定 2026-10-13)</li>
+</ul>
+</article>
+<article class="item" id="req-005"><h3><span class="id">REQ-005</span>x(プロジェクトに入れずに道具を動かす)</h3>
+<ul>
+  <li><code>nv x &lt;パッケージ&gt;@&lt;版&gt; [引数…]</code> は、そのパッケージをプロジェクトに入れず、置き場に入れて 1 回動かす(uv の <code>uvx</code> に当たる)</li>
+  <li>版は 3 つの数で書く。同じパッケージと版は、同じ Node の版では置き場のものを使い回す</li>
+  <li>Node の版は、プロジェクトの <code>.node-version</code>、無ければ <code>--node &lt;版&gt;</code> で決める。どちらも無ければ止まる</li>
+</ul>
+</article>
+<article class="item" id="req-006"><h3><span class="id">REQ-006</span>Node の版の管理</h3>
+<ul>
+  <li><code>nv node list</code> は、置き場にある Node の版を並べる</li>
+  <li><code>nv node install &lt;版&gt;</code> は、その版を取る(REQ-002)</li>
+  <li><code>nv node uninstall &lt;版&gt;</code> は、置き場からその版を消す</li>
+  <li><code>nv node list --remote</code> は、入れられる Node の版を並べる。その OS 向けの配布物がある版だけを、Node の公式の一覧(REQ-002 と同じ取り先)から出す(利用者の決定)
+    <ul>
+      <li>既定では、大きい版(系列)ごとに最新の版を 1 つずつ、新しい順に出す</li>
+      <li>系列を指定すると(<code>nv node list --remote 24</code>)、その系列のすべての版を出す。<code>--all</code> はすべての版、<code>--lts</code> は LTS の版だけ</li>
+      <li>各版に、LTS の名前と、置き場に入っているかの印を付ける</li>
+    </ul>
+  </li>
+</ul>
+</article>
+<article class="item" id="req-012"><h3><span class="id">REQ-012</span>add・remove(依存を足す・外す)</h3>
+<ul>
+  <li><code>nv add &lt;パッケージ&gt;[@版]…</code> は、固定した Node に付いた npm でパッケージを入れ、<code>package.json</code> と <code>package-lock.json</code> に書く(利用者の決定)</li>
+  <li><code>--dev</code> で開発用の依存として書く。<code>--exact</code> で版を幅なしで書く</li>
+  <li>版は幅のある書き方(<code>foo</code>・<code>foo@^1</code>)も受ける(実際の版は <code>package-lock.json</code> が固定する)</li>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、ここで作る</li>
+  <li><code>nv remove &lt;パッケージ&gt;…</code> は、固定した Node に付いた npm でパッケージを外し、<code>package.json</code> と <code>package-lock.json</code> から消す(利用者の決定)。依存に無いパッケージを指定したら、何も変えずに止まる</li>
+  <li>足した・外したあと、次の <code>nv run</code> で依存を入れ直さない(依存が揃っている状態として扱う。REQ-004)</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

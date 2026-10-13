@@ -1,50 +1,20 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nv 受け入れ条件</title>
-<link rel="stylesheet" href="../assets/style.css">
-</head>
-<body>
-<div class="layout">
-<nav class="toc">
-  <div class="site"><a href="../index.html">仕様書</a></div>
-  <ul>
-    <li><a href="requirements.html">nv 要求仕様</a></li>
-    <li><a class="current" href="acceptance.html">nv 受け入れ条件</a></li>
-    <li><a href="design.html">nv 設計</a></li>
-    <li><a href="../wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
-    <li><a href="../wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
-    <li><a href="../wrangler-compose/design.html">wrangler-compose 設計</a></li>
-    <li><a href="../wrangler-compose/local-support.html">手元で使えないもの</a></li>
-  </ul>
-  <ul>
-    <li><a href="#ac-001">AC-001 Node の版の固定</a></li>
-    <li><a href="#ac-002">AC-002 Node の取得</a></li>
-    <li><a href="#ac-003">AC-003 sync</a></li>
-    <li><a href="#ac-004">AC-004 run</a></li>
-    <li><a href="#ac-005">AC-005 x</a></li>
-    <li><a href="#ac-006">AC-006 Node の版の管理</a></li>
-    <li><a href="#ac-007">AC-007 利用者の環境</a></li>
-    <li><a href="#ac-008">AC-008 エージェント用のスキル</a></li>
-    <li><a href="#ac-009">AC-009 配り方</a></li>
-    <li><a href="#ac-010">AC-010 更新</a></li>
-    <li><a href="#ac-011">AC-011 表示の言語</a></li>
-    <li><a href="#ac-012">AC-012 add・remove</a></li>
-  </ul>
-</nav>
-<main>
-<h1>nv 受け入れ条件</h1>
-<p class="lead">確かめは Windows x64 と macOS arm64 の両方で行う。Windows では PowerShell と cmd の両方から打つ。</p>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>受け入れ条件｜nv 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/requirements/acceptance.html"></nav><main class="page">
 
-<h3 id="ac-001"><span class="id">AC-001</span>Node の版の固定 <span class="refs">REQ-001</span></h3>
+<section class="hero"><div class="kicker">nv 要求仕様</div><h1>受け入れ条件</h1>
+<p>確かめは Windows x64 と macOS arm64 の両方で行う。Windows では PowerShell と cmd の両方から打つ。</p></section>
+
+<section class="section"><h2>受け入れ条件</h2>
+<article class="item" id="ac-001"><h3><span class="id">AC-001</span>Node の版の固定 <span class="refs"><a href="node.html#req-001">REQ-001</a></span></h3>
 <ul>
   <li><code>.node-version</code> に <code>24.11.1</code> と書いたプロジェクトで <code>nv run node --version</code> を打つと、<code>v24.11.1</code> が出る。PATH にほかの版の Node があっても同じ</li>
   <li><code>.node-version</code> が無い、または <code>24</code> と書いてあると、何も取らずに止まり、書き方が出る</li>
 </ul>
-
-<h3 id="ac-002"><span class="id">AC-002</span>Node の取得 <span class="refs">REQ-002</span></h3>
+</article>
+<article class="item" id="ac-002"><h3><span class="id">AC-002</span>Node の取得 <span class="refs"><a href="node.html#req-002">REQ-002</a></span></h3>
 <ul>
   <li>置き場にその版が無い状態で <code>nv sync</code> を打つと、置き場にその版ができる。もう一度打つと、取り直さない</li>
   <li>Windows でも macOS でも、取った Node は <code>~/.nv/cache</code> の下にあり、<code>~/.nv</code> の外(<code>%LOCALAPPDATA%</code>・<code>~/Library/Caches</code> など)に nv のものができていない</li>
@@ -53,15 +23,15 @@
   <li>2 つの <code>nv sync</code> を同時に打っても、両方が成功し、置き場の版は 1 つ</li>
   <li>公式に直接出られず、プロキシ(<code>HTTPS_PROXY</code>)を通してだけ出られる網で、<code>nv sync</code> が Node を取れる</li>
 </ul>
-
-<h3 id="ac-003"><span class="id">AC-003</span>sync <span class="refs">REQ-003</span></h3>
+</article>
+<article class="item" id="ac-003"><h3><span class="id">AC-003</span>sync <span class="refs"><a href="node.html#req-003">REQ-003</a></span></h3>
 <ul>
   <li><code>package-lock.json</code> のあるプロジェクトで <code>nv sync</code> を打つと、<code>node_modules</code> がロックファイルのとおりになり、ロックファイルは変わらない</li>
   <li><code>package-lock.json</code> が無いと、何も入れずに止まる</li>
   <li><code>~/.npm</code>(Windows は <code>%LOCALAPPDATA%\npm-cache</code>)を消してから <code>nv sync</code> を打つと、npm のキャッシュは <code>~/.nv/cache/npm</code> にでき、<code>~/.npm</code> などには何もできない</li>
 </ul>
-
-<h3 id="ac-004"><span class="id">AC-004</span>run <span class="refs">REQ-004</span></h3>
+</article>
+<article class="item" id="ac-004"><h3><span class="id">AC-004</span>run <span class="refs"><a href="node.html#req-004">REQ-004</a></span></h3>
 <ul>
   <li><code>nv run npm run build</code> が、<code>.node-version</code> の Node と、その版に付いた npm で動く。<code>package.json</code> のスクリプトの中で起きる <code>node</code> も同じ版</li>
   <li><code>node_modules</code> を消してから <code>nv run &lt;プロジェクトの依存にある道具&gt;</code> を打つと、先に依存が入り、その道具が動く</li>
@@ -71,29 +41,29 @@
   <li><code>echo hi | nv run node -e "process.stdin.pipe(process.stdout)"</code> で <code>hi</code> が出る</li>
   <li>動かしたコマンドが 3 で終わると、<code>nv run</code> も 3 で終わる</li>
 </ul>
-
-<h3 id="ac-005"><span class="id">AC-005</span>x <span class="refs">REQ-005</span></h3>
+</article>
+<article class="item" id="ac-005"><h3><span class="id">AC-005</span>x <span class="refs"><a href="node.html#req-005">REQ-005</a></span></h3>
 <ul>
   <li>プロジェクトの依存に無い道具を <code>nv x &lt;パッケージ&gt;@&lt;版&gt; --version</code> で動かすと、その版が出て、プロジェクトの <code>package.json</code>・<code>package-lock.json</code>・<code>node_modules</code> は変わらない</li>
   <li>2 回目は置き場のものを使い、取り直さない</li>
   <li>版を <code>latest</code> や <code>4</code> と書くと、何もせずに止まる</li>
   <li>プロジェクトの外で <code>nv x … --node 22.11.0</code> を打つと、その版の Node で動く。<code>.node-version</code> も <code>--node</code> も無いと、何もせずに止まる。<code>.node-version</code> のあるプロジェクトでは、その版で動く</li>
 </ul>
-
-<h3 id="ac-006"><span class="id">AC-006</span>Node の版の管理 <span class="refs">REQ-006</span></h3>
+</article>
+<article class="item" id="ac-006"><h3><span class="id">AC-006</span>Node の版の管理 <span class="refs"><a href="node.html#req-006">REQ-006</a></span></h3>
 <ul>
   <li><code>nv node install 22.11.0</code> のあと <code>nv node list</code> に <code>22.11.0</code> が出る。<code>nv node uninstall 22.11.0</code> のあと出ない</li>
   <li><code>nv node list --remote</code> は、系列ごとに最新の版が 1 行ずつ、新しい順に並ぶ。LTS の版には LTS の名前が付き、置き場に入っている版には印が付く。その OS 向けの配布物が無い版は出ない</li>
   <li><code>nv node list --remote 24</code> は 24 系のすべての版、<code>--lts</code> は LTS の版だけ、<code>--all</code> はすべての版を出す</li>
 </ul>
-
-<h3 id="ac-007"><span class="id">AC-007</span>利用者の環境 <span class="refs">REQ-007</span></h3>
+</article>
+<article class="item" id="ac-007"><h3><span class="id">AC-007</span>利用者の環境 <span class="refs"><a href="tool.html#req-007">REQ-007</a></span></h3>
 <ul>
   <li>nv をどう使ったあとも、利用者の PATH・シェルの設定ファイル・グローバルの npm の中身が変わっていない</li>
   <li><code>nv sync</code> のあと、新しく開いた端末で <code>node --version</code> を打つと、nv を使う前と同じ結果になる(nv の Node は nv の外に出てこない)</li>
 </ul>
-
-<h3 id="ac-008"><span class="id">AC-008</span>エージェント用のスキル <span class="refs">REQ-008</span></h3>
+</article>
+<article class="item" id="ac-008"><h3><span class="id">AC-008</span>エージェント用のスキル <span class="refs"><a href="tool.html#req-008">REQ-008</a></span></h3>
 <ul>
   <li><code>nv install skill</code> のあと、<code>~/.claude/skills/</code> と <code>~/.agents/skills/</code> に nv と wrangler-compose のスキルがあり、どこに入れたかが出る</li>
   <li>入れたスキルに、REQ-008 の守らせること(Node・npm・npx を直接打たない、JS は <code>nv run node</code>、Cloudflare の環境は <code>wrangler-compose</code>)が書いてある</li>
@@ -103,14 +73,14 @@
   <li><code>nv uninstall skill</code> のあと、nv が入れたスキルが無くなり、どこから消したかが出て、ほかのスキルは変わらない</li>
   <li>2 回続けて <code>nv install skill</code> を打っても、スキルは 1 つ(上書き)</li>
 </ul>
-
-<h3 id="ac-009"><span class="id">AC-009</span>配り方 <span class="refs">REQ-009</span></h3>
+</article>
+<article class="item" id="ac-009"><h3><span class="id">AC-009</span>配り方 <span class="refs"><a href="tool.html#req-009">REQ-009</a></span></h3>
 <ul>
   <li>Node も npm も入っていない Windows と macOS で、Release から取った実行ファイルを 1 つのフォルダに置くだけで、<code>nv sync</code> と <code>nv run node --version</code> が動く(インストーラも PATH の書き換えも要らない)</li>
   <li>版のタグを push すると、その版の GitHub の Release に、Windows x64・macOS arm64・macOS x64・Linux x64 の nv と wrangler-compose の実行ファイルと検証値の一覧が並ぶ。Linux x64 の nv で <code>nv run node --version</code> が動く</li>
 </ul>
-
-<h3 id="ac-010"><span class="id">AC-010</span>更新 <span class="refs">REQ-010</span></h3>
+</article>
+<article class="item" id="ac-010"><h3><span class="id">AC-010</span>更新 <span class="refs"><a href="tool.html#req-010">REQ-010</a></span></h3>
 <ul>
   <li>古い版の nv で <code>nv self update</code> を打つと、最新の版に入れ替わり、<code>nv --version</code> に最新の版が出る。前と後の版が示される</li>
   <li>nv と同じフォルダに wrangler-compose があると、<code>nv self update</code> のあと <code>wrangler-compose --version</code> も nv と同じ版になる。無ければ wrangler-compose は入らない</li>
@@ -123,8 +93,8 @@
   <li>スキルを入れてある PC で更新すると、スキルの中身も新しい版のものになる</li>
   <li><code>nv self update</code> 以外のコマンドを打っても、GitHub へ通信しない</li>
 </ul>
-
-<h3 id="ac-011"><span class="id">AC-011</span>表示の言語 <span class="refs">REQ-011</span></h3>
+</article>
+<article class="item" id="ac-011"><h3><span class="id">AC-011</span>表示の言語 <span class="refs"><a href="tool.html#req-011">REQ-011</a></span></h3>
 <ul>
   <li>OS の言語が日本語の macOS と Windows で、<code>.node-version</code> の無いプロジェクトで <code>nv run node -v</code> を打つと、日本語のエラーが出る。<code>nv --help</code> の説明も日本語</li>
   <li>OS の言語が英語の PC では、同じ操作で英語が出る</li>
@@ -132,8 +102,8 @@
   <li>Windows の PowerShell と cmd で、日本語のメッセージが化けずに読める</li>
   <li><code>nv run npm install</code> の npm の出力は、言語によらず npm のまま出る</li>
 </ul>
-
-<h3 id="ac-012"><span class="id">AC-012</span>add・remove <span class="refs">REQ-012</span></h3>
+</article>
+<article class="item" id="ac-012"><h3><span class="id">AC-012</span>add・remove <span class="refs"><a href="node.html#req-012">REQ-012</a></span></h3>
 <ul>
   <li><code>package-lock.json</code> の無いプロジェクトで <code>nv add semver</code> を打つと、<code>package.json</code> の <code>dependencies</code> に semver が入り、<code>package-lock.json</code> ができ、<code>.node-version</code> の Node に付いた npm が使われる</li>
   <li><code>nv add --dev typescript@5.6.3 --exact</code> は、<code>devDependencies</code> に <code>"5.6.3"</code>(幅なし)で入る</li>
@@ -141,9 +111,8 @@
   <li><code>nv remove semver</code> のあと、<code>package.json</code> と <code>package-lock.json</code> から semver が消え、<code>nv run semver</code> は動かない。続けて <code>nv run</code> を打っても依存を入れ直さない</li>
   <li>依存に無いパッケージを <code>nv remove</code> すると、何も変わらずに止まる</li>
 </ul>
+</article>
+</section>
 
-<footer>docs/nv/acceptance.html</footer>
-</main>
-</div>
-</body>
-</html>
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

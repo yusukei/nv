@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D02. Node の取得と実行｜nv 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/detail/d02-node.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 詳細仕様</div><h1>D02. Node の取得と実行</h1>
+<p>Node を取り、依存を揃え、コマンドを動かす。DES-004〜008・DES-014。</p></section>
+
+<section class="section"><h2>設計</h2><article class="item" id="des-004"><h3><span class="id">DES-004</span>Node の取得 <span class="refs"><a href="../requirements/node.html#req-002">REQ-002</a></span></h3>
+<ol>
+  <li>錠 <code>locks/node-&lt;版&gt;.lock</code> を取る(<code>File::lock</code>。取れるまで待つ)。取ったあと、置き場にその版があれば何もしない(先に取った nv が入れたもの)</li>
+  <li>取り先 <code>https://nodejs.org/dist</code> から <code>v&lt;版&gt;/SHASUMS256.txt</code> と配布物を <code>tmp/</code> へ取る</li>
+  <li>配布物の SHA-256 を <code>SHASUMS256.txt</code> の行と照らす。合わない・行が無いときは消して止まる</li>
+  <li><code>tmp/</code> の中で展開し、配布物の一番上のフォルダ(<code>node-v&lt;版&gt;-&lt;OS&gt;-&lt;CPU&gt;</code>)を <code>cache/node/&lt;版&gt;</code> へ名前の付け替えで移す。移すのが最後の一手なので、途中で止まっても半端な版は置き場に無い</li>
+  <li>起動のたびに、<code>tmp/</code> に残った古いもの(1 日より前)を消す</li>
+</ol>
+<ul>
+  <li>HTTP はすべて ureq の既定の設定の 1 つの Agent で行う(環境変数のプロキシを読む)</li>
+  <li>却下: 置き場に「済み」の印のファイルを書いて見分ける(印と中身がずれうる。名前の付け替えなら、ある=完成している)</li>
+</ul>
+</article>
+<article class="item" id="des-005"><h3><span class="id">DES-005</span>sync と「依存が揃っているか」 <span class="refs"><a href="../requirements/node.html#req-003">REQ-003</a>・<a href="../requirements/node.html#req-004">REQ-004</a></span></h3>
+<ul>
+  <li>依存を入れるのは <code>npm ci</code>。npm は Node に付いてくる <code>npm-cli.js</code> を <code>node</code> で直接動かす(Windows で <code>npm.cmd</code> を通さない)</li>
+  <li>npm には環境変数 <code>npm_config_cache=~/.nv/cache/npm</code> を渡す</li>
+  <li>入れ終えたら <code>node_modules/.nv-sync</code> に、<code>package-lock.json</code> の SHA-256 と Node の版を書く。次の <code>nv run</code> は、この 2 つがいまと同じなら入れ直さない。違えば(ロックファイルを変えた・Node の版を変えた)入れ直す</li>
+  <li>入れ直すときは、プロジェクトのフォルダごとの錠を取る(同じプロジェクトで 2 つの nv が同時に <code>npm ci</code> を走らせて <code>node_modules</code> を壊さない)。錠を取ったあと印を見直し、先の nv が入れ終えていれば入れ直さない</li>
+  <li>却下: npm が書く <code>node_modules/.package-lock.json</code> と比べる(npm の内部の形で、版によって変わりうる)</li>
+  <li>却下: ファイルの更新時刻で比べる(git の取り直しで時刻が変わり、当てにならない)</li>
+  <li>成り立たない場合: 利用者が nv を通さずに <code>node_modules</code> の中を書き換えると、印は合ったままなので気付かない。<code>nv sync</code> を打てば、印に関係なく入れ直す</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">動かすものを決める順</h4><div class="steps">
+<div class="step"><div class="n">1</div><div class="t">node</div><div class="d">揃えた Node の実行ファイル</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">2</div><div class="t">npm・npx</div><div class="d">Node に付いた npm-cli.js・npx-cli.js</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">3</div><div class="t">依存の道具</div><div class="d">package-lock.json の bin の入口</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">4</div><div class="t">それ以外</div><div class="d">子の PATH から探す</div></div>
+</div></div>
+<article class="item" id="des-006"><h3><span class="id">DES-006</span>run <span class="refs"><a href="../requirements/node.html#req-004">REQ-004</a></span></h3>
+<p>コマンドの名前から、動かすものを次の順に決める。</p>
+<ol>
+  <li><code>node</code> → 揃えた Node の実行ファイル</li>
+  <li><code>npm</code>・<code>npx</code> → <code>node</code> で Node に付いた <code>npm-cli.js</code>・<code>npx-cli.js</code></li>
+  <li>プロジェクトの依存の道具 → <code>package-lock.json</code> の <code>packages</code> の <code>bin</code> から、その名前の入口のファイルを引く。入口が JavaScript(拡張子が <code>.js</code>・<code>.mjs</code>・<code>.cjs</code>、または先頭行が <code>node</code> を指す <code>#!</code>)なら <code>node &lt;入口&gt; 引数…</code> で動かす。そうでなければ(esbuild のような実行ファイル)そのまま動かす</li>
+  <li>どれでもなければ、子の <code>PATH</code> から探す(Windows で <code>.cmd</code> しか無ければ、その <code>.cmd</code> を拡張子付きで起動し、引数は Rust の標準の包み方に任せる)</li>
+</ol>
+<ul>
+  <li><code>package-lock.json</code> がまだ無いプロジェクトでは、依存を揃えずに Node だけを揃えて動かす(最初の <code>nv run npm install</code> でロックファイルを作れるようにする)</li>
+  <li><code>nv run</code>・<code>nv x</code> の後ろの引数はすべて動かすコマンドのもので、<code>--help</code>・<code>--version</code> も nv は受け取らない</li>
+  <li>子の環境: <code>PATH</code> の先頭に、Node のフォルダ → プロジェクトの <code>node_modules/.bin</code> の順で足す(子がさらに起こす <code>node</code>・<code>npm</code> も揃えたものになる)。<code>npm_config_cache</code> も渡す</li>
+  <li>シェルは通さない。macOS・Linux では <code>exec</code> で nv 自身を置き換える(終了コードとシグナルがそのまま利用者に届く)。Windows では起こして待ち、終了コードを返す(Ctrl+C は子にも届くので、nv はそれで終わらず子の終わりを待つ)</li>
+  <li>却下: 常に <code>node_modules/.bin</code> の <code>.cmd</code> を起動する(Windows で引数が <code>cmd.exe</code> の解釈を通り、<code>&amp;</code> などが壊れる・拒まれる。入口を引けば <code>cmd.exe</code> を通らない)</li>
+  <li>成り立たない場合: ロックファイルに <code>bin</code> の無い古い形(lockfileVersion 1)では入口を引けず、4 の <code>.cmd</code> に落ちる。Windows でそのとき、<code>%</code> などを含む引数は拒まれることがある(拒まれたら、その旨を示して止まる)</li>
+</ul>
+</article>
+<article class="item" id="des-007"><h3><span class="id">DES-007</span>x <span class="refs"><a href="../requirements/node.html#req-005">REQ-005</a></span></h3>
+<ul>
+  <li>入れる先は <code>cache/tools/&lt;パッケージ&gt;@&lt;版&gt;/node-&lt;Node の版&gt;/</code>(Node の版ごとに分ける。ネイティブの部品が Node の版に縛られるため)</li>
+  <li>無ければ、錠を取り、<code>tmp/</code> の中に空の <code>package.json</code> を作って <code>npm install &lt;パッケージ&gt;@&lt;版&gt;</code> を動かし、済んだら名前の付け替えで移す(DES-004 と同じ形)</li>
+  <li>動かす道具は、入れたパッケージの <code>package.json</code> の <code>bin</code> から選ぶ。1 つならそれ、複数ならパッケージ名(スコープを除く)と同じ名前のもの。どちらでもなければ、選べる名前を示して止まる</li>
+  <li>動かし方は DES-006 の 3 と同じ</li>
+</ul>
+</article>
+<article class="item" id="des-008"><h3><span class="id">DES-008</span>node list / install / uninstall <span class="refs"><a href="../requirements/node.html#req-006">REQ-006</a></span></h3>
+<ul>
+  <li><code>list</code> は <code>cache/node/</code> のフォルダ名を版の順に並べる。<code>install</code> は DES-004。<code>uninstall</code> は錠を取ってフォルダを消す</li>
+  <li><code>list --remote</code> は、取り先 <code>https://nodejs.org/dist</code> の <code>index.json</code> を読む。各版の <code>files</code> に、この OS の配布物の名前(macOS arm64 は <code>osx-arm64-tar</code>、macOS x64 は <code>osx-x64-tar</code>、Linux は <code>linux-x64</code>、Windows は <code>win-x64-zip</code>)がある版だけを残す(<code>index.json</code> の中身は 2026-10 の実物で確認: 870 版、<code>version</code>・<code>date</code>・<code>lts</code>(名前か false)・<code>files</code> などを持つ)</li>
+  <li>結果は標準出力に 1 版 1 行で出す(<code>24.21.0  LTS Krypton  (入れてある)</code>)。版の前の <code>v</code> は付けない(<code>.node-version</code> にそのまま書けるように)</li>
+</ul>
+</article>
+<article class="item" id="des-014"><h3><span class="id">DES-014</span>add・remove <span class="refs"><a href="../requirements/node.html#req-012">REQ-012</a></span></h3>
+<ul>
+  <li><code>nv add</code> は Node を揃え(REQ-002)、<code>npm install --save</code>(<code>--dev</code> なら <code>--save-dev</code>、<code>--exact</code> なら <code>--save-exact</code>)を、プロジェクトの錠(DES-005)を取って動かす。npm の出力は標準エラーへ(DES-012)</li>
+  <li><code>nv remove</code> は、先に <code>package.json</code> の <code>dependencies</code>・<code>devDependencies</code>・<code>optionalDependencies</code> にその名前があるかを見て、無ければ止まる(npm は無い名前の <code>uninstall</code> を黙って成功させるため)。あれば <code>npm uninstall</code> を動かす</li>
+  <li>どちらも、終わったあと DES-005 の印(<code>package-lock.json</code> の SHA-256 と Node の版)を書き直す。npm が <code>node_modules</code> をロックファイルのとおりにしているので、次の <code>nv run</code> は入れ直さない</li>
+  <li>却下: <code>package.json</code> を nv が書き換えてから <code>npm install</code>(npm と同じ解決を二重に持つことになる)</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

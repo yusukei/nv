@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全体像｜nv 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/detail/index.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 詳細仕様</div><h1>全体像</h1>
+<p>nv の要求仕様(REQ)と受け入れ条件(AC)を満たす作り。各 DES に、採る方式・却下した方式・成り立たない場合を書く。</p></section>
+
+<section class="section"><h2 id="des-list">設計の一覧</h2><p class="lead">番号を押すと本文へ移る。要求の番号を押すと要求仕様へ移る。</p><table><thead><tr><th style="width:10%">番号</th><th>内容</th><th style="width:30%">満たす要求</th><th style="width:24%">ページ</th></tr></thead><tbody><tr><td><a class="rid" href="d01-base.html#des-001">DES-001</a></td><td>作りの全体</td><td><a href="../requirements/tool.html#req-009">REQ-009</a></td><td><a href="d01-base.html">D01. 作りと置き場</a></td></tr>
+<tr><td><a class="rid" href="d01-base.html#des-002">DES-002</a></td><td>~/.nv の中身</td><td><a href="../requirements/node.html#req-002">REQ-002</a>・<a href="../requirements/node.html#req-003">REQ-003</a>・<a href="../requirements/node.html#req-005">REQ-005</a>・<a href="../requirements/tool.html#req-007">REQ-007</a></td><td><a href="d01-base.html">D01. 作りと置き場</a></td></tr>
+<tr><td><a class="rid" href="d01-base.html#des-003">DES-003</a></td><td>プロジェクトと Node の版の見つけ方</td><td><a href="../requirements/node.html#req-001">REQ-001</a>・<a href="../requirements/node.html#req-005">REQ-005</a></td><td><a href="d01-base.html">D01. 作りと置き場</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-004">DES-004</a></td><td>Node の取得</td><td><a href="../requirements/node.html#req-002">REQ-002</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-005">DES-005</a></td><td>sync と「依存が揃っているか」</td><td><a href="../requirements/node.html#req-003">REQ-003</a>・<a href="../requirements/node.html#req-004">REQ-004</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-006">DES-006</a></td><td>run</td><td><a href="../requirements/node.html#req-004">REQ-004</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-007">DES-007</a></td><td>x</td><td><a href="../requirements/node.html#req-005">REQ-005</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-008">DES-008</a></td><td>node list / install / uninstall</td><td><a href="../requirements/node.html#req-006">REQ-006</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr>
+<tr><td><a class="rid" href="d03-dist.html#des-009">DES-009</a></td><td>エージェント用のスキル</td><td><a href="../requirements/tool.html#req-008">REQ-008</a></td><td><a href="d03-dist.html">D03. スキル・配り方・更新・試験・確かめていないこと</a></td></tr>
+<tr><td><a class="rid" href="d03-dist.html#des-010">DES-010</a></td><td>配り方</td><td><a href="../requirements/tool.html#req-009">REQ-009</a></td><td><a href="d03-dist.html">D03. スキル・配り方・更新・試験・確かめていないこと</a></td></tr>
+<tr><td><a class="rid" href="d03-dist.html#des-011">DES-011</a></td><td>self update</td><td><a href="../requirements/tool.html#req-010">REQ-010</a></td><td><a href="d03-dist.html">D03. スキル・配り方・更新・試験・確かめていないこと</a></td></tr>
+<tr><td><a class="rid" href="d03-dist.html#des-012">DES-012</a></td><td>出力と終了コード</td><td><a href="../requirements/node.html#req-004">REQ-004</a>・<a href="../requirements/tool.html#req-007">REQ-007</a></td><td><a href="d03-dist.html">D03. スキル・配り方・更新・試験・確かめていないこと</a></td></tr>
+<tr><td><a class="rid" href="d03-dist.html#des-013">DES-013</a></td><td>試験</td><td></td><td><a href="d03-dist.html">D03. スキル・配り方・更新・試験・確かめていないこと</a></td></tr>
+<tr><td><a class="rid" href="d02-node.html#des-014">DES-014</a></td><td>add・remove</td><td><a href="../requirements/node.html#req-012">REQ-012</a></td><td><a href="d02-node.html">D02. Node の取得と実行</a></td></tr></tbody></table></section>
+<section class="section"><h2 id="facts">確かめた事実</h2>
+<table>
+  <tr><th>事実</th><th style="width:28%">出典</th></tr>
+  <tr><td>Node の配布物は <code>node-v&lt;版&gt;-&lt;OS&gt;-&lt;CPU&gt;.tar.gz</code>(darwin・linux。<code>.tar.xz</code> もある)と <code>node-v&lt;版&gt;-win-x64.zip</code>(<code>.7z</code> もある)。検証値は同じフォルダの <code>SHASUMS256.txt</code></td><td><a href="https://nodejs.org/dist/v24.11.1/SHASUMS256.txt">nodejs.org/dist/v24.11.1/SHASUMS256.txt</a></td></tr>
+  <tr><td>npm のロックファイル(lockfileVersion 3)の <code>packages</code> の各項目に、そのパッケージが入れる道具の名前と入口(<code>bin</code>)が載る。例: wrangler 4.128.0 は <code>{"wrangler":"bin/wrangler.js", …}</code></td><td>marche-ar の <code>workers/delivery/package-lock.json</code> で実測</td></tr>
+  <tr><td>Rust の <code>Command</code> は Windows で、子に渡した <code>PATH</code> を最初に探す。<code>.exe</code> 以外は拡張子を付けないと見つからない</td><td><a href="https://doc.rust-lang.org/std/process/struct.Command.html">std::process::Command</a></td></tr>
+  <tr><td>Rust 1.77.2 以降、<code>.bat</code>・<code>.cmd</code> へ渡す引数を安全に包めないとき、<code>Command</code> は起動時に <code>InvalidInput</code> で失敗する(正しい引数を拒むこともある)</td><td>CVE-2024-24576(<a href="https://tenable.com/cve/CVE-2024-24576">Tenable</a>・<a href="https://security-tracker.debian.org/tracker/CVE-2024-24576">Debian</a>)</td></tr>
+  <tr><td><code>std::fs::File::lock</code>(排他、取れるまで待つ)は Rust 1.89.0 で安定。Unix は <code>flock</code>、Windows は <code>LockFileEx</code></td><td><a href="https://doc.rust-lang.org/std/fs/struct.File.html#method.lock">std::fs::File::lock</a></td></tr>
+  <tr><td>ureq 3 の <code>Proxy::try_from_env()</code> は <code>ALL_PROXY</code>・<code>HTTPS_PROXY</code>・<code>HTTP_PROXY</code> を読み、<code>NO_PROXY</code> も効く。既定の設定がこれを使う(ureq 3.4.2 の <code>src/config.rs</code> の既定値 <code>proxy: Proxy::try_from_env()</code>)</td><td><a href="https://docs.rs/ureq/latest/ureq/struct.Proxy.html">ureq::Proxy</a>・ソース</td></tr>
+  <tr><td>Codex が利用者全体のスキルを読む場所は <code>$HOME/.agents/skills</code></td><td><a href="https://learn.chatgpt.com/docs/build-skills.md">OpenAI「Build skills」</a></td></tr>
+</table>
+</section>
+<section class="section"><h2 id="pages">この冊のページ</h2>
+<div class="idxgrid">
+<a class="idxcard" href="d01-base.html"><div class="idxnum">設計</div><h3>D01. 作りと置き場</h3><p>作りの全体、~/.nv の中身、プロジェクトと Node の版の見つけ方。DES-001〜003。</p></a>
+<a class="idxcard" href="d02-node.html"><div class="idxnum">設計</div><h3>D02. Node の取得と実行</h3><p>Node を取り、依存を揃え、コマンドを動かす。DES-004〜008・DES-014。</p></a>
+<a class="idxcard" href="d03-dist.html"><div class="idxnum">設計</div><h3>D03. スキル・配り方・更新・試験・確かめていないこと</h3><p>エージェント用のスキル、配り方、self update、出力と終了コード、試験と確かめていないこと。DES-009〜013。</p></a>
+</div>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

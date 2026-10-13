@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全体像｜wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/index.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>全体像</h1>
+<p>docker compose のように手元で開発し、それを安全に Cloudflare(リモート)へ展開する道具。要求仕様は「何ができるべきか」だけを書く。どう作るか(どの道具を中で使うか)は詳細仕様で決める。</p></section>
+
+<section class="section">
+<h2 id="purpose">何のためのものか</h2>
+<p class="big"><b>手元(local)で開発したサービスを、安全にリモート(Cloudflare の環境)へ展開する。</b></p>
+<p>これが定義の 1 つ目で、すべての要求はここから決める。定義の全文・理念・利用者の決定・用語は<a href="basis.html">決定と用語</a>にある。</p>
+
+</section>
+<section class="section"><h2 id="flow">全体の流れ</h2>
+<div class="legend"><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">利用者</span><span class="tool" style="background:#efedff;border-color:#5b5bd6">wrangler-compose</span><span class="tool" style="background:#e6f4f8;border-color:#0e7490">手元の環境</span><span class="tool" style="background:#fff4e0;border-color:#b26a00">リモートの環境</span> ／ 箱の右下は関係する要求の番号</div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 800" role="img" aria-label="書いてから本番へ展開するまでの流れ"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="10" y="10" width="230" height="670" rx="8" fill="#f5f8ff" stroke="#a9c4f5"/><text class="lt" x="125" y="34">利用者</text><text class="ls" x="125" y="51">書いて、コマンドを打つ</text>
+<rect x="250" y="10" width="230" height="670" rx="8" fill="#f7f6ff" stroke="#cbc4f5"/><text class="lt" x="365" y="34">wrangler-compose</text><text class="ls" x="365" y="51">中で Wrangler と Cloudflare の API を使う</text>
+<rect x="490" y="10" width="230" height="670" rx="8" fill="#f3f9fb" stroke="#a6d4df"/><text class="lt" x="605" y="34">手元の環境</text><text class="ls" x="605" y="51">--env local・この PC の中だけ</text>
+<rect x="730" y="10" width="240" height="670" rx="8" fill="#fffaf2" stroke="#f0d3a3"/><text class="lt" x="850" y="34">リモートの環境</text><text class="ls" x="850" y="51">staging・production など(名前は自由)</text>
+
+<rect x="20" y="78" width="210" height="64" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="125" y="102">compose ファイルを書く</text><text class="s" x="125" y="120">コードと .env.&lt;環境&gt; も用意する</text><text class="rref" x="224" y="136">REQ-001・004・005・007</text>
+<path class="ar" d="M125,142 V154 H365 V164" marker-end="url(#ar)"/>
+<rect x="260" y="166" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="190">読んで確かめる</text><text class="s" x="365" y="208">誤りがあれば何もせずに止まる</text><text class="rref" x="464" y="224">REQ-001・002・004</text>
+<line class="ar" x1="365" y1="230" x2="365" y2="252" marker-end="url(#ar)"/>
+<rect x="260" y="254" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="278">build で組み立てる</text><text class="s" x="365" y="296">環境によらず同じもの</text><text class="rref" x="464" y="312">REQ-008</text>
+<path class="ar" d="M365,318 V330 H605 V340" marker-end="url(#ar)"/>
+<rect x="500" y="342" width="210" height="64" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="605" y="366">--env local up</text><text class="s" x="605" y="384">Cloudflare に触れずに全部動かす</text><text class="rref" x="704" y="400">REQ-009・017・018</text>
+<path class="ar" d="M605,406 V418 H365 V428" marker-end="url(#ar)"/>
+<rect x="260" y="430" width="210" height="64" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="454">--dry-run up</text><text class="s" x="365" y="472">何が変わるかを示す(何も変えない)</text><text class="rref" x="464" y="488">REQ-014</text>
+<path class="ar" d="M365,494 V506 H850 V516" marker-end="url(#ar)"/>
+<rect x="745" y="518" width="210" height="64" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="850" y="542">--env staging up</text><text class="s" x="850" y="560">資源 → 移行 → Worker の順に展開</text><text class="rref" x="949" y="576">REQ-006・010・016</text>
+<line class="ar" x1="850" y1="582" x2="850" y2="604" marker-end="url(#ar)"/>
+<rect x="745" y="606" width="210" height="64" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="850" y="630">--env production up</text><text class="s" x="850" y="648">staging と同じものを展開する</text><text class="rref" x="949" y="664">REQ-010・015</text>
+
+<rect x="10" y="696" width="960" height="96" rx="8" fill="#f7f8ff" stroke="#e3e5f8"/><text class="sec" x="26" y="722">どの環境でも(--env で選ぶ)</text>
+<rect x="26" y="736" width="300" height="46" rx="7" fill="#fff" stroke="#5b5bd6"/><text class="t" x="176" y="755">ps・logs</text><text class="s" x="176" y="773">状態とログを見る。何も変えない</text><text class="rref" x="320" y="755">REQ-012</text>
+<rect x="340" y="736" width="300" height="46" rx="7" fill="#fff" stroke="#5b5bd6"/><text class="t" x="490" y="755">backup・restore</text><text class="s" x="490" y="773">D1・R2・KV の中身を書き出す・戻す</text><text class="rref" x="634" y="755">REQ-013</text>
+<rect x="654" y="736" width="300" height="46" rx="7" fill="#fff" stroke="#5b5bd6"/><text class="t" x="804" y="755">down</text><text class="s" x="804" y="773">下ろす。データは --purge のときだけ消す</text><text class="rref" x="948" y="755">REQ-011・015</text>
+</svg></div>
+<p class="lead">手元で動いたものと同じ組み立てたものを、staging、production の順に展開する。環境の違いは <code>.env.&lt;環境&gt;</code> の値だけで表し、compose ファイルは 1 つ(REQ-004)。</p>
+
+</section>
+<section class="section"><h2 id="services">compose ファイルとつながり</h2>
+<p>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。1 つのサービスは 1 つの Worker か 1 つの資源。下は<a href="write.html#example">compose ファイルの例</a>のつながりを図にしたもの。</p>
+<div class="legend"><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">Worker(作り直せるもの)</span><span class="tool" style="background:#eefaf2;border-color:#1b8a4c">資源(中身はデータ)</span> ／ 線の名前は Worker から見える名前(<code>env.&lt;名前&gt;</code>)</div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 430" role="img" aria-label="compose ファイルの例のサービスとつながり"><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="40" y="30" width="180" height="56" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="130" y="54">web</text><text class="s" x="130" y="72">worker・ports 8787</text>
+<rect x="340" y="220" width="200" height="56" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="440" y="244">api</text><text class="s" x="440" y="262">worker・Durable Object の Counter</text>
+<rect x="700" y="30" width="180" height="56" rx="7" fill="#eefaf2" stroke="#1b8a4c"/><text class="t" x="790" y="54">files</text><text class="s" x="790" y="72">r2・public・ports 9000</text>
+<rect x="700" y="110" width="180" height="56" rx="7" fill="#eefaf2" stroke="#1b8a4c"/><text class="t" x="790" y="134">db</text><text class="s" x="790" y="152">d1・migrations</text>
+<rect x="700" y="190" width="180" height="56" rx="7" fill="#eefaf2" stroke="#1b8a4c"/><text class="t" x="790" y="214">uploads</text><text class="s" x="790" y="232">r2・name: incoming</text>
+<rect x="700" y="270" width="180" height="56" rx="7" fill="#eefaf2" stroke="#1b8a4c"/><text class="t" x="790" y="294">cache</text><text class="s" x="790" y="312">kv</text>
+<rect x="700" y="350" width="180" height="56" rx="7" fill="#eefaf2" stroke="#1b8a4c"/><text class="t" x="790" y="374">jobs</text><text class="s" x="790" y="392">queue</text>
+<path class="ar" d="M220,58 H697" marker-end="url(#ar2)"/><text class="lbl halo" x="460" y="52" text-anchor="middle">FILES</text>
+<path class="ar" d="M130,86 V248 H337" marker-end="url(#ar2)"/><text class="lbl halo" x="138" y="180">API(Worker を呼ぶ)</text>
+<line class="ar" x1="540" y1="248" x2="697" y2="70" marker-end="url(#ar2)"/><text class="lbl halo" x="652" y="118">FILES</text>
+<line class="ar" x1="540" y1="248" x2="697" y2="138" marker-end="url(#ar2)"/><text class="lbl halo" x="652" y="166">DB</text>
+<line class="ar" x1="540" y1="248" x2="697" y2="218" marker-end="url(#ar2)"/><text class="lbl halo" x="652" y="222">UPLOADS</text>
+<line class="ar" x1="540" y1="248" x2="697" y2="298" marker-end="url(#ar2)"/><text class="lbl halo" x="652" y="279">CACHE</text>
+<line class="ar" x1="540" y1="248" x2="697" y2="370" marker-end="url(#ar2)"/><text class="lbl halo" x="652" y="330">JOBS(送る)</text>
+<path class="ar dash" d="M700,396 H440 V279" marker-end="url(#ar2)"/><text class="lbl halo" x="452" y="388">consumes(受け取る)</text>
+<path class="ar dash" d="M880,218 H930 V378 H883" marker-end="url(#ar2)"/><text class="lbl halo" x="936" y="302">通知</text>
+</svg></div>
+<p class="lead">つながる相手は先に建てる。つながりは手元でもリモートでも同じに働く(REQ-003)。</p>
+
+</section>
+<section class="section"><h2 id="names">名前と持ち主</h2>
+<p>リモートの Worker と資源の名前は、道具が <code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code> で決める。名前から、どのプロジェクトのどの環境のものかが必ず分かり、道具が作る・使う・消すのはその環境のものだけ(REQ-006)。</p>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 410" role="img" aria-label="名前で持ち主を決める"><defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="20" y="150" width="230" height="96" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="135" y="176">wrangler-compose</text><text class="s" x="135" y="196">--env staging</text><text class="s" x="135" y="212">(name: shop の compose ファイル)</text><text class="rref" x="244" y="238">REQ-006</text>
+<rect x="290" y="20" width="670" height="380" rx="10" fill="#fffaf2" stroke="#f0d3a3"/><text class="lt" x="625" y="46">Cloudflare のアカウント</text><text class="ls" x="625" y="64">.env.staging の CLOUDFLARE_ACCOUNT_ID のものだけを操作する</text>
+<path class="ar" d="M250,198 H280 V157 H307" marker-end="url(#ar3)"/>
+<rect x="310" y="84" width="310" height="146" rx="8" fill="#fff" stroke="#b26a00" stroke-width="2"/><text class="sec mono" x="324" y="110">shop--staging--</text><g class="pill"><rect x="498" y="94" width="110" height="20" rx="10" fill="#b26a00"/><text x="553" y="108">作る・使う・消す</text></g>
+<text class="mono" x="324" y="140">shop--staging--web</text><text class="mono" x="324" y="160">shop--staging--api</text><text class="mono" x="324" y="180">shop--staging--db</text><text class="mono" x="324" y="200">shop--staging--incoming …</text><text class="lbl" x="324" y="220">この環境のもの</text>
+<rect x="635" y="84" width="310" height="146" rx="8" fill="#f4f5f8" stroke="#cfd4dc" stroke-dasharray="5 4"/><text class="sec mono" x="649" y="110">shop--production--</text><g class="pill"><rect x="843" y="94" width="88" height="20" rx="10" fill="#8a93a3"/><text x="887" y="108">触らない</text></g>
+<text class="mono" x="649" y="140">shop--production--web</text><text class="mono" x="649" y="160">shop--production--db …</text><text class="lbl" x="649" y="220">同じプロジェクトの別の環境</text>
+<rect x="310" y="246" width="310" height="140" rx="8" fill="#f4f5f8" stroke="#cfd4dc" stroke-dasharray="5 4"/><text class="sec mono" x="324" y="272">other--staging--</text><g class="pill"><rect x="518" y="256" width="88" height="20" rx="10" fill="#8a93a3"/><text x="562" y="270">触らない</text></g>
+<text class="mono" x="324" y="302">other--staging--web</text><text class="mono" x="324" y="322">other--staging--cache …</text><text class="lbl" x="324" y="374">別のプロジェクト(別の compose ファイル)</text>
+<rect x="635" y="246" width="310" height="140" rx="8" fill="#f4f5f8" stroke="#cfd4dc" stroke-dasharray="5 4"/><text class="sec" x="649" y="272">名前が決まりに合わないもの</text><g class="pill"><rect x="843" y="256" width="88" height="20" rx="10" fill="#8a93a3"/><text x="887" y="270">触らない</text></g>
+<text class="mono" x="649" y="302">blog-api</text><text class="mono" x="649" y="322">shop-staging-db</text><text class="lbl" x="649" y="374">手で作ったもの・以前の版の名前(- 1 つの区切り)</text>
+</svg></div>
+<p class="lead">手元(<code>--env local</code>)でも、プロジェクトごとにプロセス・待ち受けのポート・データの置き場・Worker の呼び出し先の登録を分け、ほかのプロジェクトと共有しない(定義 3・REQ-009)。手元のものがリモートの資源に触れることも、その逆も無い。</p>
+
+</section>
+<section class="section"><h2 id="data">作り直せるものとデータ</h2>
+<p>Worker は compose ファイルとコードから <code>up</code> で同じものができる。D1・R2・KV・Queue と Durable Objects の中身はデータで、作り直せない。データは明示したときだけ消す。</p>
+<table>
+<thead><tr><th>操作</th><th>Worker</th><th>データ(D1・R2・KV・Queue)</th><th>確かめ</th><th>要求</th></tr></thead>
+<tbody>
+<tr><th><code>up</code></th><td>展開する。リモートでは compose ファイルに無い、この環境の Worker を消す</td><td>無ければ作り、移行を当てる。compose ファイルに無いものは示すだけで消さない</td><td>まだ無い環境への初めての up。Durable Object を消すときは、消す・残す・やめるを選ばせる</td><td>REQ-010・015</td></tr>
+<tr><th><code>up --purge</code></th><td>up と同じ</td><td>compose ファイルに無い、この環境のものも消す</td><td><span class="badge warn">環境名を打ち直す</span></td><td>REQ-010</td></tr>
+<tr><th><code>down</code></th><td>依存の逆の順に下ろす</td><td><span class="badge yes">残す</span></td><td>リモートは環境名を打ち直す。手元は確かめない</td><td>REQ-011</td></tr>
+<tr><th><code>down --purge</code></th><td>下ろす</td><td><span class="badge no">消す</span></td><td><span class="badge warn">環境名を打ち直す</span>(手元も)</td><td>REQ-011・015</td></tr>
+</tbody></table>
+<p class="lead">消す操作は、消すものを示してから環境名の打ち直しで確かめる。打ち直しを受けられない場(CI など)では止まる。</p>
+
+</section>
+<section class="section"><h2 id="req-list">要求の一覧</h2><p class="lead">番号を押すと本文へ移る。右は載っているページ。</p><div class="rqbox"><ul class="rq">
+<li><a class="rid" href="write.html#req-001">REQ-001</a><span class="rt">compose ファイル</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-002">REQ-002</a><span class="rt">サービスの型</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-003">REQ-003</a><span class="rt">つながり</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-004">REQ-004</a><span class="rt">環境ごとの値</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-005">REQ-005</a><span class="rt">シークレット</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-006">REQ-006</a><span class="rt">環境</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-007">REQ-007</a><span class="rt">Worker のフォルダ</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="commands.html#req-008">REQ-008</a><span class="rt">build</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-009">REQ-009</a><span class="rt">up(手元)</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-010">REQ-010</a><span class="rt">up(リモート)</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-011">REQ-011</a><span class="rt">down</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-012">REQ-012</a><span class="rt">ps・logs</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-013">REQ-013</a><span class="rt">backup・restore</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="commands.html#req-014">REQ-014</a><span class="rt">dry-run</span><span class="rs">02. コマンド</span></li>
+<li><a class="rid" href="common.html#req-015">REQ-015</a><span class="rt">安全</span><span class="rs">03. 全体の条件と範囲</span></li>
+<li><a class="rid" href="common.html#req-016">REQ-016</a><span class="rt">手で行う段取りを持たない</span><span class="rs">03. 全体の条件と範囲</span></li>
+<li><a class="rid" href="common.html#req-017">REQ-017</a><span class="rt">道具のサービス</span><span class="rs">03. 全体の条件と範囲</span></li>
+<li><a class="rid" href="common.html#req-018">REQ-018</a><span class="rt">手元と本番の違いの知らせ</span><span class="rs">03. 全体の条件と範囲</span></li>
+<li><a class="rid" href="common.html#req-019">REQ-019</a><span class="rt">配り方・表示の言語</span><span class="rs">03. 全体の条件と範囲</span></li>
+</ul></div></section>
+<section class="section"><h2 id="pages">この冊のページ</h2>
+<div class="idxgrid">
+<a class="idxcard" href="write.html"><div class="idxnum">要求</div><h3>01. compose ファイルを書く</h3><p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007。</p></a>
+<a class="idxcard" href="commands.html"><div class="idxnum">要求</div><h3>02. コマンド</h3><p>build・up・down・ps・logs・backup・restore・--dry-run が何をするか。REQ-008〜014。</p></a>
+<a class="idxcard" href="common.html"><div class="idxnum">要求</div><h3>03. 全体の条件と範囲</h3><p>どの操作にも掛かる決まり(安全・手で行う段取り・道具のサービス・違いの知らせ・配り方)と、範囲外。REQ-015〜019。</p></a>
+<a class="idxcard" href="basis.html"><div class="idxnum">確認</div><h3>決定と用語</h3><p>すべての要求のもとになる定義、docker compose から受け継ぐ理念、利用者の決定、用語。</p></a>
+<a class="idxcard" href="acceptance.html"><div class="idxnum">確認</div><h3>受け入れ条件</h3><p>要求仕様の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(--env local)の条件は網を切った PC でも確かめられ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(--env ac-1 など)で、利用者の許可を得てから確かめる。本番では行わない。</p></a>
+</div>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D01. 作りと置き場｜nv 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/detail/d01-base.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 詳細仕様</div><h1>D01. 作りと置き場</h1>
+<p>作りの全体、~/.nv の中身、プロジェクトと Node の版の見つけ方。DES-001〜003。</p></section>
+
+<section class="section"><h2>設計</h2>
+<article class="item" id="des-001"><h3><span class="id">DES-001</span>作りの全体 <span class="refs"><a href="../requirements/tool.html#req-009">REQ-009</a></span></h3>
+<ul>
+  <li>Rust の 1 つのワークスペースに、実行ファイルごとのクレート <code>crates/nv</code> と <code>crates/wrangler-compose</code> を置く。2 つは互いのコードに頼らない(要求の境目のとおり)。nv が wrangler-compose について知るのは、実行ファイルの名前とスキルの中身だけ</li>
+  <li>Rust の最低の版は 1.89(<code>File::lock</code> を使うため)</li>
+  <li>頼るクレート: <code>clap</code>(引数)、<code>ureq</code> 3(HTTP。TLS は rustls)、<code>sha2</code>、<code>flate2</code>+<code>tar</code>(<code>.tar.gz</code>)、<code>zip</code>(Windows)、<code>serde_json</code>(ロックファイル)</li>
+  <li>却下: <code>reqwest</code>(非同期の実行環境を抱え、実行ファイルが大きくなる。nv の取得は 1 本ずつで足りる)</li>
+  <li>却下: <code>.tar.xz</code> を取る(小さいが、xz の展開に C のライブラリか重いクレートが要る。<code>.tar.gz</code> は純 Rust で展開できる)</li>
+</ul>
+</article>
+<article class="item" id="des-002"><h3><span class="id">DES-002</span>~/.nv の中身 <span class="refs"><a href="../requirements/node.html#req-002">REQ-002</a>・<a href="../requirements/node.html#req-003">REQ-003</a>・<a href="../requirements/node.html#req-005">REQ-005</a>・<a href="../requirements/tool.html#req-007">REQ-007</a></span></h3>
+<table>
+  <tr><th style="width:40%">場所</th><th>中身</th></tr>
+  <tr><td><code>~/.nv/cache/node/&lt;版&gt;/</code></td><td>展開した Node(macOS・Linux は <code>bin/node</code>、Windows は <code>node.exe</code>)。npm は Node に付いてくるものを使う</td></tr>
+  <tr><td><code>~/.nv/cache/npm/</code></td><td>nv が動かす npm のキャッシュ</td></tr>
+  <tr><td><code>~/.nv/cache/tools/&lt;パッケージ&gt;@&lt;版&gt;/node-&lt;Node の版&gt;/</code></td><td><code>nv x</code> で入れた道具(スコープの <code>/</code> は <code>+</code> に置き換える)</td></tr>
+  <tr><td><code>~/.nv/cache/tmp/</code></td><td>取得と展開の途中のもの。置き場と同じディスクに置き、済んだら名前の付け替えで移す</td></tr>
+  <tr><td><code>~/.nv/cache/locks/</code></td><td>取り合いを防ぐ錠のファイル</td></tr>
+</table>
+<ul>
+  <li>ホームは、Windows は <code>USERPROFILE</code>、ほかは <code>HOME</code> から得る</li>
+  <li>環境変数 <code>NV_HOME</code> があれば <code>~/.nv</code> の代わりに使う(試験で、利用者の <code>~/.nv</code> を汚さずに回すため。利用者向けには書かない)</li>
+  <li>却下: OS の作法に従って分ける(uv の形)。利用者の決定で <code>~/.nv</code> にまとめる</li>
+</ul>
+</article>
+<article class="item" id="des-003"><h3><span class="id">DES-003</span>プロジェクトと Node の版の見つけ方 <span class="refs"><a href="../requirements/node.html#req-001">REQ-001</a>・<a href="../requirements/node.html#req-005">REQ-005</a></span></h3>
+<ul>
+  <li>いまいるフォルダから上へたどり、最初に <code>package.json</code> があるフォルダをプロジェクトとする</li>
+  <li><code>.node-version</code> と <code>package-lock.json</code> は、そのプロジェクトのフォルダにあるものだけを読む(上へは探さない。「1 か所で決める」ため)</li>
+  <li><code>.node-version</code> は前後の空白と行末を除いた 1 行。先頭の <code>v</code> は受ける(fnm などが書く形)。それ以外は <code>数.数.数</code> だけを受ける</li>
+  <li>成り立たない場合: npm のワークスペースの子のフォルダで打つと、子の <code>package.json</code> がプロジェクトになり、ロックファイルが無くて止まる。ワークスペースは範囲外として、止まったときに上のフォルダで打つよう示す</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

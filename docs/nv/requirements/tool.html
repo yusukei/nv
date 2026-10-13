@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02. 道具としての決まり｜nv 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="nv/requirements/tool.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">nv 要求仕様</div><h1>02. 道具としての決まり</h1>
+<p>利用者の環境・エージェント用のスキル・配り方・更新・表示の言語と、範囲外。REQ-007〜011。</p></section>
+
+<section class="section"><h2>要求</h2>
+<article class="item" id="req-007"><h3><span class="id">REQ-007</span>利用者の環境に手を出さない</h3>
+<ul>
+  <li>利用者の PATH、シェルの設定、ほかの道具(fnm・Homebrew・グローバルの npm)で入れたものに、何もしない。例外は、利用者が <code>nv install skill</code> / <code>nv uninstall skill</code> を打ったときの、エージェントのスキルの置き場だけ(REQ-008)と、<code>nv self update</code> を打ったときの nv と wrangler-compose の実行ファイルと、更新が残した古い実行ファイルの片付け(次に nv を起動したときに行う)だけ(REQ-010)</li>
+  <li>揃えた Node は、nv が起動する処理の中だけで使う</li>
+</ul>
+</article>
+<article class="item" id="req-008"><h3><span class="id">REQ-008</span>エージェント用のスキル</h3>
+<ul>
+  <li><code>nv install skill</code> は、コーディング用のエージェント(Claude Code と Codex)に、nv と wrangler-compose の使い方のスキルを入れる。<code>nv uninstall skill</code> は、入れたスキルを消す(nv が入れたもの以外は消さない)</li>
+  <li>入れる範囲は利用者全体(その PC のすべてのプロジェクトで効く)(利用者の決定)</li>
+  <li>Codex 向けには、利用者全体の共有の置き場 <code>~/.agents/skills/</code> に常に入れる(Codex が利用者のスキルを読む場所。OpenAI の資料「Build skills」)。この置き場はほかのエージェントとも共有で、Codex が入っているかは見分けない(利用者の決定)</li>
+  <li>Claude Code 向けには <code>~/.claude/skills/</code> に入れる。<code>~/.claude</code> が無い PC(Claude Code が無い)では入れず、入れなかったことを示す</li>
+  <li>スキルは、エージェントに次を守らせる: Node・npm・npx を直接打たず、<code>nv sync</code>・<code>nv run &lt;コマンド&gt;</code>・<code>nv x &lt;パッケージ&gt;@&lt;版&gt;</code> を使う。JS のスクリプトは <code>nv run node &lt;スクリプト&gt;</code> で動かす。依存を足す・外すのは <code>nv add</code>・<code>nv remove</code>。Cloudflare の環境の建てる・下ろす・バックアップする・戻すは、<code>wrangler deploy</code> などを直接打たず <code>wrangler-compose --env &lt;環境名&gt; &lt;操作&gt;</code> で行う</li>
+  <li>スキルの中身は、その版の nv と wrangler-compose の使い方と一致する(nv を更新したら、入れてあるスキルも合わせる。REQ-010)</li>
+  <li>入れる・消すときに、どのエージェントのどこに入れた・消したかを示す</li>
+</ul>
+</article>
+<article class="item" id="req-009"><h3><span class="id">REQ-009</span>配り方</h3>
+<ul>
+  <li>OS ごとの単体の実行ファイルで配る(Windows x64、macOS arm64・x64、Linux x64)。動かすのに Node も npm も要らない</li>
+  <li>GitHub の公開のリポジトリに置き、版のタグを push すると、GitHub Actions が OS ごとに組み、その版の Release に実行ファイルと、その検証値の一覧を置く(利用者の決定)</li>
+  <li>nv と wrangler-compose は同じ版のタグで一緒に組み、同じ Release に並べる(版は 2 つで揃える)</li>
+  <li>最初の導入は、Release から OS に合う nv(と、使うなら wrangler-compose)を取り、1 つのフォルダに置くだけで済む(インストーラや PATH の書き換えを要さない。PATH に入れるかは利用者が決める)</li>
+</ul>
+</article>
+<article class="item" id="req-010"><h3><span class="id">REQ-010</span>更新</h3>
+<ul>
+  <li><code>nv self update</code> は、GitHub の Release の最新の版を調べ、いまの版より新しければ、OS に合う実行ファイルを取り、Release の検証値の一覧と照らしてから、nv 自身と入れ替える。合わなければ入れ替えずに止まる</li>
+  <li>nv と同じフォルダに wrangler-compose があれば、同じ版の wrangler-compose にも同じ手順で入れ替える(2 つの版がずれない)</li>
+  <li><code>nv self update --check</code> は、新しい版があるかだけを示し、何も変えない</li>
+  <li>取得は REQ-002 と同じく社内のプロキシの設定に従う</li>
+  <li>入れ替える前と後の版を示す。すでに最新なら何もしない</li>
+  <li>取っている途中や入れ替えの途中で止まっても、いまの nv は動くまま残る(Windows で、動いている実行ファイルを入れ替えられない場合も含む)</li>
+  <li>入れ替えたあと、エージェントのスキルが入っていれば、新しい版の中身に入れ直す(REQ-008)</li>
+  <li>nv は、利用者が打たない限り、更新を調べに行かない(打ったコマンドのたびに網へ出ない)</li>
+</ul>
+</article>
+<article class="item" id="req-011"><h3><span class="id">REQ-011</span>表示の言語</h3>
+<ul>
+  <li>nv が自分で出すメッセージ(進み具合・結果・エラー)と <code>--help</code> の説明は、OS の言語が日本語なら日本語、それ以外は英語で出す(利用者の決定)。OS の言語は、ロケールの環境変数(<code>LC_ALL</code>・<code>LC_MESSAGES</code>・<code>LANG</code>。<code>C</code>・<code>POSIX</code> は除く)を先に見て、無ければ OS の設定で決める</li>
+  <li>環境変数 <code>NV_LANG</code>(<code>ja</code> / <code>en</code>)があれば、OS の言語より優先する(エージェントが出力を読むときなどに言語を固定できる)</li>
+  <li>nv が動かしたコマンド(Node・npm・道具)の出力は、そのまま出す(訳さない)。エージェント用のスキルの中身は英語のまま</li>
+</ul>
+</article>
+</section>
+<section class="section"><h2 id="out-of-scope">範囲外</h2>
+<ul>
+  <li>npm 以外の依存の道具(yarn・pnpm・bun)</li>
+  <li>依存の版を上げるための専用のコマンド。<code>nv run npm update …</code> で npm に任せる。依存を足す・外すのは <code>nv add</code>・<code>nv remove</code>(REQ-012)</li>
+  <li>グローバルへの導入とシェルへの組み込み(fnm の <code>use</code> や、シムのようなもの)</li>
+</ul>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

@@ -1,55 +1,17 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wrangler-compose 受け入れ条件</title>
-<link rel="stylesheet" href="../assets/style.css">
-</head>
-<body>
-<div class="layout">
-<nav class="toc">
-  <div class="site"><a href="../index.html">仕様書</a></div>
-  <ul>
-    <li><a href="../nv/requirements.html">nv 要求仕様</a></li>
-    <li><a href="../nv/acceptance.html">nv 受け入れ条件</a></li>
-    <li><a href="../nv/design.html">nv 設計</a></li>
-    <li><a href="requirements.html">wrangler-compose 要求仕様</a></li>
-    <li><a class="current" href="acceptance.html">wrangler-compose 受け入れ条件</a></li>
-    <li><a href="design.html">wrangler-compose 設計</a></li>
-    <li><a href="local-support.html">手元で使えないもの</a></li>
-  </ul>
-  <ul>
-    <li><a href="#fixture">試験用のプロジェクト</a></li>
-    <li><a href="#ac-001">AC-001 compose ファイル</a></li>
-    <li><a href="#ac-002">AC-002 サービスの型</a></li>
-    <li><a href="#ac-003">AC-003 つながり</a></li>
-    <li><a href="#ac-004">AC-004 環境ごとの値</a></li>
-    <li><a href="#ac-005">AC-005 シークレット</a></li>
-    <li><a href="#ac-006">AC-006 環境</a></li>
-    <li><a href="#ac-007">AC-007 Worker のフォルダ</a></li>
-    <li><a href="#ac-008">AC-008 build</a></li>
-    <li><a href="#ac-009">AC-009 up(手元)</a></li>
-    <li><a href="#ac-010">AC-010 up(リモート)</a></li>
-    <li><a href="#ac-011">AC-011 down</a></li>
-    <li><a href="#ac-012">AC-012 ps・logs</a></li>
-    <li><a href="#ac-013">AC-013 backup・restore</a></li>
-    <li><a href="#ac-014">AC-014 dry-run</a></li>
-    <li><a href="#ac-015">AC-015 安全</a></li>
-    <li><a href="#ac-016">AC-016 手で行う段取り</a></li>
-    <li><a href="#ac-017">AC-017 道具のサービス</a></li>
-    <li><a href="#ac-018">AC-018 手元と本番の違い</a></li>
-    <li><a href="#ac-019">AC-019 配り方・表示の言語</a></li>
-  </ul>
-</nav>
-<main>
-<h1>wrangler-compose 受け入れ条件</h1>
-<p class="lead"><a href="requirements.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>受け入れ条件｜wrangler-compose 要求仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/acceptance.html"></nav><main class="page">
 
-<h2 id="fixture">試験用のプロジェクト</h2>
+<section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>受け入れ条件</h1>
+<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
+
+<section class="section"><h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>files</code> と <code>uploads</code>(R2。<code>uploads</code> は <code>name: incoming</code>)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
-
-<h3 id="ac-001"><span class="id">AC-001</span>compose ファイル <span class="refs">REQ-001</span></h3>
+</section>
+<section class="section"><h2>受け入れ条件</h2>
+<article class="item" id="ac-001"><h3><span class="id">AC-001</span>compose ファイル <span class="refs"><a href="write.html#req-001">REQ-001</a></span></h3>
 <ul>
   <li>プロジェクトの根でも <code>api/</code> の中でも、同じ compose ファイルが使われる</li>
   <li><code>name</code> を省くと、フォルダ名がプロジェクトの名前として出る</li>
@@ -57,8 +19,8 @@
   <li><code>x-</code> で始まるキーを書いても動く</li>
   <li>知らないキー(<code>image</code> など)・型に合わないキー(<code>d1</code> に <code>ports</code>)・無いサービスを指すもの・<code>depends_on</code> の輪・<code>.yaml</code> と <code>.yml</code> の両方があることは、どれも何もせずに止まり、場所と理由が出る</li>
 </ul>
-
-<h3 id="ac-002"><span class="id">AC-002</span>サービスの型 <span class="refs">REQ-002</span></h3>
+</article>
+<article class="item" id="ac-002"><h3><span class="id">AC-002</span>サービスの型 <span class="refs"><a href="write.html#req-002">REQ-002</a></span></h3>
 <ul>
   <li>5 つの型が、手元とリモートの両方で、それぞれ Worker・D1・R2・KV・Queue として建つ。知らない <code>type</code> は止まる</li>
   <li>D1・R2・KV・Queue のそれぞれで、1 つのサービスが資源 1 つになる。<code>buckets</code> などの複数形を書くと、サービスを分けるよう出て止まる。<code>name</code> が同じプロジェクトの別のサービスと重なると止まる</li>
@@ -66,16 +28,16 @@
   <li><code>environment</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
   <li><code>compatibility_date</code> の無い Worker のサービスは、何もせずに止まる(場所を示す)</li>
 </ul>
-
-<h3 id="ac-003"><span class="id">AC-003</span>つながり <span class="refs">REQ-003</span></h3>
+</article>
+<article class="item" id="ac-003"><h3><span class="id">AC-003</span>つながり <span class="refs"><a href="write.html#req-003">REQ-003</a></span></h3>
 <ul>
   <li>手元とリモートの両方で、<code>web</code> → <code>api</code> の呼び出し、<code>api</code> → D1・R2・KV・Queue、別の Worker から <code>api.Counter</code> の Durable Object が通る</li>
   <li><code>api</code> が <code>jobs</code> に送ったメッセージを、<code>consumes: [jobs]</code> の Worker が受け取る</li>
   <li><code>depends_on</code> に書いていない相手でも先に建つ。相手に無いクラスを指すと止まる</li>
   <li><code>files</code> と <code>uploads</code> が別のバケットとして見える</li>
 </ul>
-
-<h3 id="ac-004"><span class="id">AC-004</span>環境ごとの値 <span class="refs">REQ-004</span></h3>
+</article>
+<article class="item" id="ac-004"><h3><span class="id">AC-004</span>環境ごとの値 <span class="refs"><a href="write.html#req-004">REQ-004</a></span></h3>
 <ul>
   <li><code>${WEB_DOMAIN}</code> が <code>--env</code> ごとにその <code>.env.&lt;環境&gt;</code> の値になる。同じ名前の環境変数があればそちらになる</li>
   <li><code>${VAR:-既定}</code>・<code>${VAR:?説明}</code>・<code>$$</code> が docker compose と同じに展開される</li>
@@ -84,16 +46,16 @@
   <li><code>secrets</code> の <code>${WC_R2_STORAGE_S3_KEY}</code>・<code>${WC_R2_STORAGE_S3_SECRET}</code> に、手元ではプロジェクトの鍵(<code>.wrangler/compose/local/s3-keys.json</code>。本人だけが読める)が入り、別のプロジェクトでは違う鍵になる。<code>up</code> の画面にも <code>--dry-run</code> にも鍵の値は出ない。<code>environment</code> に書く・リモートで <code>.env.&lt;環境&gt;</code> の変数を既定にせずに書くと、場所と理由が出て止まる。以前の版の決まった鍵(<code>wrangler-compose-local</code>)は 401 で拒まれる</li>
   <li>git の中で <code>.env.staging</code> が外れていない・すでに入っていると止まる</li>
 </ul>
-
-<h3 id="ac-005"><span class="id">AC-005</span>シークレット <span class="refs">REQ-005</span></h3>
+</article>
+<article class="item" id="ac-005"><h3><span class="id">AC-005</span>シークレット <span class="refs"><a href="write.html#req-005">REQ-005</a></span></h3>
 <ul>
   <li><code>STRIPE_KEY</code> が、手元でもリモートでも、<code>secrets</code> に並べた Worker からだけ見える</li>
   <li><code>environment</code>・<code>secrets</code> は対応表でも並びでも同じに読まれる。シークレットの値を compose ファイルに書くと止まり、その値はどこにも出ない。<code>vars</code> と一番上の <code>secrets</code> は書き直し方を示して止まる</li>
   <li>値を変えて <code>up</code> すると変わり、compose ファイルから消して <code>up</code> すると Worker からも消える</li>
   <li>値が無いと止まり、無い変数の名前が出る</li>
 </ul>
-
-<h3 id="ac-006"><span class="id">AC-006</span>環境 <span class="refs">REQ-006</span></h3>
+</article>
+<article class="item" id="ac-006"><h3><span class="id">AC-006</span>環境 <span class="refs"><a href="write.html#req-006">REQ-006</a></span></h3>
 <ul>
   <li><code>--env ac-1 up</code> のあと、Cloudflare に Worker も資源も <code>&lt;プロジェクト&gt;--ac-1--&lt;名前&gt;</code>(<code>…--ac-1--cache</code>・<code>…--ac-1--files</code>・<code>…--ac-1--incoming</code> など)の名前でできる。手元ではサービスの名前(<code>cache</code>・<code>files</code>)のまま。一番上の <code>name</code> が無い、3 文字未満、どこかの名前に <code>--</code> があると止まる。名前が長すぎるときは止まり、<code>name</code> を書くよう出る。続けて <code>--env ac-2 up</code> すると別のものができ、データが混ざらない</li>
   <li><code>name</code> を書くとその名前を使い、すでにあればそれを使って中身は変わらない</li>
@@ -101,27 +63,27 @@
   <li><code>.env.staging</code> に <code>CLOUDFLARE_ACCOUNT_ID</code> が無いと、<code>--env staging</code> の操作は <code>--dry-run</code> でも何もせずに止まり、使えるアカウントが出る。環境変数の <code>CLOUDFLARE_ACCOUNT_ID</code> が違うとき、ログインで見えないアカウントのときも止まる。どの場合も Cloudflare に変更の要求が出ていない</li>
   <li>網を切った PC で、<code>--env local</code> のどの操作も動く。リモートの環境の操作の間、手元で動く Worker がリモートの資源に触れていない</li>
 </ul>
-
-<h3 id="ac-007"><span class="id">AC-007</span>Worker のフォルダ <span class="refs">REQ-007</span></h3>
+</article>
+<article class="item" id="ac-007"><h3><span class="id">AC-007</span>Worker のフォルダ <span class="refs"><a href="write.html#req-007">REQ-007</a></span></h3>
 <ul>
   <li>Worker のフォルダにコードしか無くても、手元とリモートで動く</li>
   <li>組み立てのためのもの(どのファイルから組み立てるか・組み立ての手順)を置くと、その組み立て方になる</li>
   <li>振る舞いに関わる設定(つながり・値・ルートなど)を置くと止まり、compose ファイルのどこに書くかが出る</li>
   <li>どの操作のあとも、プロジェクトのファイルが変わっていない(<code>git status</code> に差分が出ない)</li>
 </ul>
-
-<h3 id="ac-008"><span class="id">AC-008</span>build <span class="refs">REQ-008</span></h3>
+</article>
+<article class="item" id="ac-008"><h3><span class="id">AC-008</span>build <span class="refs"><a href="commands.html#req-008">REQ-008</a></span></h3>
 <ul>
   <li><code>build</code> のあと、手元にもリモートにも何も建っていない</li>
   <li><code>build</code> のあとの <code>--env local up</code> と <code>--env ac-1 up</code> が、どちらも組み立て直さずに同じ組み立てたものを使う</li>
   <li>組み立てられないコードでは、どのサービスがなぜかが出て止まる</li>
 </ul>
-
-<h3 id="ac-009"><span class="id">AC-009</span>up(手元) <span class="refs">REQ-009</span></h3>
+</article>
+<article class="item" id="ac-009"><h3><span class="id">AC-009</span>up(手元) <span class="refs"><a href="commands.html#req-009">REQ-009</a></span></h3>
 <ul>
   <li>Cloudflare にログインしていない、網を切った PC で、<code>--env local up</code> がすべてを動かす。<code>web</code> は 8787、<code>api</code> は 8788 で応える</li>
   <li><code>web</code> と <code>api</code> から同時に同じ D1 へ 100 回ずつ書いても、200 行すべてが入る</li>
-  <li>同じ試験(R2・D1・KV・Queue・Durable Objects の機能を一つずつ使うもの)を、手元と試験用のリモートの環境の両方に流し、結果が同じになる。違う項目は、<a href="local-support.html">手元で使えないもの</a>に理由とともに書かれているものだけ</li>
+  <li>同じ試験(R2・D1・KV・Queue・Durable Objects の機能を一つずつ使うもの)を、手元と試験用のリモートの環境の両方に流し、結果が同じになる。違う項目は、<a href="../detail/local-support.html">手元で使えないもの</a>に理由とともに書かれているものだけ</li>
   <li>r2 のサービスの <code>ports</code> の口で: <code>cors</code> に書いた送り元からの事前確認には許す答えが、ほかの送り元には 403 が返る。署名付きの要求の答えにも、書いた送り元にだけ CORS の見出しが付く。AWS SDK で作った署名付き URL で PUT・GET が通る。<code>public: true</code> のバケットのオブジェクトが <code>http://&lt;バケット名&gt;.localhost:&lt;ポート&gt;/&lt;キー&gt;</code> で内容の種類つきで返り、公開していないバケットは 404</li>
   <li>r2 のサービスの <code>ports</code> を <code>0.0.0.0</code> にした口に、その PC の LAN のアドレスでつなぐ: そのアドレスで作った署名付き URL の GET(範囲指定を含む)と、見出しで署名した PUT が通る。署名を 1 文字変えた URL・期限の切れた URL・違う鍵は拒まれる(403 か 401)。<code>cors</code> に書いた送り元の <code>Origin</code> を付けた GET には、その送り元の CORS の見出しが付く。<code>localhost</code> からの要求は今までと同じに通る。IP アドレスでなく名前(<code>evil.test</code> など)の <code>Host</code> で届いた要求は、正しい鍵で署名しても 403 で拒まれる</li>
   <li><code>public: true</code> で <code>public_port</code> を書いたバケットは、r2 の <code>ports</code> が <code>0.0.0.0</code> のとき、ほかの機械から <code>http://&lt;PC の LAN のアドレス&gt;:&lt;public_port&gt;/&lt;キー&gt;</code> で GET できる。<code>public</code> でないバケットは、どのポートからも署名なしでは読めない</li>
@@ -134,8 +96,8 @@
   <li><code>ports</code> だけを変えた別のプロジェクトを同時に <code>up</code> すると(同じ時に打っても)、両方が応える。Worker の名前が同じでも、互いの呼び出し先の登録(dev registry)を上書きしない</li>
   <li>ほかのプログラムが <code>0.0.0.0:8787</code> で待ち受けているとき、<code>127.0.0.1:8787</code> の <code>ports</code> を持つ <code>up</code> は何も動かさずに止まり、そのポートを示す(<code>--dry-run up</code> も同じ理由を示す)。逆(ほかが <code>127.0.0.1</code>、こちらが <code>0.0.0.0</code>)も同じ</li>
 </ul>
-
-<h3 id="ac-010"><span class="id">AC-010</span>up(リモート) <span class="refs">REQ-010</span></h3>
+</article>
+<article class="item" id="ac-010"><h3><span class="id">AC-010</span>up(リモート) <span class="refs"><a href="commands.html#req-010">REQ-010</a></span></h3>
 <ul>
   <li>何も無い環境への <code>up</code> で、資源ができ、移行が当たり、シークレットが入り、Worker が展開され、<code>web</code> が <code>api</code> を通した応答を返す</li>
   <li>展開した Worker は、手元で動かしたものと同じ組み立てたもの(同じ要約)である</li>
@@ -145,70 +107,69 @@
   <li>同じアカウントに、名前の似た別のプロジェクト・別の環境(<code>staging</code> と <code>staging-eu</code> など)があっても、<code>up</code>・<code>up --purge</code>・<code>down --purge</code> はそれらに触らない</li>
   <li>compose ファイルから Durable Object のクラスを消して <code>up</code> すると、消す・残す・やめるを選ばせる。環境名を打てば保存データごと消え、<code>keep</code> なら残り、何も打たずに Enter なら何も変えずに止まる。端末が無ければ何も変えずに止まる</li>
 </ul>
-
-<h3 id="ac-011"><span class="id">AC-011</span>down <span class="refs">REQ-011</span></h3>
+</article>
+<article class="item" id="ac-011"><h3><span class="id">AC-011</span>down <span class="refs"><a href="commands.html#req-011">REQ-011</a></span></h3>
 <ul>
   <li><code>down</code> で打ち直すと Worker が無くなり、データは残り、そのあとの <code>up</code> で元に戻る</li>
   <li><code>down web</code> は <code>web</code> だけを下ろす。<code>down --purge api</code> は、<code>web</code> もつながる <code>files</code> を消さずに止まる</li>
   <li><code>down --purge</code> で打ち直すと、データも無くなる。打ち直しが違う・入力を流し込むと、何も消えない(手元の <code>--purge</code> も同じ)</li>
 </ul>
-
-<h3 id="ac-012"><span class="id">AC-012</span>ps・logs <span class="refs">REQ-012</span></h3>
+</article>
+<article class="item" id="ac-012"><h3><span class="id">AC-012</span>ps・logs <span class="refs"><a href="commands.html#req-012">REQ-012</a></span></h3>
 <ul>
   <li><code>ps</code> に、サービスごとの有無・動いているか・URL・未適用の移行の数と、compose ファイルとの違いが出る。<code>ps</code> のあと何も変わっていない</li>
   <li><code>logs -f</code> に、<code>web</code> と <code>api</code> の <code>console.log</code> の行が、頭にサービス名を付けて出る(手元・リモートとも)。<code>logs api</code> は <code>api</code> だけ</li>
 </ul>
-
-<h3 id="ac-013"><span class="id">AC-013</span>backup・restore <span class="refs">REQ-013</span></h3>
+</article>
+<article class="item" id="ac-013"><h3><span class="id">AC-013</span>backup・restore <span class="refs"><a href="commands.html#req-013">REQ-013</a></span></h3>
 <ul>
   <li><code>backup</code> のあと、<code>backups/&lt;環境&gt;/&lt;日時&gt;/</code> に D1・R2・KV のすべてが入り、数と大きさが環境と一致する</li>
-  <li>リモートの控えを <code>--env local restore --drop</code> で戻すと、手元が控えと一致する。手元の控えを別のリモートの環境へ戻しても同じ。戻す前に控えを取った環境が出る</li>
+  <li>リモートのバックアップを <code>--env local restore --drop</code> で戻すと、手元がバックアップと一致する。手元のバックアップを別のリモートの環境へ戻しても同じ。戻す前にバックアップを取った環境が出る</li>
   <li>リモートの環境の <code>backup</code> と <code>restore --drop</code> で、D1(2^53 を超える整数・整数に見える実数・印の文字で始まる文字列・BLOB を含む)・KV(メタデータを含む)・R2 の中身が元に戻る。まだ無い資源があると、先に <code>up</code> するよう出て止まる</li>
-  <li>控えのあとに足した移行だけが、戻したあとに当たる</li>
-  <li>中身がある先への <code>--drop</code> の無い <code>restore</code>、書きかけの控え、git に入る書き出し先は、どれも止まる</li>
+  <li>バックアップのあとに足した移行だけが、戻したあとに当たる</li>
+  <li>中身がある先への <code>--drop</code> の無い <code>restore</code>、書きかけのバックアップ、git に入る書き出し先は、どれも止まる</li>
 </ul>
-
-<h3 id="ac-014"><span class="id">AC-014</span>dry-run <span class="refs">REQ-014</span></h3>
+</article>
+<article class="item" id="ac-014"><h3><span class="id">AC-014</span>dry-run <span class="refs"><a href="commands.html#req-014">REQ-014</a></span></h3>
 <ul>
   <li><code>--dry-run up</code> のあと、何も変わっていない。作るもの・展開するもの・当てる移行・入れるシークレットの名前・展開した値が出る(シークレットの値は出ない)</li>
   <li>リモートの <code>--dry-run up</code> は、作るもの(+)・変えるもの(~。項目ごとに前と後の値)・消すもの(-)・変わらないもの(=)と、それぞれの数を出す。environment・routes・crons・bindings・バケットの設定・コード・当てる移行の違いが出る。シークレットは名前の増減だけが出る</li>
   <li>別の PC から同じ環境に <code>--dry-run up</code> を打っても、同じ表示になる(変わっていなければ、すべて「変わらない」)</li>
   <li>本番の操作がエラーで止まる条件では、dry-run も同じエラーで止まる</li>
 </ul>
-
-<h3 id="ac-015"><span class="id">AC-015</span>安全 <span class="refs">REQ-015</span></h3>
+</article>
+<article class="item" id="ac-015"><h3><span class="id">AC-015</span>安全 <span class="refs"><a href="common.html#req-015">REQ-015</a></span></h3>
 <ul>
   <li>まだ無い環境への初めての <code>up</code> で、新しく作ることが出て確かめを求められ、「いいえ」なら何もできない</li>
   <li>初めての環境でも消すものも無いリモートの <code>up</code> は、確かめを求めずに進む(入力を流し込めない CI でも動く)</li>
-  <li>どの操作でも、画面・ログ・控えにシークレットの値が出ない(失敗したときも)</li>
+  <li>どの操作でも、画面・ログ・バックアップにシークレットの値が出ない(失敗したときも)</li>
 </ul>
-
-<h3 id="ac-016"><span class="id">AC-016</span>手で行う段取りを持たない <span class="refs">REQ-016</span></h3>
+</article>
+<article class="item" id="ac-016"><h3><span class="id">AC-016</span>手で行う段取りを持たない <span class="refs"><a href="common.html#req-016">REQ-016</a></span></h3>
 <ul>
   <li>試験用のプロジェクトを新しく clone した PC で、Cloudflare へのログインと <code>.env.&lt;環境&gt;</code> を置くことのほかに何もせず、手元とリモートの <code>up</code> が動く</li>
   <li>受け入れの間に、Cloudflare のダッシュボードで行った段取りが 1 つも無い</li>
 </ul>
-
-<h3 id="ac-017"><span class="id">AC-017</span>道具のサービス <span class="refs">REQ-017</span></h3>
+</article>
+<article class="item" id="ac-017"><h3><span class="id">AC-017</span>道具のサービス <span class="refs"><a href="common.html#req-017">REQ-017</a></span></h3>
 <ul>
   <li><code>--env local up</code> のあと、道具のサービスが手元にあり、<code>ps</code> に分けて出る。<code>down</code> のあと無くなる</li>
   <li>リモートの <code>up</code> のあと、名前がその環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker は compose ファイルの Worker だけ</li>
   <li>リモートへの操作の間、道具が動かすのは Wrangler のコマンドだけで、Cloudflare の API へ直接の要求が 1 つも無い</li>
 </ul>
-
-<h3 id="ac-018"><span class="id">AC-018</span>手元と本番の違いの知らせ <span class="refs">REQ-018</span></h3>
+</article>
+<article class="item" id="ac-018"><h3><span class="id">AC-018</span>手元と本番の違いの知らせ <span class="refs"><a href="common.html#req-018">REQ-018</a></span></h3>
 <ul>
   <li><code>routes</code> と <code>crons</code> のあるプロジェクトの <code>--env local up</code> で、動かす前に、手元ではルートが効かないことと定期実行の試し方が出る。どちらも無ければ何も出ない</li>
 </ul>
-
-<h3 id="ac-019"><span class="id">AC-019</span>配り方・表示の言語 <span class="refs">REQ-019</span></h3>
+</article>
+<article class="item" id="ac-019"><h3><span class="id">AC-019</span>配り方・表示の言語 <span class="refs"><a href="common.html#req-019">REQ-019</a></span></h3>
 <ul>
   <li>Node も npm も入っていない Windows と macOS で、同じフォルダの wrangler-compose と nv だけで <code>--env local up</code> が動く</li>
   <li>日本語の PC では日本語、<code>NV_LANG=en</code> では英語で出る。打ち直しは環境名で進む</li>
 </ul>
+</article>
+</section>
 
-<footer>docs/wrangler-compose/acceptance.html</footer>
-</main>
-</div>
-</body>
-</html>
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

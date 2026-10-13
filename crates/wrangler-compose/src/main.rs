@@ -111,9 +111,9 @@ const JA_ABOUT: &[(&str, &str)] = &[
     ("logs", "Worker のログを、行の頭にサービス名を付けて出す"),
     (
         "backup",
-        "D1・R2・KV の中身を <書き出し先>/<環境>/<日時>/ に控える(既定は ./backups)",
+        "D1・R2・KV の中身を <書き出し先>/<環境>/<日時>/ にバックアップする(既定は ./backups)",
     ),
-    ("restore", "控えの中身を環境に戻す"),
+    ("restore", "バックアップの中身を環境に戻す"),
 ];
 const JA_ARGS: &[(&str, &str, &str)] = &[
     (
@@ -151,7 +151,7 @@ const JA_ARGS: &[(&str, &str, &str)] = &[
     (
         "restore",
         "from",
-        "控えのフォルダ(manifest.json のあるもの)",
+        "バックアップのフォルダ(manifest.json のあるもの)",
     ),
 ];
 

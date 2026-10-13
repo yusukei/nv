@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D03. リモートの up｜wrangler-compose 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d03-remote.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D03. リモートの up</h1>
+<p>Cloudflare へ展開する段、Durable Objects のクラスの足し引き、R2 のバケットの設定。DES-009・010・018。</p></section>
+
+<section class="section"><h2>設計</h2><div class="figs"><h4 class="figttl">リモートの up の段</h4><div class="steps">
+<div class="step"><div class="n">1</div><div class="t">組み立て</div><div class="d">Cloudflare に触れる前</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">2</div><div class="t">いまの Cloudflare を引く</div><div class="d">名前で一覧を引き直す</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">3</div><div class="t">確かめ</div><div class="d">初めての環境・消すもの</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">4</div><div class="t">無い資源を作る</div><div class="d">バケットの設定も合わせる</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">5</div><div class="t">サービスの順に</div><div class="d">移行 → Worker を上げる → 消えたものを消す</div></div>
+</div></div>
+<article class="item" id="des-009"><h3><span class="id">DES-009</span>リモートの up <span class="refs"><a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/write.html#req-005">REQ-005</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
+<ul>
+  <li>段: 組み立て(DES-007。Cloudflare に触れる前) → いまの Cloudflare を引く(DES-004) → 確かめ(初めての環境・<code>--purge</code> で消す資源があれば、まとめて示して環境名の打ち直し。消える Durable Object のクラスと、Durable Object を持つ消える Worker は、消す・残す・やめるを選ばせる) → 無い資源を作る → バケットの設定(DES-018) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>)、Worker を作った設定と <code>--secrets-file</code>(0600 の一時ファイル)で上げ、compose から消えたシークレットと、受け取らなくなった Queue の受け手を消す</li>
+  <li>作る設定: 組み立てたものをそのまま(<code>no_bundle</code>。横のファイルも ES モジュールとして)、バインディングは実際の名前と ID、Queue の受け手は Cloudflare の既定値、<code>routes</code> は <code>/</code> か <code>*</code> を含めばルート、含まなければ独自ドメイン。<code>workers.dev</code> の URL は、<code>ports</code> を持ち(外から呼ばれる Worker)<code>routes</code> の無い Worker だけに開く(手元で <code>ports</code> の無い Worker はリモートでも外から届かない)。プレビューの URL は開かない</li>
+  <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない。<code>--dry-run</code> は同じ段を通り、変えることを示すだけ(合言葉のファイルも作らない)</li>
+  <li>移行が失敗したら、その D1 を使う Worker と、それより後のサービスは行わない</li>
+  <li>名前がこの環境のもので compose に無い Worker は、展開のあとに消す。名前がこの環境のもので compose に無い D1・KV・R2・Queue は示し、<code>--purge</code> のときだけ消す(R2 はオブジェクトの一覧の API で空にしてから消す)</li>
+</ul>
+</article>
+<article class="item" id="des-010"><h3><span class="id">DES-010</span>Durable Objects のクラスの足し引き <span class="refs"><a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
+<ul>
+  <li>Wrangler の新しい宣言の形(<code>exports</code>。2026-07 から)を使う: compose の <code>durable_objects</code> の各クラスを <code>{"type": "durable-object", "storage": "sqlite"}</code> と宣言し、Cloudflare がいまの名前空間と比べて作る。移行のタグは持たない。古いキー値の保存のクラスは扱わない(利用者の決定 2026-10-13)。手元も同じ宣言を使う</li>
+  <li>Cloudflare に名前空間があり compose から消えたクラスは、クラスごとに消す・残す・やめるを選ばせる(環境名で消す・<code>keep</code> で残す・ほかの入力と空の Enter と端末が無いときはやめる)。消すクラスは <code>{"state": "deleted"}</code> の墓標として宣言して消し、残すクラスは今までどおり宣言する</li>
+  <li>消すクラスがあれば中身も消えるので、消すものとして示し、環境名の打ち直しで確かめる</li>
+</ul>
+</article>
+<article class="item" id="des-018"><h3><span class="id">DES-018</span>R2 のバケットの設定 <span class="refs"><a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/commands.html#req-009">REQ-009</a></span></h3>
+<ul>
+  <li><strong>リモート</strong>: <code>up</code> が、バケットごとに compose ファイルの設定と Cloudflare の設定を比べ、違えば合わせる。作るときの <code>storage_class</code>・<code>jurisdiction</code> は <code>r2 bucket create</code> の引数、ほかは <code>r2 bucket dev-url</code>(<code>public</code>)・<code>r2 bucket cors</code>・<code>r2 bucket lifecycle</code>・<code>r2 bucket notification</code>・<code>r2 bucket lock</code> で入れる。compose ファイルから消した設定は消す</li>
+  <li><strong>手元</strong>: Wrangler の手元の模擬に無いもののうち、再現すると決めたもの(CORS・公開の URL・イベント通知)を道具のサービス(DES-011)で効かせる。公開は入口のサービスがバケットの公開の URL を配り、CORS は S3 互換の口と公開の URL の応答に付け、通知はオブジェクトの変化を手元の Queue へ送る。ライフサイクル・ロック・保管の種類は手元では効かせない(REQ-009)</li>
+  <li>手元で、バインディングからの書き込み・消去(Worker のコードの <code>env.FILES.put</code> など)を道具のサービスが見る手立て(通知・ロックのため)は、作る前に確かめる(<a href="d05-test.html#unverified">確かめていないこと</a>)</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>

@@ -1,44 +1,47 @@
 <!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>仕様書</title>
-<link rel="stylesheet" href="assets/style.css">
-</head>
-<body>
-<div class="layout">
-<nav class="toc">
-  <div class="site"><a class="current" href="index.html">仕様書</a></div>
-  <ul>
-    <li><a href="nv/requirements.html">nv 要求仕様</a></li>
-    <li><a href="nv/acceptance.html">nv 受け入れ条件</a></li>
-    <li><a href="nv/design.html">nv 設計</a></li>
-    <li><a href="wrangler-compose/requirements.html">wrangler-compose 要求仕様</a></li>
-    <li><a href="wrangler-compose/acceptance.html">wrangler-compose 受け入れ条件</a></li>
-    <li><a href="wrangler-compose/design.html">wrangler-compose 設計</a></li>
-    <li><a href="wrangler-compose/local-support.html">手元で使えないもの</a></li>
-  </ul>
-</nav>
-<main>
-<h1>仕様書</h1>
-<p class="lead">このリポジトリは 2 つの道具を別々に作る。nv は Node・npm を、wrangler-compose は Cloudflare の環境を受け持つ。</p>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>仕様書｜wrangler-compose・nv</title>
+<link rel="stylesheet" href="assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="" data-page="index.html"></nav><main class="page">
 
+<section class="hero"><div class="kicker">wrangler-compose・nv</div><h1>仕様書</h1>
+<p>このリポジトリは 2 つの道具を別々に作る。wrangler-compose は Cloudflare の環境を、nv は Node・npm を受け持つ。道具ごとに、何ができるべきかを書いた要求仕様と、それを満たす作りを書いた詳細仕様がある。</p></section>
+
+<section class="section">
+<h2>道具と文書</h2>
 <table>
-  <tr><th style="width:22%">道具</th><th>受け持つこと</th><th style="width:30%">文書</th></tr>
-  <tr>
-    <td><code>nv</code></td>
-    <td>Node・npm を uv のように扱う。Node の版の固定と取得、依存の導入、揃えた環境での実行、エージェント用のスキル</td>
-    <td><a href="nv/requirements.html">要求仕様</a> / <a href="nv/acceptance.html">受け入れ条件</a> / <a href="nv/design.html">設計</a></td>
-  </tr>
-  <tr>
-    <td><code>wrangler-compose</code></td>
-    <td>手元で開発したサービスを、安全にリモート(Cloudflare の環境)へ展開する。サービスは docker compose に寄せた compose ファイルに書き、<code>--env &lt;環境&gt; up</code> で手元にもリモートにも同じ形で建てる</td>
-    <td><a href="wrangler-compose/requirements.html">要求仕様</a> / <a href="wrangler-compose/acceptance.html">受け入れ条件</a> / <a href="wrangler-compose/design.html">設計</a> / <a href="wrangler-compose/local-support.html">手元で使えないもの</a></td>
-  </tr>
+  <thead><tr><th style="width:20%">道具</th><th>受け持つこと</th></tr></thead>
+  <tbody>
+  <tr><td><code>wrangler-compose</code></td><td>手元で開発したサービスを、安全にリモート(Cloudflare の環境)へ展開する。サービスは docker compose に寄せた compose ファイルに書き、<code>--env &lt;環境&gt; up</code> で手元にもリモートにも同じ形で建てる</td></tr>
+  <tr><td><code>nv</code></td><td>Node・npm を uv のように扱う。Node の版の固定と取得、依存の導入、揃えた環境での実行、エージェント用のスキル</td></tr>
+  </tbody>
 </table>
+<div class="idxgrid">
+<a class="idxcard" href="wrangler-compose/requirements/index.html"><div class="idxnum">wrangler-compose</div><h3>要求仕様</h3><p>何ができるべきか。REQ-001〜019・決定と用語・受け入れ条件。</p></a>
+<a class="idxcard" href="wrangler-compose/detail/index.html"><div class="idxnum">wrangler-compose</div><h3>詳細仕様</h3><p>要求を満たす作り。DES・確かめた事実・手元で使えないもの。</p></a>
+<a class="idxcard" href="nv/requirements/index.html"><div class="idxnum">nv</div><h3>要求仕様</h3><p>何ができるべきか。REQ-001〜012・決定と用語・受け入れ条件。</p></a>
+<a class="idxcard" href="nv/detail/index.html"><div class="idxnum">nv</div><h3>詳細仕様</h3><p>要求を満たす作り。DES・確かめた事実。</p></a>
+</div>
+</section>
 
-<h2>境目</h2>
+<section class="section">
+<h2 id="boundary">境目</h2>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 310" role="img" aria-label="nv と wrangler-compose の境目"><defs><marker id="mk-top" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="20" y="120" width="180" height="60" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="110" y="143">利用者・エージェント</text><text class="s" x="110" y="161">nv・wrangler-compose を打つ</text>
+<path class="ar" d="M200,140 H250 V75 H297" marker-end="url(#mk-top)"/>
+<path class="ar" d="M200,160 H250 V225 H297" marker-end="url(#mk-top)"/>
+<rect x="300" y="40" width="220" height="70" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="410" y="66">nv</text><text class="s" x="410" y="84">Node・npm を揃えて動かす</text><text class="s" x="410" y="100">Cloudflare に触れない</text>
+<rect x="300" y="190" width="220" height="70" rx="7" fill="#fff4e0" stroke="#b26a00"/><text class="t" x="410" y="216">wrangler-compose</text><text class="s" x="410" y="234">Cloudflare の環境を受け持つ</text><text class="s" x="410" y="250">Node・npm を自分で取らない</text>
+<line class="ar" x1="410" y1="190" x2="410" y2="113" marker-end="url(#mk-top)"/><text class="lbl halo" x="402" y="148" text-anchor="end">nv run wrangler …</text><text class="lbl halo" x="402" y="164" text-anchor="end">(同じフォルダの nv)</text>
+<line class="ar" x1="520" y1="75" x2="637" y2="75" marker-end="url(#mk-top)"/>
+<rect x="640" y="40" width="150" height="70" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="715" y="66">Node・npm</text><text class="s" x="715" y="84">~/.nv/cache</text>
+<path class="ar" d="M520,95 H600 V215 H637" marker-end="url(#mk-top)"/><text class="lbl halo" x="608" y="160">動かす</text>
+<rect x="640" y="190" width="150" height="70" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="715" y="216">Wrangler</text><text class="s" x="715" y="234">プロジェクトの依存</text>
+<line class="ar" x1="790" y1="225" x2="827" y2="225" marker-end="url(#mk-top)"/>
+<rect x="830" y="190" width="130" height="70" rx="7" fill="#fff" stroke="#b26a00"/><text class="t" x="895" y="216">Cloudflare</text><text class="s" x="895" y="234">環境</text>
+<path class="ar" d="M410,260 V290 H895 V263" marker-end="url(#mk-top)"/><text class="lbl halo" x="650" y="285" text-anchor="middle">Cloudflare の API(wrangler login の権限の中だけ)</text>
+</svg></div>
+
 <ul>
   <li>wrangler-compose は Node・npm を自分で取らず、版も持たない。Wrangler と、Wrangler の版を調べる短いスクリプトを <code>nv run wrangler …</code> / <code>nv run node …</code> で動かす</li>
   <li>nv は Cloudflare に触れず、Wrangler を自分で動かさない。wrangler-compose は、一緒に配る実行ファイルとスキルとしてだけ扱う</li>
@@ -46,9 +49,7 @@
   <li>どちらも OS ごとの単体の実行ファイルで、1 つのリポジトリの同じ Release から同じ版で配る</li>
   <li>更新(<code>nv self update</code>)とエージェント用のスキル(<code>nv install skill</code>)は nv が 2 つ分まとめて受け持つ</li>
 </ul>
+</section>
 
-<footer>docs/index.html</footer>
-</main>
-</div>
-</body>
-</html>
+<div class="footer" id="pager"></div>
+</main></div><script src="assets/nav.js?v=5"></script></body></html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D02. build と手元の up｜wrangler-compose 詳細仕様</title>
+<link rel="stylesheet" href="../../assets/spec.css?v=5">
+</head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d02-local.html"></nav><main class="page">
+
+<section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D02. build と手元の up</h1>
+<p>組み立てたものを作り、手元ですべてのサービスを 1 つの実行環境で動かす仕組み。DES-007・008・011・019。</p></section>
+
+<section class="section"><h2>設計</h2><article class="item" id="des-007"><h3><span class="id">DES-007</span>build <span class="refs"><a href="../requirements/commands.html#req-008">REQ-008</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
+<ul>
+  <li>Worker ごとに、バインディングを持たない組み立て用の設定で <code>wrangler deploy --dry-run --outdir .wrangler/compose/build/&lt;サービス&gt;/</code> を動かし、組み立てたもの(バンドル)を置く。docker のイメージに当たる</li>
+  <li>組み立てたものに、コードと組み立てのキーの要約(SHA-256)を添える。<code>up</code> はいまのコードと比べ、違えば組み立て直す(<code>--build</code> なら比べずに組み直す)。手元の <code>up</code> は動いている間もコードを見ていて、変われば組み立て直して動かし直す(DES-008)</li>
+  <li>手元の <code>up</code> もリモートの <code>up</code> も、同じ組み立てたものを組み直さずに使う(手元は DES-008、リモートは <code>deploy --no-bundle</code>)</li>
+</ul>
+</article>
+<div class="figs"><h4 class="figttl">手元の up の仕組み</h4>
+<div class="legend"><span class="tool" style="background:#eef1f4;border-color:#5b6573">外</span><span class="tool" style="background:#efedff;border-color:#5b5bd6">wrangler-compose(道具)</span><span class="tool" style="background:#e6f4f8;border-color:#0e7490">道具のサービス</span><span class="tool" style="background:#e8f0fe;border-color:#1f6feb">利用者の Worker</span> ／ 箱の右下は関係する設計の番号</div>
+<div class="flowpanel"><svg class="flow" viewBox="0 0 980 420" role="img" aria-label="手元の up の仕組み"><defs><marker id="mk5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6573"/></marker></defs>
+<rect x="10" y="10" width="220" height="400" rx="8" fill="#f6f7f9" stroke="#cfd4dc"/><text class="lt" x="120" y="34">外</text><text class="ls" x="120" y="51">ブラウザ・LAN の機械</text>
+<rect x="240" y="10" width="250" height="400" rx="8" fill="#f7f6ff" stroke="#cbc4f5"/><text class="lt" x="365" y="34">wrangler-compose</text><text class="ls" x="365" y="51">道具そのもの</text>
+<rect x="500" y="10" width="470" height="400" rx="8" fill="#f3f9fb" stroke="#a6d4df"/><text class="lt" x="735" y="34">wrangler dev</text><text class="ls" x="735" y="51">すべての Worker を 1 つの実行環境で動かす</text>
+
+<rect x="20" y="110" width="200" height="60" rx="7" fill="#eef1f4" stroke="#5b6573"/><text class="t" x="120" y="133">ブラウザ・curl など</text><text class="s" x="120" y="151">0.0.0.0 なら LAN の機械からも</text>
+<path class="ar" d="M220,130 H238 V110 H252" marker-end="url(#mk5)"/>
+<path class="ar" d="M220,150 H238 V280 H252" marker-end="url(#mk5)"/>
+
+<rect x="255" y="80" width="220" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="103">ports で待ち受ける</text><text class="s" x="365" y="121">入口へ TCP をそのまま中継</text><text class="rref" x="469" y="135">DES-008</text>
+<rect x="255" y="250" width="220" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="273">R2 の口(ports の r2)</text><text class="s" x="365" y="291">CORS・公開の URL に答える</text><text class="rref" x="469" y="305">DES-019</text>
+<rect x="255" y="340" width="220" height="60" rx="7" fill="#efedff" stroke="#5b5bd6"/><text class="t" x="365" y="363">ログを出す</text><text class="s" x="365" y="381">画面と up.log</text><text class="rref" x="469" y="395">DES-008</text>
+
+<line class="ar" x1="475" y1="110" x2="512" y2="110" marker-end="url(#mk5)"/>
+<rect x="515" y="80" width="200" height="60" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="615" y="103">入口 wc-gateway</text><text class="s" x="615" y="121">ポートで振り分ける</text><text class="rref" x="709" y="135">DES-011</text>
+<path class="ar" d="M715,100 H735 V88 H757" marker-end="url(#mk5)"/>
+<path class="ar" d="M715,120 H735 V134 H757" marker-end="url(#mk5)"/>
+<rect x="760" y="70" width="190" height="36" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="855" y="93">web</text>
+<rect x="760" y="116" width="190" height="36" rx="7" fill="#e8f0fe" stroke="#1f6feb"/><text class="t" x="855" y="139">api</text>
+<line class="ar" x1="855" y1="152" x2="855" y2="167" marker-end="url(#mk5)"/>
+
+<rect x="515" y="170" width="200" height="60" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="615" y="193">データのサービス wc-data</text><text class="s" x="615" y="211">backup・restore・ps が使う</text><text class="rref" x="709" y="225">DES-011</text>
+<line class="ar" x1="715" y1="200" x2="757" y2="200" marker-end="url(#mk5)"/>
+<rect x="760" y="170" width="190" height="100" rx="7" fill="#fff" stroke="#0e7490"/><text class="t" x="855" y="208">手元の模擬</text><text class="s" x="855" y="226">miniflare・workerd</text><text class="s" x="855" y="242">D1・R2・KV・Queue・DO</text>
+<path class="ar" d="M475,280 H740 V250 H757" marker-end="url(#mk5)"/><text class="lbl halo" x="608" y="274" text-anchor="middle">署名を確かめて渡す</text>
+<line class="ar" x1="855" y1="270" x2="855" y2="337" marker-end="url(#mk5)"/>
+<rect x="760" y="340" width="190" height="60" rx="7" fill="#fff" stroke="#5b6573"/><text class="t" x="855" y="363">データの置き場</text><text class="s" x="855" y="381">.wrangler/compose/local/state</text>
+
+<rect x="515" y="340" width="200" height="60" rx="7" fill="#e6f4f8" stroke="#0e7490"/><text class="t" x="615" y="363">ログの受け手</text><text class="s" x="615" y="381">wc-logs-&lt;サービス&gt;。名前を付ける</text><text class="rref" x="709" y="395">DES-008</text>
+<line class="ar" x1="515" y1="370" x2="478" y2="370" marker-end="url(#mk5)"/>
+</svg></div></div>
+<article class="item" id="des-008"><h3><span class="id">DES-008</span>手元の up <span class="refs"><a href="../requirements/commands.html#req-009">REQ-009</a>・<a href="../requirements/write.html#req-005">REQ-005</a>・<a href="../requirements/common.html#req-017">REQ-017</a></span></h3>
+<ul>
+  <li>すべての Worker(利用者のものと道具のサービス)を 1 つの <code>wrangler dev</code> で動かす: <code>wrangler dev -c &lt;入口&gt; -c &lt;Worker&gt; … --persist-to .wrangler/compose/local/state</code>。1 つの実行環境なので、同時の書き込みで壊れない</li>
+  <li>入口は道具のサービス(DES-011)で、<code>ports</code> を持つ Worker へのつながりを持ち、要求の URL のポートで振り分ける。道具は <code>ports</code> のアドレスとポートで待ち受け、入口のポートへ TCP をそのまま中継する(WebSocket もそのまま通る)</li>
+  <li><strong>プロジェクトを分ける</strong>(定義 3): プロセスは <code>up</code> ごとに別。データの置き場・ロック・設定・ログは <code>.wrangler/compose/&lt;環境&gt;/</code> の下でプロジェクトごと。Wrangler の dev registry(<code>wrangler dev</code> どうしが Worker を名前で見つける登録。既定は機械に 1 つで、同じ名前の Worker を持つプロジェクトが互いの登録を上書きする)も <code>WRANGLER_REGISTRY_PATH</code> で <code>.wrangler/compose/local/registry</code> に置く。待ち受けのポートは次のとおり</li>
+  <li><strong>ポートを他と分ける</strong>: <code>ports</code> のポートは、待ち受ける前に、そこへつないで答えるものがいないかを確かめる(<code>127.0.0.1</code>・<code>0.0.0.0</code> などのときは <code>127.0.0.1</code> と <code>::1</code>、それ以外はそのアドレス)。答えるものがいれば、ほかのプロジェクトの通信を横取りしないよう、何も動かさずに止める。<code>wrangler dev</code> には、入口と同じく devtools のポートも OS が選んだ空きを <code>--inspector-port</code> で渡し、それでもポートが重なって起動の途中で止まったときは、3 回まで起動し直す</li>
+  <li><strong>R2 の口</strong>(DES-019): <code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受け、S3 互換の口と公開の URL を受け持つ。<code>ports</code> の無い r2 のサービスは、手元の模擬の口(<code>/cdn-cgi/local/r2/s3/</code>)に Worker のポートから届くが、CORS はすべて許され、公開の URL も無い(<code>up</code> がそのことを知らせる)。<code>ports</code> のある r2 のサービスのバケットには、Worker のポートの S3 互換の口は答えない(404。本番の Worker のアドレスにも S3 の口は無い)ので、<code>cors</code> を飛ばして届くことは無い。そのため Worker のポートは 1 つの接続に 1 つの要求(<code>Connection: close</code>)で受け、要求ごとに行き先を確かめる。WebSocket などの upgrade はそのまま通す</li>
+  <li><strong>ログ</strong>: 手元では、Worker のログにどの Worker のものかが付かない(実測)。そこで道具がサービスごとに小さな tail の受け手(<code>wc-logs-&lt;サービス&gt;</code>)を置き、受け手が届いたログにサービス名を付けて出す。道具は Wrangler 自身の行(起動・再読み込み・エラー)と受け手の行だけを画面と <code>.wrangler/compose/local/logs/up.log</code> に出し、名前の付かない生の行は出さない</li>
+  <li><strong>R2 のイベント通知</strong>: 手元の模擬に無いので、データのサービスが通知を設定したバケットを毎秒見比べ、増えた・変わった・消えたオブジェクトを本物と同じ形のメッセージで手元の Queue へ送る。外から見比べるので作成の種類は見分けられず、作成はすべて <code>PutObject</code> として送る。前に見た中身は道具の KV(<code>wc-notify-state</code>)に残し、Queue が受け取ってから進めるので、動かし直しても抜けも重なりも無く、送れなかったものは次の回に送り直す</li>
+  <li>シークレットと <code>vars</code> は、作った設定の横の <code>.dev.vars</code> で渡す(Unix は 0600。<code>.wrangler/compose/</code> の中)</li>
+  <li>動かす前に、移行を <code>d1 migrations apply --local --persist-to …</code> で当てる</li>
+  <li>使う Wrangler は 4.149.0 以上(この設計を確かめた版)</li>
+  <li>Queue の受け手は、compose ファイルに設定を持たないので、手元の設定に本物の既定値(<code>max_batch_size: 10</code>・<code>max_batch_timeout: 5</code>・<code>max_retries: 3</code>)を書いて渡す。手元の模擬の既定値(5・1・2)は本物と違うため(実測)</li>
+  <li>動いていることの記録と錠・ほかの端末からの止め方は 0.1 系のものを引き継ぐ。ログは画面と <code>.wrangler/compose/local/logs/</code> の両方に出す</li>
+  <li>compose ファイルか <code>.env.local</code> が変われば、設定を作り直して動かし直す。コードが変われば組み立て直して動かし直す(<code>wrangler dev</code> は最初の設定以外の Worker の新しい束を読み直さない。4.149.0 で実測)。見るのは Worker のフォルダと、前の組み立てで esbuild が読んだフォルダの外のファイル(共有のコードなど)、ロックファイル、Wrangler の版。組み立ては別のフォルダで行い、うまくいったときだけ動いている束を置き換える。読めない compose ファイルに直したときは、直るまで今のまま動かす。同じプロセスのまま動かし直すので、ポートは閉じてから開き直す</li>
+</ul>
+</article>
+<article class="item" id="des-011"><h3><span class="id">DES-011</span>道具のサービス <span class="refs"><a href="../requirements/common.html#req-017">REQ-017</a>・<a href="../requirements/commands.html#req-013">REQ-013</a>・<a href="../requirements/common.html#req-016">REQ-016</a>・<a href="../requirements/write.html#req-006">REQ-006</a></span></h3>
+<ul>
+  <li><strong>データのサービス</strong>(手元だけ): その環境のすべての D1・R2・KV への、ふつうのバインディングを持つ Worker。同じ <code>wrangler dev</code> の中で動き、<code>backup</code>・<code>restore</code>・<code>down --purge</code>・<code>ps</code> が使う。リモートには置かない(REQ-017)。以前の版がリモートに置いた <code>&lt;プロジェクト&gt;-&lt;環境&gt;-wc-data</code> は、<code>up</code>・<code>down</code> が <code>wrangler delete</code> で消す</li>
+  <li><strong>入口のサービス</strong>(手元だけ): DES-008</li>
+  <li><strong>守り方</strong>: 256 ビットの乱数の合言葉を Worker のシークレットとして入れ、<code>Authorization</code> の見出しで一致する要求だけに応える(一定時間で比べる)。<code>127.0.0.1</code> だけで受ける</li>
+  <li>名前は <code>wc-data</code>・<code>wc-gateway</code></li>
+</ul>
+</article>
+<article class="item" id="des-019"><h3><span class="id">DES-019</span>手元の R2 の口 <span class="refs"><a href="../requirements/commands.html#req-009">REQ-009</a></span></h3>
+<ul>
+  <li>手元の模擬の S3 互換の口は、バケットの CORS の設定によらず、すべての送り元を許す(実測)。そのままでは手元で通って本番で失敗するので、<code>ports</code> を書いた r2 のサービスは、道具がそのポートで HTTP を受ける</li>
+  <li><strong>キーの渡し方</strong>: 公開の URL のキーも、データのサービスへ渡すキーも、パスではなく問い合わせ(<code>?key=</code>)に入れる。キーの <code>.</code> や <code>..</code> がパスの段として読まれて、バケットの外やほかの資源に届くことは無い。メタデータは百分率符号化して見出しで渡す(日本語も落ちない)。バックアップの目録が指すファイルはバックアップのフォルダの中だけで、外を指す目録は何もせずに止まる</li>
+  <li><strong>S3 互換の口</strong>(<code>/cdn-cgi/local/r2/s3/&lt;バケット&gt;</code>): ブラウザの事前確認(<code>OPTIONS</code>)には、道具が compose ファイルの <code>cors</code> どおりに答える(合わなければ 403)。ほかの要求は、見出しを変えずに(署名がそのまま通る)入口の内側のポートの手元の模擬へ渡し、答えの CORS の見出しを捨てて <code>cors</code> どおりに付け直す。送り元の決まりは R2 と同じ(送り元に <code>*</code> を 1 つ書ける)</li>
+  <li><strong>外(LAN)から届いた要求</strong>: 手元の模擬は、<code>/cdn-cgi/</code> への要求の <code>Host</code> と <code>Origin</code> のホスト名が <code>localhost</code>・<code>127.0.0.1</code>・<code>[::1]</code>(か Worker の routes のホスト名)でなければ、署名を見る前に 403(<code>Invalid Host header</code>・<code>Invalid Origin header</code>)で断る(実測 2026-10-12・miniflare の entry worker。routes にアドレスを足すと Wrangler が要求の URL をそのホストに書き換えるので使えない)。そこで、<code>Host</code> か <code>Origin</code> がそれ以外の要求のうち、ホスト名が IP アドレス(か手元の名前)のものは、道具が手元の S3 の鍵で、届いたままの見出し(つないだアドレスの <code>Host</code>)で署名を計算して確かめる。合えば、<code>Host</code> を <code>localhost:&lt;ポート&gt;</code> に替え、<code>Origin</code> を外し、署名し直して手元の模擬へ渡す(見出しの署名は <code>Authorization</code> の <code>Signature</code>、署名付き URL は <code>X-Amz-Signature</code> を替える)。合わない・署名の無い要求は署名し直さずに同じく替えて渡し、手元の模擬に本物と同じ理由で拒ませる。ホスト名が IP アドレスでない名前(DNS の名前)の要求は、何も替えずに渡して手元の模擬に 403 で断らせる(悪いページが自分の名前を 127.0.0.1 に向け直したときに送るのが、この形。<code>Origin: null</code> は今までどおり外す)。日時・期限・鍵の範囲・本体のハッシュの検査は手元の模擬に任せる。署名の計算は手元の模擬と同じ(パスはそのまま・問い合わせはフォームの形で読んでから符号化して並べる・見出しの値は前後の空白を落とし続く空白を 1 つにする)。CORS の見出しは、外した <code>Origin</code> ではなく届いた <code>Origin</code> で <code>cors</code> どおりに付ける</li>
+  <li><strong>公開の URL</strong>: <code>Host</code> が <code>&lt;バケット名&gt;.localhost</code> の要求は、<code>public: true</code> のバケットだけ、データのサービスから中身を取って配る(内容の種類などの見出しを付ける)。HTTP の決まり(RFC 9110)どおりに、<code>ETag</code>・<code>Last-Modified</code>・条件つきの取得(<code>If-Match</code>・<code>If-Unmodified-Since</code> は 412、<code>If-None-Match</code>・<code>If-Modified-Since</code> は 304)・1 つの範囲指定(<code>Range</code>・<code>If-Range</code>。206、満たせなければ 416)に答える(データのサービスが R2 の <code>head</code> と範囲つきの <code>get</code> で答える)。<code>public_port</code> を書いたバケットは、r2 の <code>ports</code> と同じアドレスのそのポートで、<code>Host</code> によらずパスをキーとして同じに配る(LAN の機械がアドレスで届く)</li>
+  <li>1 つの接続で 1 つの要求だけを受け、答えたら閉じる(<code>Connection: close</code>)。HTTP の読み取りを見出しだけにするため</li>
+</ul>
+</article>
+</section>
+
+<div class="footer" id="pager"></div>
+</main></div><script src="../../assets/nav.js?v=5"></script></body></html>
