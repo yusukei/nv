@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/acceptance.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>受け入れ条件</h1>
-<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、CI(Windows・macOS・Linux)で毎回動かす。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
+<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、手元の PC で動かす(CI は 3 つの OS でビルドするだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
 
 <section class="section"><h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>files</code> と <code>uploads</code>(R2。<code>uploads</code> は <code>name: incoming</code>)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
@@ -171,7 +171,7 @@
 </article>
 <article class="item" id="ac-020"><h3><span class="id">AC-020</span>コンテナ <span class="refs"><a href="write.html#req-020">REQ-020</a></span></h3>
 <ul>
-  <li>コンテナ用の試験のプロジェクト(<code>tests/fixture-containers</code>。Docker の無い CI の機械でも今の試験用のプロジェクトが動くよう、分けて置く)の <code>api</code> に、Durable Object のクラス <code>Pinger</code> と、それに付けるコンテナ(Dockerfile。HTTP に決まった文字を返す)がある。<code>--env local up</code> のあと、<code>api</code> の URL から <code>Pinger</code> を通してコンテナの返事が届く</li>
+  <li>コンテナ用の試験のプロジェクト(<code>tests/fixture-containers</code>。Docker の無い機械でも今の試験用のプロジェクトが動くよう、分けて置く)の <code>api</code> に、Durable Object のクラス <code>Pinger</code> と、それに付けるコンテナ(Dockerfile。HTTP に決まった文字を返す)がある。<code>--env local up</code> のあと、<code>api</code> の URL から <code>Pinger</code> を通してコンテナの返事が届く</li>
   <li>動いている手元の <code>up</code> の間に、コンテナの返す文字を Dockerfile で変えると、作り直して動かし直し、新しい文字が返る</li>
   <li>Ctrl+C のあと、そのプロジェクトのコンテナが <code>docker ps -a</code> に残らない。<code>down</code> のあとも手元で作ったイメージは残り、<code>down --purge</code> のあとは消える</li>
   <li>2 つのプロジェクトがそれぞれコンテナを持って同時に <code>--env local up</code> しても、片方を止める・<code>down --purge</code> しても、もう片方のコンテナとイメージは動き続ける・残る</li>
