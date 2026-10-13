@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/acceptance.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>受け入れ条件</h1>
-<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、手元の PC で動かす(CI は 3 つの OS でビルドするだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
+<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、手元の PC で動かす(GitHub Actions はリリースのビルドだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
 
 <section class="section"><h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>files</code> と <code>uploads</code>(R2。<code>uploads</code> は <code>name: incoming</code>)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>

@@ -18,7 +18,7 @@
 </article>
 <article class="item" id="des-017"><h3><span class="id">DES-017</span>試験</h3>
 <ul>
-  <li>試験はすべて手元の PC で回す。CI は Windows・macOS・Linux でビルドするだけ(資源を使いすぎないため。利用者の決定 2026-10-14)</li>
+  <li>試験はすべて手元の PC で回す。GitHub Actions はタグを push したときのリリースのビルドだけで、main への push では何も回さない(資源を使いすぎないため。利用者の決定 2026-10-14)</li>
   <li>単体: compose ファイルの確かめ・値の展開・サービスの順・作る設定・Worker のフォルダの確かめ・Durable Objects のクラスの宣言・バックアップの目録</li>
   <li>試験だけのための環境変数(利用者向けの README・要求には書かない。利用者の決定 2026-10-13): <code>WRANGLER_COMPOSE_NV</code>(同じフォルダ以外の nv を使う)・<code>CLOUDFLARE_API_BASE_URL</code>(Cloudflare の API の送り先を偽の API に向ける)。nv の <code>NV_HOME</code> は nv の設計(DES-002)に書く</li>
   <li>手元の結合(<code>tests/local-smoke.sh</code>): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
