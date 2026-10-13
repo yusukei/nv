@@ -47,6 +47,21 @@ jobs:
         run: |
           export NV_HOME="$RUNNER_TEMP/nvhome"
           BIN="$PWD/target/release" bash crates/wrangler-compose/tests/remote-smoke.sh
+      # Containers (REQ-020) with Docker, which the Linux runners have: locally
+      # (two projects at once, rebuild, Ctrl+C, crash, images), and the remote
+      # flow against the fake API and a registry run with Docker.
+      - name: wrangler-compose container test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export NV_HOME="$RUNNER_TEMP/nvhome"
+          BIN="$PWD/target/release" bash crates/wrangler-compose/tests/container-smoke.sh
+      - name: wrangler-compose container remote test (fake API)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export NV_HOME="$RUNNER_TEMP/nvhome"
+          BIN="$PWD/target/release" bash crates/wrangler-compose/tests/container-remote-smoke.sh
       - name: wrangler-compose build test
         if: runner.os == 'Windows'
         shell: bash

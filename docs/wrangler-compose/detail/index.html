@@ -51,6 +51,7 @@
   <tr><td>展開の説明(<code>workers/message</code>)と版の印(<code>workers/tag</code>)は版に残り、読み戻せる。アプリケーションの <code>configuration.instance_type</code> と <code>max_instances</code> は compose ファイルの書き方と同じ形で返る</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
   <tr><td>Worker を消しても、<code>down</code> で道具が消さなければアプリケーションとレジストリのイメージは残る(道具はアプリケーションを消す。イメージは消さない)</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
   <tr><td>Cloudflare のレジストリは、タグを消したあともダイジェストで問い合わせると答え続ける(一覧には出ない)。<code>wrangler deploy</code> はそれで送るのを飛ばし、アプリケーションの作成が <code>IMAGE_REGISTRY_DOESNT_CONTAIN_IMAGE</code> で止まる。消したタグと同じ名前で送っても、しばらく一覧に出ず使えない。新しい名前のタグで送れば、すぐ一覧に出て使える。この PC の Docker(containerd の保存方式)ではイメージの ID がダイジェストと同じで、この PC の参照を外しても Wrangler の判断は変わらない</td><td>実測(2026-10-13。本物の Cloudflare・Docker Desktop 29.8.2)</td></tr>
+  <tr><td>コンテナのアプリケーションの一覧(<code>GET /containers/applications</code>)は <code>configuration.instance_type</code> を返さず(null)、<code>vcpu</code>・<code>memory_mib</code>・<code>disk.size_mb</code> の数で返す(名前の種類で作ったものも独自の大きさで作ったものも)。クラスごと消すときは、アプリケーションを先に消してから、クラスの墓標を入れた展開で消せる。compose に無い Worker を消すときも、そのアプリケーションを先に消して通る</td><td>実測(2026-10-13。本物の Cloudflare)</td></tr>
 </table>
 </section>
 <section class="section"><h2 id="pages">この冊のページ</h2>

@@ -243,6 +243,35 @@ pub fn build(k: &Container, tag: &str) -> Result<()> {
     Ok(())
 }
 
+/// The resources (vCPU, memory MiB, disk MB) an `instance_type` stands
+/// for, as Wrangler's table has them; a custom one fills what it leaves out
+/// with Wrangler's defaults. Cloudflare reports applications by these
+/// numbers, not by the type's name (measured 2026-10-13).
+pub fn resources(t: Option<&serde_json::Value>) -> Option<(f64, u64, u64)> {
+    use serde_json::Value;
+    const TABLE: &[(&str, f64, u64, u64)] = &[
+        ("lite", 0.0625, 256, 2000),
+        ("basic", 0.25, 1024, 4000),
+        ("standard-1", 0.5, 4096, 8000),
+        ("standard-2", 1.0, 6144, 12000),
+        ("standard-3", 2.0, 8192, 16000),
+        ("standard-4", 4.0, 12288, 20000),
+    ];
+    match t {
+        None => Some((0.0625, 256, 2000)),
+        Some(Value::String(name)) => TABLE
+            .iter()
+            .find(|(n, ..)| n == name)
+            .map(|(_, v, m, d)| (*v, *m, *d)),
+        Some(Value::Object(o)) => Some((
+            o.get("vcpu").and_then(Value::as_f64).unwrap_or(0.0625),
+            o.get("memory_mib").and_then(Value::as_u64).unwrap_or(256),
+            o.get("disk_mb").and_then(Value::as_u64).unwrap_or(2000),
+        )),
+        Some(_) => None,
+    }
+}
+
 /// Add images to the record `down --purge` deletes from.
 pub fn remember(file: &Path, tags: &[String]) -> Result<()> {
     let mut all = remembered(file);

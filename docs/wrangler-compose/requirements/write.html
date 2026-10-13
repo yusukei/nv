@@ -187,7 +187,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>リモート: compose ファイルから消したコンテナと、<code>down</code> で下ろした Worker のコンテナは、道具がアプリケーションごと消す(Cloudflare は Worker を消してもコンテナを消さないため)。消すのは名前がこの環境のものだけ</li>
   <li><code>--dry-run</code> はイメージを作らず送らず、作る・変える・消すコンテナと、イメージが変わるかを示す(REQ-014)</li>
   <li><code>ps</code> は、コンテナがあるかと、compose ファイルとの違いを示す(REQ-012)</li>
-  <li>Cloudflare のレジストリに置いたイメージは、リモートの <code>down --purge</code> で消す(REQ-011)。<code>up</code> と <code>down</code> では消さない</li>
+  <li>Cloudflare のレジストリに置いたイメージは、リモートの <code>down --purge</code> で消す(REQ-011)。また <code>up</code> がコンテナのアプリケーションを消すとき(compose から消したコンテナ・消したクラス・compose に無い Worker)は、そのイメージも消す(あとから見つける手掛かりが無くなるため。利用者の決定 2026-10-13)。<code>down</code>(<code>--purge</code> なし)では消さない</li>
   <li><code>backup</code>・<code>restore</code> はコンテナを扱わない。コンテナは残すデータを持たない(ディスクは止まると消える)</li>
   <li>コンテナを使えないアカウント(Workers の有料プランでない)では、Cloudflare の答えを示して止まる</li>
 </ul>

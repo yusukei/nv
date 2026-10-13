@@ -23,8 +23,8 @@
   <li>手元の結合(CI。3 つの OS): 受け入れ条件の試験用のプロジェクトで、手元の AC(AC-003・AC-005・AC-008・AC-009・AC-013 の手元の分など)を動かす</li>
   <li>リモートの流れ(CI。Linux): 偽の Cloudflare の API(<code>tests/fake-cloudflare.py</code>。<code>CLOUDFLARE_API_BASE_URL</code> で道具と Wrangler の両方を向ける)に対し、新しい環境の <code>up</code>(打ち直しを含む)・2 回目は何も上げない・シークレット/受け手/クラスを消す・移行の失敗で止まる・残りの Worker・<code>ps</code>・<code>down web</code>・<code>down</code> を通す。道具の段を確かめるもので、Cloudflare の本当の振る舞いではない</li>
   <li>リモートの本物: 試験用のアカウントで、利用者の許可を得てから。まず <code>--dry-run</code> で全操作を通す</li>
-  <li>手元のコンテナ(Docker のある機械): コンテナ用の試験のプロジェクト(<code>tests/fixture-containers</code>)で、AC-020 の手元の分を <code>tests/container-smoke.sh</code> が確かめる。Docker の無い CI の機械では動かさない</li>
-  <li>リモートのコンテナ(Docker のある機械): 偽の Cloudflare の API と、Docker で手元に立てたレジストリ(<code>CLOUDFLARE_CONTAINER_REGISTRY</code> で向ける)に対し、<code>tests/container-remote-smoke.sh</code> が AC-020 のリモートの分(作る・2 回目は何もしない・イメージの変更・コンテナを消す・<code>ps</code>・<code>down</code>・ほかの環境に触らない・Docker が無い・コンテナを使えないアカウント)を確かめる。道具と Wrangler の段を確かめるもので、Cloudflare の本当の振る舞いではない</li>
+  <li>手元のコンテナ(Docker のある機械): コンテナ用の試験のプロジェクト(<code>tests/fixture-containers</code>)で、AC-020 の手元の分を <code>tests/container-smoke.sh</code> が確かめる。CI では Docker のある Linux の機械でだけ動かす</li>
+  <li>リモートのコンテナ(Docker のある機械): 偽の Cloudflare の API と、Docker で手元に立てたレジストリ(<code>CLOUDFLARE_CONTAINER_REGISTRY</code> で向ける)に対し、<code>tests/container-remote-smoke.sh</code> が AC-020 のリモートの分(作る・2 回目は何もしない・イメージの変更・コンテナを消す・<code>ps</code>・<code>down</code>・ほかの環境に触らない・Docker が無い・コンテナを使えないアカウント)を確かめる。道具と Wrangler の段を確かめるもので、Cloudflare の本当の振る舞いではない。CI の Linux の機械でも動かす</li>
 </ul>
 </article>
 </section>
@@ -41,7 +41,7 @@
   <li>R2 の手元の機能: Worker のバインディングからの書き込み・消去を道具のサービスが見られるか(イベント通知とロックのため)。Wrangler の手元の模擬に公開・CORS・ライフサイクル・通知・ロック・保管の種類が本当に無いか(あればそれを使う)</li>
   <li>手元のコンテナ(DES-020): Linux の Docker・Docker 以外のエンジン(Podman など)・Windows で止まること。確かめたのは macOS(Apple Silicon)の Docker Desktop 29.8.2 だけ(2026-10-13、<code>tests/container-smoke.sh</code>)</li>
   <li>手元のコンテナで、止めて動かし直した直後に、コンテナの中継役が <code>Updating sidecar egress config failed with: 403 Forbidden</code> を出し、その回はコンテナへの要求が 503 になったことが 1 度ある(2026-10-13、約 30 回の起動のうち 1 回。同じ手順を繰り返しても再現しない)。Wrangler(workerd)の中のことで、原因は分かっていない。もう一度 <code>up</code> すれば直る</li>
-  <li>リモートのコンテナ(DES-021): 本物の Cloudflare で、作る・2 回目は何もしない・イメージの変更・コンテナを消す・<code>ps</code>・<code>down</code> を確かめた(2026-10-13、使い捨ての環境 <code>wctest1</code>。確かめた事実を見る)。<code>down --purge</code> でのレジストリのイメージの削除と、そのあとの <code>up</code>(イメージを先に送る)、<code>down</code> のあとの <code>down --purge</code> も本物で確かめた。まだ試していないのは、DO のクラスを消すときにアプリケーションを先に消す順で通るか、compose に無い Worker を up が消すときのアプリケーションの扱い、<code>instance_type</code> を独自の大きさ(対応表)で書いたときの比べ方</li>
+  <li>リモートのコンテナ(DES-021): 本物の Cloudflare で、作る・2 回目は何もしない・イメージの変更・コンテナを消す・<code>ps</code>・<code>down</code> を確かめた(2026-10-13、使い捨ての環境 <code>wctest1</code>。確かめた事実を見る)。<code>down --purge</code> でのレジストリのイメージの削除と、そのあとの <code>up</code>(イメージを先に送る)、<code>down</code> のあとの <code>down --purge</code> も本物で確かめた。クラスごと消す・compose に無い Worker を消す・<code>instance_type</code> を独自の大きさで書く、も本物で確かめた。</li>
   <li>リモートへ展開した PC には、Wrangler が作ったイメージ(<code>&lt;アプリケーションの名前&gt;:&lt;版&gt;</code>)が手元の Docker に残る。道具は消さない</li>
 </ul>
 </section>

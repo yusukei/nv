@@ -184,6 +184,7 @@
   <li>失敗: <code>durable_objects</code> に無いクラスを指す、同じクラスに 2 つ付ける、知らないキー(<code>scheduling_policy</code> など)を書く、知らない <code>instance_type</code> の名前を書く、無い Dockerfile を指す、のどれも、何もせずに止まり、場所と理由を示す</li>
   <li>境界: <code>max_instances: 1</code> は受け、<code>0</code> は止まる。コンテナの無い compose ファイルは、Docker が無い PC でも今までどおり <code>up</code> できる</li>
   <li>リモート: <code>down --purge</code> のあと、その環境のコンテナのイメージが Cloudflare のレジストリに残らない。先に <code>down</code> してから <code>down --purge</code> しても同じ。ほかの環境のイメージは残る</li>
+  <li>リモート: compose からコンテナを消して <code>up</code> すると、そのアプリケーションと一緒にイメージもレジストリから消える(<code>--dry-run</code> の計画にも出る)。compose に無い Worker を <code>up</code> が消すときも同じ</li>
   <li>境界: 途中で止めたリモートの <code>up</code>(イメージを送る前に止める)は、どこまで済んだかを示し、もう一度の <code>up</code> でコンテナの返事が届く状態に揃う</li>
 </ul>
 </article>

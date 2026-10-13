@@ -493,10 +493,18 @@ fn container_plan(
                 "image: may change (the last deploy left no record)"
             )),
         }
-        if let Some(have) = app["configuration"]["instance_type"].as_str()
-            && have != want_type
+        // Cloudflare reports the resources, not the type's name (measured).
+        let c = &app["configuration"];
+        if let (Some(hv), Some(hm), Some(hd), Some((wv, wm, wd))) = (
+            c["vcpu"].as_f64(),
+            c["memory_mib"].as_u64(),
+            c["disk"]["size_mb"].as_u64(),
+            crate::containers::resources(k.instance_type.as_ref()),
+        ) && (hv, hm, hd) != (wv, wm, wd)
         {
-            d.push(format!("instance_type: {have} → {want_type}"));
+            d.push(format!(
+                "instance_type: vcpu {hv}・{hm}MiB・{hd}MB → vcpu {wv}・{wm}MiB・{wd}MB ({want_type})"
+            ));
         }
         if let Some(have) = app["max_instances"].as_u64()
             && have != want_max
@@ -510,7 +518,10 @@ fn container_plan(
         out.push((
             '-',
             crate::tr!("コンテナ {name}", "container {name}"),
-            vec![],
+            vec![crate::tr!(
+                "レジストリのイメージも消す",
+                "its images in the registry go too"
+            )],
         ));
     }
     out
@@ -958,7 +969,10 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
             plan.add(
                 '-',
                 crate::tr!("コンテナ {name}", "container {name}"),
-                vec![],
+                vec![crate::tr!(
+                    "レジストリのイメージも消す",
+                    "its images in the registry go too"
+                )],
             );
         }
     }
@@ -1087,6 +1101,9 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
     // 7. In dependency order: migrations, then Workers (REQ-010). A failed
     //    migration stops everything after it.
     let mut containers_deployed = false;
+    // Container applications this up deletes: their images in the registry
+    // go too (REQ-020, the user's decision 2026-10-13).
+    let mut gone_apps: Vec<String> = Vec::new();
     for s in &services {
         match &s.kind {
             Kind::D1(list) => {
@@ -1150,6 +1167,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                     kept_classes.get(&s.name),
                     plan.changed.contains(&s.name),
                     &mut records,
+                    &mut gone_apps,
                 )?;
                 if deployed && !w.containers.is_empty() {
                     containers_deployed = true;
@@ -1162,6 +1180,7 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
     // 8. This environment's Workers and (with --purge) resources the compose
     //    file no longer has (REQ-010).
     for o in &orphans {
+        gone_apps.extend(seen.apps_of(o, &[]).into_iter().map(|(name, _)| name));
         act.run(
             crate::tr!("消す: Worker {o}", "deleting Worker {o}"),
             || {
@@ -1174,6 +1193,34 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
     if purge {
         for r in &gone {
             delete_found(&cf, &act, &seen, &ours, r)?;
+        }
+    }
+    // Images of the deleted applications: nothing could find them later.
+    if !gone_apps.is_empty() {
+        match registry_images(ctx, &cf) {
+            Ok(list) => {
+                for i in registry_targets(&list, &gone_apps) {
+                    act.run(
+                        crate::tr!(
+                            "消す: レジストリのイメージ {i}",
+                            "deleting registry image {i}"
+                        ),
+                        || {
+                            run_wrangler(
+                                wrangler(ctx, &cf, &["containers", "images", "delete", &i]),
+                                crate::tr!(
+                                    "レジストリのイメージ {i} を消せません(上の出力を見てください)",
+                                    "cannot delete registry image {i} (see the output above)"
+                                ),
+                            )
+                        },
+                    )?;
+                }
+            }
+            Err(e) => say(crate::tr!(
+                "Cloudflare のレジストリの一覧を読めないので、消したコンテナのイメージは残ります: {e:#}",
+                "cannot list Cloudflare's registry, so the images of the deleted containers remain: {e:#}"
+            )),
         }
     }
     if ctx.dry_run {
@@ -1880,6 +1927,7 @@ fn deploy_worker(
     kept: Option<&Vec<String>>,
     changed_on_cloud: bool,
     records: &mut Value,
+    gone_apps: &mut Vec<String>,
 ) -> Result<bool> {
     let script = n.workers[&s.name].clone();
     let exists = seen.scripts.contains_key(&script);
@@ -1896,6 +1944,7 @@ fn deploy_worker(
     let tag = code_tag(built, &cfg, &hashes);
     // Containers the compose file no longer wants go before the deploy.
     for app in stale_apps(seen, &script, w, dropped) {
+        gone_apps.push(app.0.clone());
         act.run(
             crate::tr!(
                 "{}: コンテナ {} を消す",
@@ -2803,6 +2852,80 @@ mod tests {
         );
         assert!(registry_targets(&list, &[]).is_empty());
         assert!(registry_targets(&json!(null), &[ours]).is_empty());
+    }
+
+    #[test]
+    fn instance_types_are_compared_by_the_resources_cloudflare_reports() {
+        use crate::compose::{Container, Image, Worker};
+        let k = |t: Option<Value>| Container {
+            class: "Pinger".into(),
+            image: Image::Registry("docker.io/library/busybox:1.36".into()),
+            build_context: None,
+            image_vars: Default::default(),
+            instance_type: t,
+            max_instances: Some(1),
+        };
+        let script = "shop--stg--api";
+        let name = crate::containers::app_name(script, "Pinger");
+        // As Cloudflare answers (measured): no instance_type, the resources.
+        let app = |vcpu: f64, mem: u64, disk: u64| {
+            json!({ "id": "a1", "name": name,
+            "configuration": { "instance_type": null, "vcpu": vcpu, "memory_mib": mem,
+                               "disk": { "size_mb": disk, "size": "x" } },
+            "max_instances": 1 })
+        };
+        let plan = |want: Option<Value>, have: Value| {
+            let mut seen = Seen::default();
+            seen.apps.insert(name.clone(), have);
+            let mut w = Worker::default();
+            w.durable_objects = vec!["Pinger".into()];
+            w.containers = vec![k(want)];
+            let deployed: BTreeMap<String, String> = [(
+                "Pinger".to_string(),
+                crate::containers::content_hash(&w.containers[0]),
+            )]
+            .into();
+            container_plan(&seen, script, &w, Path::new("/"), &deployed, None)
+        };
+        let custom = json!({ "vcpu": 1, "memory_mib": 3072, "disk_mb": 4000 });
+        assert_eq!(plan(Some(custom.clone()), app(1.0, 3072, 4000))[0].0, '=');
+        assert_eq!(
+            plan(None, app(0.0625, 256, 2000))[0].0,
+            '=',
+            "lite is the default"
+        );
+        assert_eq!(plan(Some(json!("basic")), app(0.25, 1024, 4000))[0].0, '=');
+        let changed = plan(Some(json!("lite")), app(1.0, 3072, 4000));
+        assert_eq!(changed[0].0, '~');
+        assert!(
+            changed[0].2.iter().any(|d| d.starts_with("instance_type:")),
+            "{:?}",
+            changed[0].2
+        );
+    }
+
+    #[test]
+    fn a_dropped_container_is_planned_with_its_registry_images() {
+        use crate::compose::Worker;
+        let script = "shop--stg--api";
+        let name = crate::containers::app_name(script, "Pinger");
+        let mut seen = Seen::default();
+        seen.classes.insert(script.into(), vec!["Pinger".into()]);
+        seen.apps
+            .insert(name.clone(), json!({ "id": "a1", "name": name }));
+        let mut w = Worker::default();
+        w.durable_objects = vec!["Pinger".into()];
+        let lines = container_plan(&seen, script, &w, Path::new("/"), &BTreeMap::new(), None);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].0, '-');
+        assert!(
+            lines[0]
+                .2
+                .iter()
+                .any(|d| d.contains("registry") || d.contains("レジストリ")),
+            "{:?}",
+            lines[0].2
+        );
     }
 
 }
