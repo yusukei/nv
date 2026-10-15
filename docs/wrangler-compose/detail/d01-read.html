@@ -55,7 +55,7 @@
 <article class="item" id="des-005"><h3><span class="id">DES-005</span>中で使う設定を作る <span class="refs"><a href="../requirements/write.html#req-002">REQ-002</a>・<a href="../requirements/write.html#req-003">REQ-003</a>・<a href="../requirements/write.html#req-007">REQ-007</a></span></h3>
 <ul>
   <li>Worker のサービスごと・環境ごとに Wrangler の設定(JSON)を <code>.wrangler/compose/&lt;環境&gt;/&lt;サービス&gt;/wrangler.json</code> に作る。Wrangler の環境の階層(<code>env</code>)は使わない</li>
-  <li>中身: 実際の名前、<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>vars</code>・<code>routes</code>・<code>triggers.crons</code>・<code>assets</code>、相手の型と実際の名前・ID から作るバインディング、<code>queues.consumers</code>、<code>durable_objects</code> と移行(DES-010)。別の Worker の Durable Object には <code>script_name</code> を入れる</li>
+  <li>中身: 実際の名前、<code>compatibility_date</code>・<code>compatibility_flags</code>・<code>vars</code>・<code>routes</code>・<code>triggers.crons</code>・<code>assets</code>、書いたときだけ <code>placement</code>・<code>observability</code>・<code>cache</code>、相手の型と実際の名前・ID から作るバインディング、<code>queues.consumers</code>、<code>durable_objects</code> と移行(DES-010)。別の Worker の Durable Object には <code>script_name</code> を入れる</li>
   <li>手元では、ID の代わりにサービスの名前を使い、R2 にはプロジェクトの手元の鍵(DES-003。<code>local_dev.experimental_s3_credentials</code>)を入れる</li>
   <li>リモート・手元とも、<code>remote</code> の指定は入れない(REQ-006)</li>
 </ul>
