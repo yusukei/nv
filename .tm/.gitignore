@@ -1,3 +1,10 @@
 .lock
 waiting/
 *.tmp
+# 依頼の画像は git に含めない（依頼 I-26）。依頼の YAML は含める
+requests/*/*.png
+requests/*/*.jpg
+requests/*/*.jpeg
+requests/*/*.gif
+requests/*/*.webp
+sessions/

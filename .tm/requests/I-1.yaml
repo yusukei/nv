@@ -1,0 +1,130 @@
+id: I-1
+words: |-
+  wrangler-compose を拡張したい(app-launcher から。利用者「wrangler-composeを拡張しましょう。」)。
+
+  app-launcher の Worker(tool-launcher-api)を wrangler-compose でデプロイするため、今の wrangler.toml にあって compose ファイルに書けない次の設定を、services.<名前> に書けるようにしてほしい(手元の dry-run では「このキーは使えません」になり、Worker のフォルダの wrangler.toml にも置けない):
+  1. placement(Smart Placement。今は [placement] mode = "smart"。Worker を D1 の近くで動かすため。無いと D1 への問い合わせのたびに遠くへ往復する)
+  2. observability(今は [observability] enabled = true / head_sampling_rate = 1。ダッシュボードでログを見るため)
+  3. cache(今は [cache] enabled = false)
+
+  あわせて確かめたいこと: services.<名前>.name で、既にある Cloudflare の資源(Worker tool-launcher-api、D1 tool-launcher、R2 tool-launcher、Durable Object VersionKeeper のデータ)をそのまま引き継いで使えるか。名前が変わると D1・R2 のデータの移し替えが要り、Durable Object のデータは引き継げないため。
+said_at: 2026-10-15T18:31:19.815096+09:00
+via: conversation
+recorded_by:
+  kind: agent
+  name: unknown
+  session: 62a44b73-c8a3-4b5f-a945-1b6586109a20
+priority: medium
+split:
+  state: done
+  session: dd313508-3c78-4540-8d19-5ead2041f86b
+  cost_usd: 0.00196362
+  steps:
+  - 依頼を読み始めました
+  - '**/* を一覧しました'
+  - 「placement|observability|head_sampling|cache|services|このキーは使えません|name」を探しました
+  - .tm/requests/I-1.yaml を読みました
+  - 「キーは使えません|unknown_key|placement|observability|head_sampling|\[cache\]|cache」を探しました
+  - 「WORKER_KEYS|const [A-Z_]*KEYS」を探しました
+  - crates/wrangler-compose/src/compose.rs を読みました
+  - 「placement|observability|smart|head_sampling|cache」を探しました
+  - 「w\.name|\.name\b|worker_name|script_name|tool-launcher|fn deploy」を探しました
+  - crates/wrangler-compose/src/remote.rs を読みました
+  - 「fn check_name|tr!\(」を探しました
+  - crates/wrangler-compose/src/configs.rs を読みました
+  - 「struct Worker\b|pub struct Worker」を探しました
+  - services.<名前> に placement・observability・cache を足す開発の依頼と判断。name の引き継ぎは質問で、仕様書に答えがあるので reply で答える
+  - 'チケット T-1 を作りました: Worker の services.<名前> に placement・observability・cache を書けるようにする'
+  - スレッドで答えました
+  - チケットに分け終えました
+  - ishikawa_yusuke が提案 R-1 から起票を頼みました
+  - 依頼を読み始めました
+  - .tm/tickets/**/* を一覧しました
+  - .tm/requests/**/* を一覧しました
+  - .tm/tickets/T-1.yaml を読みました
+  - チケットに分け終えました
+updated_at: 2026-10-15T18:51:45.019705+09:00
+results:
+- summary: |-
+    できたこと: Worker の services.<名前> に placement（mode: smart）・observability（enabled・head_sampling_rate）・cache（enabled）を、wrangler.toml と同じ形で書けるようにしました。dry-run で「このキーは使えません」にはなりません。
+    書いた値だけが Worker の Wrangler の設定（手元とリモートの両方）に出ます。書かないものは Cloudflare の既定のままです。
+    値が不正なとき（mode が smart 以外、enabled が true/false 以外、head_sampling_rate が 0〜1 の外）は services.<名前>.<キー> を示して止まります。
+    仕様書 write.html の Worker のキーの説明も直しました。
+    対応しないこと: services.<名前>.name による既存の資源の引き継ぎ（利用者の判断で対応しない）。
+    確かめること: コミットはまだです。実際にリモートへデプロイし、Cloudflare のダッシュボードで Smart Placement とログが有効になっているかは試していません。
+  at: 2026-10-15T18:51:45.019704+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: 772a6be2-c32f-4c2f-92c9-6014dde25318
+  tickets:
+  - T-1
+comments:
+- id: C-1
+  at: 2026-10-15T18:32:21.325038+09:00
+  by:
+    kind: agent
+    name: unknown
+    session: 62a44b73-c8a3-4b5f-a945-1b6586109a20
+  text: 利用者「既存のリソースは削除し、再デプロイ予定です。」— app-launcher の既存の資源は消して作り直すので、services.<名前>.name で既存の資源を引き継げるかの確認は要らない。拡張の対象は placement・observability・cache の 3 つ。
+  drafted: true
+  answered: true
+replies:
+- id: R-1
+  at: 2026-10-15T18:31:58.529085+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+    session: 4bc6156b-4a93-4144-bff8-cacc4efd5f35
+  text: |-
+    依頼の半分をチケット T-1 にしました(placement・observability・cache を services.<名前> に書けるようにする)。
+
+    残りの「name で既存の資源を引き継げるか」は、仕様と実装を読んだ答えは「今の仕様では引き継げない」です。
+    - Worker・資源の名前は、道具が `<プロジェクト>--<環境>--<名前>` にします(crates/wrangler-compose/src/remote.rs の names・env_prefix)。name を書くと、その後ろの部分だけが変わります。前に付く部分は消せません。
+    - そのため name: tool-launcher-api にしても、Cloudflare には `<プロジェクト>--<環境>--tool-launcher-api` ができ、既存の tool-launcher-api・tool-launcher(D1)・tool-launcher(R2)は使われません。
+    - Durable Object の VersionKeeper も、Worker の名前で決まる(configs.rs の script_name)ので、同じく引き継げません。
+    - これは仕様書の利用者の決定です(docs/wrangler-compose/requirements/write.html:156。「名前がぶつからない」ため)。REQ-006 も「名前だけで持ち主が分かる」ことを求めています。
+
+    既存の資源を使う方法は、仕様を変える判断になります。例: (a) 今のまま、移し替えをする。(b) 前に付く部分を外して、名前をそのまま使えるキーを足す(名前が他のプロジェクトとぶつかる危険が増えるので、仕様の見直しが要る)。どちらにするかは利用者が決めることで、決まったら起票します。
+  proposal:
+    kind: draft
+    state: done
+    decided:
+    - 'services.<名前> に placement(mode: smart)・observability(enabled・head_sampling_rate)・cache(enabled) を書けるようにする'
+    todo:
+    - 'T-1: 3 つのキーの受け付け・検査・Worker の設定への出力と試験'
+    not:
+    - name で既存の資源を引き継ぐ仕組み(仕様の変更が要るので、利用者の判断を待つ)
+    since: 2026-10-15T18:33:57.106777+09:00
+- id: R-2
+  at: 2026-10-15T18:32:06.857769+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+  text: チケットを 1 件に分けました。まず T-1（Worker の services.<名前> に placement・observability・cache を書けるようにする）から着手できます。
+- id: R-3
+  at: 2026-10-15T18:32:27.804397+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+    session: 2a7cdf09-fa86-478a-8901-57008e6eaa5d
+  text: |-
+    了解しました。既存の資源は削除して作り直すとのことなので、name で引き継げるかの確認は対象から外します。拡張の対象は placement・observability・cache の 3 つだけです。
+
+    今のチケット T-1（services.<名前> に placement・observability・cache を書けるようにする）が、この範囲と合っています。起票の提案にあった「やらないこと」（name で既存の資源を引き継ぐ仕組み）も、そのまま外れた扱いになります。内容は変えないので、新しい提案は出していません。着手は「作業を始めて」と言ってもらえれば始めます。
+- id: R-4
+  at: 2026-10-15T18:34:08.865492+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+    session: dd313508-3c78-4540-8d19-5ead2041f86b
+  text: 提案 R-1 を読みましたが、足すチケットはありませんでした（済んだチケットで足りています）。
+chat:
+  state: done
+  session: 2a7cdf09-fa86-478a-8901-57008e6eaa5d
+  cost_usd: 0.00291176
+  steps:
+  - C-1 を受けました。返答を書きます
+  - 返答を書いています
+  - 返答しました
+rev: 36

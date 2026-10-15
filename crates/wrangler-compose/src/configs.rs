@@ -36,6 +36,20 @@ pub fn logs_worker(svc: &str) -> String {
     format!("wc-logs-{svc}")
 }
 
+/// `placement`, `observability` and `cache`, only those written (the rest
+/// are Cloudflare's defaults).
+fn settings(cfg: &mut Map<String, Value>, w: &Worker) {
+    for (key, v) in [
+        ("placement", &w.placement),
+        ("observability", &w.observability),
+        ("cache", &w.cache),
+    ] {
+        if let Some(v) = v {
+            cfg.insert(key.into(), v.clone());
+        }
+    }
+}
+
 /// The local config of one user Worker, running its built bundle.
 pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value {
     let mut cfg = Map::new();
@@ -46,6 +60,7 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     if !w.compatibility_flags.is_empty() {
         cfg.insert("compatibility_flags".into(), json!(w.compatibility_flags));
     }
+    settings(&mut cfg, w);
     if !w.vars.is_empty() {
         cfg.insert("vars".into(), Value::Object(w.vars.clone()));
     }
@@ -220,6 +235,7 @@ pub fn remote_worker(
     if !w.compatibility_flags.is_empty() {
         cfg.insert("compatibility_flags".into(), json!(w.compatibility_flags));
     }
+    settings(&mut cfg, w);
     cfg.insert(
         "workers_dev".into(),
         json!(!w.ports.is_empty() && w.routes.is_empty()),
@@ -1003,5 +1019,39 @@ services:
             json!(d.0.join("./box/Dockerfile"))
         );
         assert!(cfg.get("dev").is_none());
+    }
+
+    #[test]
+    fn placement_observability_and_cache_reach_both_configs_only_when_written() {
+        let (_d, mut c) = project("settings");
+        for s in &mut c.services {
+            if let Kind::Worker(w) = &mut s.kind
+                && s.name == "api"
+            {
+                w.placement = Some(json!({ "mode": "smart" }));
+                w.observability = Some(json!({ "enabled": true, "head_sampling_rate": 1.0 }));
+                w.cache = Some(json!({ "enabled": false }));
+            }
+        }
+        let ids = Ids::default();
+        for cfg in [
+            local_worker(&c, "api", worker(&c, "api"), &built()),
+            remote_worker("api", worker(&c, "api"), &built(), &ids, "acc", None),
+        ] {
+            assert_eq!(cfg["placement"], json!({ "mode": "smart" }));
+            assert_eq!(
+                cfg["observability"],
+                json!({ "enabled": true, "head_sampling_rate": 1.0 })
+            );
+            assert_eq!(cfg["cache"], json!({ "enabled": false }));
+        }
+        for cfg in [
+            local_worker(&c, "web", worker(&c, "web"), &built()),
+            remote_worker("web", worker(&c, "web"), &built(), &ids, "acc", None),
+        ] {
+            for key in ["placement", "observability", "cache"] {
+                assert!(cfg.get(key).is_none(), "{key}");
+            }
+        }
     }
 }

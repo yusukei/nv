@@ -1,0 +1,64 @@
+id: T-1
+title: Worker の services.<名前> に placement・observability・cache を書けるようにする
+state: done
+priority: medium
+body: |-
+  app-launcher の Worker(tool-launcher-api)を wrangler-compose でデプロイできるよう、今の wrangler.toml にあって compose ファイルに書けない 3 つの設定を、Worker の services.<名前> に書けるようにする。
+
+  対象のキー(形は wrangler.toml の形に合わせる):
+  - placement: { mode: "smart" }。Smart Placement。mode は今は "smart" だけ受け付ける
+  - observability: { enabled: true/false, head_sampling_rate: 0〜1 の数 }
+  - cache: { enabled: true/false }
+
+  完了の条件:
+  - 3 つのキーが WORKER_KEYS(crates/wrangler-compose/src/compose.rs)に入り、dry-run で「このキーは使えません」にならない
+  - 値の検査をする: 型が違う・mode が smart 以外・head_sampling_rate が 0〜1 の外、は services.<名前>.<キー> を指すエラーにする
+  - 書いた値が Worker の wrangler 設定(crates/wrangler-compose/src/configs.rs の Worker の設定の組み立て)に出る。書かなければ出ない(既定の値を勝手に入れない)
+  - 単体試験を足す: 3 つのキーの読み取り・検査・設定への出力
+  - 既存の compose ファイルの出力は変わらない(キーを書いていない Worker は今までどおり)
+  - 変更したら仕様書の該当箇所(docs/wrangler-compose/requirements/write.html の services の書き方)を、最小限の要求だけで直す
+
+  範囲外: name の引き継ぎ(別途 reply で答えている)。
+request: I-1
+spec_notes:
+- Worker の services.<名前> は placement・observability・cache を書けること。値は wrangler.toml の形と同じ(placement.mode、observability.enabled・head_sampling_rate、cache.enabled)
+- 書いていないキーは Cloudflare の既定に任せ、道具が値を決めて入れないこと
+- 値が不正なときは、どのキーのどの値が悪いかを services.<名前>.<キー> で示して止まること
+assignee:
+  kind: agent
+  name: claude-code
+  session: 772a6be2-c32f-4c2f-92c9-6014dde25318
+report:
+  changed: |-
+    compose.rs: Worker に placement・observability・cache を足し、WORKER_KEYS に入れて値を検査（mode は smart だけ、enabled は true/false、head_sampling_rate は 0〜1、ほかのキーは使えない）
+    configs.rs: 書いた値だけを手元とリモートの Worker の設定に出す（書かなければ出さない）
+    compose.rs・configs.rs に単体試験を 3 つ足した
+    docs/wrangler-compose/requirements/write.html: Worker のキーの表と説明に 3 つのキーを足した
+  verified: |-
+    cargo test -p wrangler-compose: 81 件すべて通る（ポートを開く 4 件はサンドボックスの外で回した）
+    dry-run（--env local --dry-run up）: 3 つのキーを書いた compose ファイルが「このキーは使えません」にならず検査を通る
+    mode: off・head_sampling_rate: 2 は services.web.placement.mode・services.web.observability.head_sampling_rate を示すエラーになる（1 キー 1 件）
+    既存の試験（キーを書かない Worker）の結果は変わらない
+  remaining: |-
+    コミットはまだ
+    リモートへの実際のデプロイで Cloudflare に反映されるかは試していない
+log:
+- at: 2026-10-15T18:48:56.941804+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: 772a6be2-c32f-4c2f-92c9-6014dde25318
+  text: 着手しました
+- at: 2026-10-15T18:51:38.395736+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: 772a6be2-c32f-4c2f-92c9-6014dde25318
+  text: 完了しました
+created_by:
+  kind: agent
+  name: 起票エージェント
+  session: 4bc6156b-4a93-4144-bff8-cacc4efd5f35
+created_at: 2026-10-15T18:31:53.524015+09:00
+updated_at: 2026-10-15T18:51:38.395737+09:00
+rev: 3

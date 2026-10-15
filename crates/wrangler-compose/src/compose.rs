@@ -193,6 +193,11 @@ pub struct Worker {
     pub compatibility_date: String,
     pub compatibility_flags: Vec<String>,
     pub assets: Option<PathBuf>,
+    /// `placement`, `observability` and `cache`, in Wrangler's shape, only
+    /// when written: unwritten ones are left to Cloudflare's defaults.
+    pub placement: Option<Value>,
+    pub observability: Option<Value>,
+    pub cache: Option<Value>,
 }
 
 /// A container on one of a Worker's Durable Object classes (REQ-020), with
@@ -870,6 +875,9 @@ const WORKER_KEYS: &[&str] = &[
     "compatibility_flags",
     "assets",
     "containers",
+    "placement",
+    "observability",
+    "cache",
 ];
 const CONTAINER_KEYS: &[&str] = &[
     "class",
@@ -1710,7 +1718,81 @@ impl Checker {
                 ),
             );
         }
+        w.placement = self.settings(&format!("{at}.placement"), o.get("placement"), &["mode"]);
+        if let Some(Value::Object(p)) = o.get("placement")
+            && !p.contains_key("mode")
+        {
+            self.err(
+                &format!("{at}.placement.mode"),
+                crate::tr!("\"smart\" にしてください", "must be \"smart\""),
+            );
+        }
+        w.observability = self.settings(
+            &format!("{at}.observability"),
+            o.get("observability"),
+            &["enabled", "head_sampling_rate"],
+        );
+        w.cache = self.settings(&format!("{at}.cache"), o.get("cache"), &["enabled"]);
         Some(w)
+    }
+
+    /// A mapping of Wrangler settings (`placement`, `observability`,
+    /// `cache`) with only the given keys, each checked and kept as written
+    /// (`${VAR}` text turned into its true/false or number).
+    fn settings(&mut self, at: &str, v: Option<&Value>, keys: &[&str]) -> Option<Value> {
+        let o = match v? {
+            Value::Object(o) => o,
+            _ => {
+                self.err(at, crate::tr!("対応表にしてください", "must be a mapping"));
+                return None;
+            }
+        };
+        self.unknown_keys(at, o, keys);
+        let mut out = Map::new();
+        for (k, x) in o {
+            let here = format!("{at}.{k}");
+            match k.as_str() {
+                // Smart Placement is the only mode.
+                "mode" => {
+                    if x == "smart" {
+                        out.insert(k.clone(), x.clone());
+                    } else {
+                        self.err(
+                            &here,
+                            crate::tr!("\"smart\" にしてください", "must be \"smart\""),
+                        );
+                    }
+                }
+                "enabled" => {
+                    let before = self.errors.len();
+                    let b = self.boolean(&here, Some(x));
+                    if self.errors.len() == before {
+                        out.insert(k.clone(), Value::Bool(b));
+                    }
+                }
+                "head_sampling_rate" => {
+                    let n = match x {
+                        Value::Number(n) => n.as_f64(),
+                        Value::String(s) => s.parse::<f64>().ok(),
+                        _ => None,
+                    };
+                    match n {
+                        Some(n) if (0.0..=1.0).contains(&n) => {
+                            out.insert(k.clone(), serde_json::json!(n));
+                        }
+                        _ => self.err(
+                            &here,
+                            crate::tr!(
+                                "0 から 1 までの数にしてください",
+                                "must be a number from 0 to 1"
+                            ),
+                        ),
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(Value::Object(out))
     }
 
     /// `containers` of a Worker (REQ-020): each on a Durable Object class the
@@ -3046,5 +3128,61 @@ services:
             "      - class: Pinger\n        image: ./box/Dockerfile\n        max_instances: 1\n",
         );
         assert_eq!(web(&c.unwrap()).containers[0].max_instances, Some(1));
+    }
+
+    #[test]
+    fn placement_observability_and_cache_are_read_as_written() {
+        let yaml = format!(
+            "{ONE_WORKER}    placement: {{ mode: smart }}\n    observability: {{ enabled: true, head_sampling_rate: 0.5 }}\n    cache: {{ enabled: \"false\" }}\n"
+        );
+        let c = project(&yaml, None).1.unwrap();
+        let w = web(&c);
+        assert_eq!(w.placement, Some(serde_json::json!({ "mode": "smart" })));
+        assert_eq!(
+            w.observability,
+            Some(serde_json::json!({ "enabled": true, "head_sampling_rate": 0.5 }))
+        );
+        assert_eq!(w.cache, Some(serde_json::json!({ "enabled": false })));
+        // Unwritten ones stay unset: Cloudflare's defaults apply.
+        let c = project(ONE_WORKER, None).1.unwrap();
+        let w = web(&c);
+        assert!(w.placement.is_none() && w.observability.is_none() && w.cache.is_none());
+    }
+
+    #[test]
+    fn placement_observability_and_cache_mistakes_say_where() {
+        for (extra, want) in [
+            ("    placement: smart\n", "web.placement:"),
+            ("    placement: { mode: off }\n", "web.placement.mode"),
+            ("    placement: {}\n", "web.placement.mode"),
+            (
+                "    placement: { mode: smart, hint: x }\n",
+                "web.placement.hint",
+            ),
+            (
+                "    observability: { enabled: maybe }\n",
+                "web.observability.enabled",
+            ),
+            (
+                "    observability: { head_sampling_rate: 1.5 }\n",
+                "web.observability.head_sampling_rate",
+            ),
+            (
+                "    observability: { head_sampling_rate: -0.1 }\n",
+                "web.observability.head_sampling_rate",
+            ),
+            (
+                "    observability: { head_sampling_rate: all }\n",
+                "web.observability.head_sampling_rate",
+            ),
+            ("    cache: { enabled: 1 }\n", "web.cache.enabled"),
+            ("    cache: [true]\n", "web.cache:"),
+        ] {
+            let err = project(&format!("{ONE_WORKER}{extra}"), None)
+                .1
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+        }
     }
 }
