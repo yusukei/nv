@@ -68,7 +68,7 @@
   <li><code>down</code>: グループをすべて消してから <code>DELETE /apps/{id}</code> し、<code>CODEMAGIC_APP_ID</code> の行を消す(アプリを先に消すと、そのグループが消せず読めないまま残る。本物で確かめた)。アプリがもう無ければ(404)、行を消すだけにする。消す前に、アプリの ID とグループの名前を示し、ビルドの履歴と成果物も消えることを添えて、環境名の打ち直しで確かめる(DES-012 の打ち直しにまとめる)</li>
   <li><code>--dry-run</code>・<code>ps</code>: <code>GET</code> だけを使う。plan は Cloudflare と同じ形(<code>+</code>・<code>~</code>・<code>-</code>・<code>=</code>)で、アプリの登録、グループと変数の作る・変える・消す、Secure の値の「あるので変えない」を示す。値は秘密でないものだけを前後で示す</li>
   <li>エラー: Codemagic の答えの状態と、本文の <code>message</code> を示して止め、それまでに済んだことを示す(送った値は出さない)。429 は <code>ratelimit-reset</code> の秒数を示して止める。どの段も、もう一度 <code>up</code> すれば揃う(変える前に毎回読み直すので)</li>
-  <li>手元: <code>--env local</code> では Codemagic に触れず、トークンも読まない。<code>up</code> の初めに、Codemagic のサービスは手元では何もしないと 1 行知らせる</li>
+  <li>手元: <code>--env local</code> では Codemagic に触れず、トークンも読まない。Codemagic のサービスに書いた変数は値が無くても止めない(空として読む。<code>${…}</code> の書き方の誤りは止める)。<code>up</code> の初めに、Codemagic のサービスは手元では何もしないと 1 行知らせる</li>
 </ul>
 </article>
 <article class="item" id="des-023"><h3><span class="id">DES-023</span>シークレットの入れ直し(--update-secret) <span class="refs"><a href="../requirements/write.html#req-005">REQ-005</a>・<a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/commands.html#req-014">REQ-014</a></span></h3>

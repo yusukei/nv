@@ -655,7 +655,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     let mut missing = BTreeSet::new();
     // Secrets read variables like any other value, so ones without a value
     // are in the same list (AC-004).
-    let expanded = expand_tree(raw, &vars, &mut missing);
+    let expanded = expand_services(raw, &vars, env, &mut missing);
     if !missing.is_empty() {
         bail!(missing_message(&missing, env, &env_file));
     }
@@ -893,6 +893,46 @@ fn reads_variable(s: &str) -> bool {
         }
     }
     false
+}
+
+/// Expand the whole file. Locally a Codemagic service is never used, so its
+/// variables need no value there (DES-022): a missing one expands to an empty
+/// string, and only a malformed template still stops.
+fn expand_services(
+    v: Value,
+    vars: &dyn Lookup,
+    env: &str,
+    missing: &mut BTreeSet<Missing>,
+) -> Value {
+    let Value::Object(top) = v else {
+        return expand_tree(v, vars, missing);
+    };
+    Value::Object(
+        top.into_iter()
+            .map(|(k, x)| match x {
+                Value::Object(services) if k == "services" && env == "local" => {
+                    let services = services
+                        .into_iter()
+                        .map(|(name, s)| {
+                            let kind = s
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .map(|t| interp::expand(t, vars, &mut BTreeSet::new()));
+                            if kind.as_deref() != Some("codemagic") {
+                                return (name, expand_tree(s, vars, missing));
+                            }
+                            let mut unused = BTreeSet::new();
+                            let s = expand_tree(s, vars, &mut unused);
+                            missing.extend(unused.into_iter().filter(|m| m.invalid));
+                            (name, s)
+                        })
+                        .collect();
+                    (k, Value::Object(services))
+                }
+                x => (k, expand_tree(x, vars, missing)),
+            })
+            .collect(),
+    )
 }
 
 fn expand_tree(v: Value, vars: &dyn Lookup, missing: &mut BTreeSet<Missing>) -> Value {
@@ -3422,6 +3462,40 @@ services:
         assert!(resource_keys(c.service("mobile").unwrap()).is_empty());
         // The token is never read locally.
         assert_eq!(c.codemagic_token, None);
+    }
+
+    #[test]
+    fn a_codemagic_service_needs_no_values_locally() {
+        // Codemagic is never touched locally (DES-022), so its variables need
+        // no value in .env.local; a Worker's still do.
+        let yaml = format!("{ONE_WORKER}{CODEMAGIC}");
+        let (_d, c) = project(&yaml, None);
+        let c = c.unwrap();
+        let Kind::Codemagic(m) = &c.service("mobile").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(m.groups[0].environment["STORE_DOMAIN"], "");
+        assert_eq!(m.groups[0].secrets["STORE_APP_KEY"], "");
+        // Remotely they are sent to Codemagic, so they still need values.
+        let err = load(&_d.0.join("wrangler-compose.yaml"), "prod")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("STORE_APP_KEY") && err.contains("WEB_DOMAIN"), "{err}");
+        let required = format!(
+            "{ONE_WORKER}{}",
+            CODEMAGIC.replace("${WEB_DOMAIN}", "${WEB_DOMAIN:?set it}")
+        );
+        assert!(project(&required, None).1.is_ok());
+        // A malformed template still stops.
+        let bad = format!("{ONE_WORKER}{}", CODEMAGIC.replace("${WEB_DOMAIN}", "${WEB_DOMAIN"));
+        assert!(project(&bad, None).1.is_err());
+        // Elsewhere a missing variable still stops.
+        let worker = format!(
+            "{}    routes: [\"${{WEB_DOMAIN}}\"]\n{CODEMAGIC}",
+            ONE_WORKER
+        );
+        let err = project(&worker, None).1.unwrap_err().to_string();
+        assert!(err.contains("WEB_DOMAIN") && !err.contains("STORE_APP_KEY"), "{err}");
     }
 
     #[test]

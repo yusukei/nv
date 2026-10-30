@@ -39,7 +39,8 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
   value in `.env.<env>`, run `up --update-secret`. The same goes for Codemagic's Secure values.
 - A `type: codemagic` service registers the environment's Codemagic app on the first remote `up` (with the
   retype) and writes `CODEMAGIC_APP_ID` into `.env.<env>`; `down` deletes the app. It needs
-  `CODEMAGIC_API_TOKEN` from the user; never print it. Nothing happens locally.
+  `CODEMAGIC_API_TOKEN` from the user; never print it. Nothing happens locally, and its variables
+  need no value in `.env.local`.
 - `${WC_R2_<SERVICE>_S3}` in a Worker's `environment` is the bucket's S3-compatible endpoint, filled in by
   the tool for local and remote; do not write endpoints per environment by hand.
 - `${WC_R2_<SERVICE>_S3_KEY}` / `${WC_R2_<SERVICE>_S3_SECRET}` in a Worker's `secrets` are the local S3 keys

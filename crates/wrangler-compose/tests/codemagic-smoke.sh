@@ -96,8 +96,9 @@ grep -a -q 'accounts' api.log && fail "Cloudflare was touched with a broken comp
 printf '\nCODEMAGIC_API_TOKEN=cm-token\n' >> .env.ac-1
 printf '\nCODEMAGIC_API_TOKEN=cm-token' >> .env.ac-2
 
-# --env local never touches Codemagic and says so.
-printf 'STRIPE_KEY=sk_local\nWEB_DOMAIN=x\nSTORE_APP_KEY=a\nFIREBASE_KEY=b\n' > .env.local
+# --env local never touches Codemagic and says so. The Codemagic service's
+# variables (STORE_APP_KEY, FIREBASE_KEY) need no value there.
+printf 'STRIPE_KEY=sk_local\nWEB_DOMAIN=x\n' > .env.local
 n=$(lines)
 out=$(wc --env local --dry-run up)
 grep -q 'mobile: the Codemagic service does nothing locally' <<<"$out" || fail "local notice: $out"

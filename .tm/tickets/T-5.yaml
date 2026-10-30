@@ -1,0 +1,41 @@
+id: T-5
+title: 手元では Codemagic のサービスの変数の値を求めない
+state: done
+priority: high
+body: --env local up で、Codemagic のサービスに書いた変数(LC_TOKEN・API_DOMAIN など)が .env.local に無いとエラーになる。${VAR:-} で逃げると本番で空になり Codemagic の変数が消される。手元では Codemagic のサービスの変数を確かめないようにする(DES-022)。
+assignee:
+  kind: agent
+  name: claude-code
+  session: bfbd492f-cf11-4301-8f2f-e4b8124f77b2
+report:
+  changed: |-
+    compose.rs: --env local では type が codemagic のサービスの変数を、値が無くても空として読む(${…} の書き方の誤りは止める)。リモートは今までどおり止まる
+    DES-022(d03-remote.html)・README・SKILL.md に 1 文ずつ足した
+    codemagic-smoke.sh の .env.local から STORE_APP_KEY・FIREBASE_KEY を外した
+  verified: |-
+    単体試験 a_codemagic_service_needs_no_values_locally: 直す前は失敗、直したあとは成功(手元は通る・prod は止まる・:? も手元は通る・書き方の誤りは止まる・Worker の変数は止まる)
+    cargo test 90 件すべて成功、clippy は指摘なし
+    codemagic-smoke.sh の手元の段(104 行目まで)は macOS で通った
+  remaining: |-
+    codemagic-smoke.sh は 125 行目で止まる。Linux の script -qec を使っているので macOS では動かない(今回の変更とは別)。Linux で通しで流すのは未実施
+    コミットはまだしていない
+log:
+- at: 2026-10-30T22:30:37.967207+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: bfbd492f-cf11-4301-8f2f-e4b8124f77b2
+  text: 担当を取って始めました
+- at: 2026-10-30T22:30:37.977331+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: bfbd492f-cf11-4301-8f2f-e4b8124f77b2
+  text: 完了しました
+created_by:
+  kind: agent
+  name: claude-code
+  session: bfbd492f-cf11-4301-8f2f-e4b8124f77b2
+created_at: 2026-10-30T22:30:25.496019+09:00
+updated_at: 2026-10-30T22:30:37.977331+09:00
+rev: 3
