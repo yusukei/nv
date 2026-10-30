@@ -1,0 +1,163 @@
+id: T-2
+title: wrangler-compose から Codemagic へアプリを登録できるかを調べ、報告書にまとめる
+state: done
+priority: medium
+body: |-
+  依頼 I-2「wrangler-compose に Codemagic のサービスへアプリケーションの登録ができるように拡張したい。可能か調査したい」に答える調査。コードは変えない。
+
+  調べること:
+  1. Codemagic でアプリを登録する手段: REST API（アプリの追加・リポジトリの接続・SSH 鍵や認証の渡し方）、CLI（codemagic-cli-tools など）があるか。公式文書で確かめ、出典の URL を書く
+  2. 登録に要るもの: API トークンの取り方、チーム・リポジトリ（GitHub 連携か SSH か）、登録後にできること（環境変数・グループ・ビルドの起動・Webhook）、再登録や削除（名前で冪等にできるか）
+  3. 料金・プランの制限、API の制限
+  4. wrangler-compose に入れる形の案: compose ファイルに新しい `type`（例: codemagic）を足す形か、別の仕組みか。`--env` ごとの扱い（local では何もしない／何を示すか）、`up`・`down`・`ps`・`--dry-run` で何をするか、名前の付け方（`<プロジェクト>--<環境>--<名前>`）と合うか
+  5. 要求仕様とのかね合い: 現在の範囲（docs/wrangler-compose/requirements/common.html の REQ-015 安全・REQ-016 手で行う段取りを持たない・範囲外「Wrangler のコマンドでも Cloudflare の API でも行えない操作」）や README の「Cloudflare Workers の環境を docker compose のように扱う」と衝突する点。要求仕様をどう変える必要があるか
+  6. シークレット（Codemagic の API トークン）の扱いが REQ-015 を満たせるか
+  7. 可能なら、手元で API を実際に叩いて確かめる（トークンが無ければ、文書のみで確かめたと明記する）。推測は推測と書く
+
+  完了の条件:
+  - 成果物として、上の 1〜7 の結果と、「できる／条件付きでできる／できない」の結論、入れるならどの形が良いかの推奨と、そのときに要るチケットの分け方の案をまとめた HTML（または Markdown）を ticket_artifact で付ける
+  - 報告書に、利用者が決める必要があること（範囲を Cloudflare 以外に広げてよいか、など）を一覧にする
+request: I-2
+docs:
+- path: docs/wrangler-compose/requirements/common.html
+  anchor: out-of-scope
+  quote: Wrangler のコマンドでも Cloudflare の API でも行えない操作
+- path: docs/wrangler-compose/requirements/common.html
+  anchor: req-016
+  quote: 利用者が用意するのは、compose ファイル・コード・.env.<環境> だけ。人が行うのは Cloudflare へのログインを 1 度だけ
+- path: README.md
+  quote: Cloudflare Workers の環境を docker compose のように扱う `wrangler-compose`
+now:
+  blocked: 報告書の「決めること」D1〜D8 が未決
+  next: 利用者が報告書を読み、D1〜D8 を確認事項として出すかを決める。決まったら要求仕様の改訂のチケットへ
+  at: 2026-10-30T20:46:23.740887+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+assignee:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+report:
+  changed: |-
+    wrangler-compose のコードと仕様書は変えていない。調査報告(成果物)を付けた。
+    marche-ar の deploy/.env.production に、Codemagic のビルドに要る値の欄と CODEMAGIC_APP_ID を足し(値は利用者が入れた)、複数行の値 2 つの囲みを引用符に直した。
+  verified: |-
+    本物の Codemagic で、トークンで読めるもの・アプリの登録(同じリポジトリの 2 回目も通る)・グループと変数の一括登録・アプリの削除を確かめた。
+    .env.production だけから、使っているアプリと同じ 7 グループ・21 変数を作れることを、書き込まずに読み比べて確かめた。
+    Secure の値は API でも読み返せないことを確かめた。
+  remaining: |-
+    報告書の D1〜D8(書き方の形・リポジトリの URL・ID が無いとき・手元・down・確かめ・空の値・ps)が未決。
+    試験で作ったアプリのグループ 5 つが Codemagic に残っている(API では消せない。サポートへの依頼が要る)。
+    要求仕様の改訂・詳細仕様・実装・本物での受け入れ確認は、報告書のチケットの分け方の案のとおり後続で行う。
+artifacts:
+- file: codemagic-report.md
+  title: Codemagic 対応の調査報告
+  kind: markdown
+  bytes: 13689
+  at: 2026-10-30T20:46:22.699861+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  series: codemagic-report.md
+  version: 1
+  superseded: true
+- file: codemagic-report-2.md
+  title: Codemagic 対応の調査報告
+  kind: markdown
+  bytes: 14937
+  at: 2026-10-30T21:10:18.695425+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  series: codemagic-report.md
+  version: 2
+  superseded: true
+- file: codemagic-report-3.md
+  title: Codemagic 対応の調査報告
+  kind: markdown
+  bytes: 15058
+  at: 2026-10-30T21:18:33.905615+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  series: codemagic-report.md
+  version: 3
+  superseded: true
+- file: codemagic-report-4.md
+  title: Codemagic 対応の調査報告
+  kind: markdown
+  bytes: 15221
+  at: 2026-10-30T21:19:39.315944+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  series: codemagic-report.md
+  version: 4
+  superseded: true
+- file: codemagic-report-5.md
+  title: Codemagic 対応の調査報告
+  kind: markdown
+  bytes: 15457
+  at: 2026-10-30T21:22:36.194712+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  series: codemagic-report.md
+  version: 5
+log:
+- at: 2026-10-30T20:45:01.799536+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 担当を取って始めました
+- at: 2026-10-30T20:46:22.699863+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 成果物「Codemagic 対応の調査報告」を付けました
+- at: 2026-10-30T20:46:45.551787+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 完了しました
+- at: 2026-10-30T21:10:18.695427+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 成果物「Codemagic 対応の調査報告」を付け直しました（版 2）
+- at: 2026-10-30T21:18:33.905616+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 成果物「Codemagic 対応の調査報告」を付け直しました（版 3）
+- at: 2026-10-30T21:19:39.315946+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 成果物「Codemagic 対応の調査報告」を付け直しました（版 4）
+- at: 2026-10-30T21:22:36.194717+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 成果物「Codemagic 対応の調査報告」を付け直しました（版 5）
+created_by:
+  kind: agent
+  name: 起票エージェント
+  session: 1afbb35d-d783-41fc-a590-7f01e9017c54
+created_at: 2026-10-30T17:32:44.931510+09:00
+updated_at: 2026-10-30T21:22:36.194719+09:00
+rev: 9

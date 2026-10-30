@@ -8,3 +8,4 @@ requests/*/*.jpeg
 requests/*/*.gif
 requests/*/*.webp
 sessions/
+local/

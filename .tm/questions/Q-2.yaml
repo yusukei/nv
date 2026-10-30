@@ -1,0 +1,36 @@
+id: Q-2
+state: withdrawn
+question: Codemagic のアプリは、どの単位で登録し、down でどう扱いますか？
+background: |-
+  wrangler-compose はリモートのものに <プロジェクト>--<環境>--<名前> という名前を付け、名前から持ち主を判断して、その環境のものだけを作り・消します（REQ-006）。
+  Codemagic のアプリ名はリポジトリの名前から決まり（例: my-repo）、API で名前を指定する手段は見つかりませんでした。そのため名前で持ち主を判断する決まりが使えません。アプリを消す API も公式の資料には無く、第三者の実装が DELETE /apps/{id} を呼んでいるだけです。Codemagic のアプリはふつう 1 つのリポジトリにつき 1 つで、同じリポジトリを 2 回登録できるかは未確認です。
+  出典: https://docs.codemagic.io/rest-api/applications/
+intent: 登録を何度実行しても結果が同じになり、ほかの人のアプリを誤って消すことの無い形を決めたい。
+options:
+- key: a
+  label: リポジトリにつき 1 つ。up で、同じリポジトリの URL のアプリが無ければ登録し、あれば何もしない。down でも消さない
+  effect: 安全で、何度 up しても同じになる。ただし環境（staging・pr-123）ごとには分かれない。不要になったアプリは Codemagic の画面で手で消す
+- key: b
+  label: 環境ごとに 1 つ登録し、down --purge で消す
+  effect: ほかの資源と同じ扱いになる。ただし、名前で持ち主を判断できず、削除の API も公式に無い。同じリポジトリを環境の数だけ登録できるかも分からないので、本物で確かめてから決めることになり、安全の決まり（REQ-006・015）を Codemagic 向けに作り直す必要がある
+recommend: a
+why: 公式に載っている API だけで作れ、「名前で持ち主が分かるものだけを消す」という安全の決まりに反しない。Codemagic の側でも、アプリはリポジトリにつき 1 つでワークフローを分けるのがふつうなので、環境ごとに分けたい理由が薄い。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-006
+  quote: 道具が作る・使う・消すのは、名前が <プロジェクト>--<環境>-- で始まる、その環境のものだけ。ほかの名前のものには触らない
+request: I-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+withdrawn:
+  reason: Q-1 と同じく前提を取り違えていたため。アプリは marche-ar のようにリポジトリにつき 1 つで、変数グループは compose ファイルから消したシークレットと同じ扱いにできるので、問い直さない。
+  at: 2026-10-30T17:42:30.071895+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T17:37:53.895301+09:00
+updated_at: 2026-10-30T17:42:30.071896+09:00
+rev: 2

@@ -1,0 +1,39 @@
+id: Q-3
+state: superseded
+question: wrangler-compose が Codemagic にアプリを登録し、変数グループに値を入れられるように、定義と「使える API は wrangler login で付与されるものだけ」という決定を改めますか？
+background: |-
+  marche-ar では、配信側(Worker・D1・R2)を wrangler-compose で出し、Unity のアプリを Codemagic でビルドしている。アプリは配信先をビルドのときに焼き込むので、ビルドには deploy/.env.<環境> の値(DELIVERY_DOMAIN・アプリキー・アップロード鍵など)が要る。いまは人が Codemagic の画面で、アプリを登録し(Add application)、変数グループ marche_staging・marche_production・android_upload_key を作り、.env の値を手で写している(marche-ar の docs/manual/app-build-manual.html 10-1)。.env を変えるたびに写し直しが要り、写し忘れればアプリと Worker が食い違う。
+  Codemagic の API で行える: アプリの登録は POST /apps(古い試行版の API。予告なく変わりうる)、変数グループの作成・一覧・削除と変数の一括登録・更新・削除は v3 の API。どちらも利用者個人の API トークンで認証する。
+  いまの wrangler-compose の定義は「リモート(Cloudflare の環境)へ展開する」もので、使える API は wrangler login で付与されるものだけ(2026-10-13)なので、Codemagic を扱うには定義と決定を改める必要がある。
+  出典: https://docs.codemagic.io/rest-api/applications/ ・ https://codemagic.io/api/v3/schema
+intent: '依頼 I-2(登録の範囲は b: アプリの登録と、.env.<環境> の値を変数グループに入れること)を、wrangler-compose の仕様に入れてよいかを決めたい。'
+options:
+- key: a
+  label: 改める。定義に「Worker を使うアプリのビルドのために、Codemagic へアプリを登録し、環境の値を入れる」を足し、使える API に Codemagic の API を足す
+  effect: up 1 つで、Cloudflare への展開と Codemagic の値の写しが揃い、値の置き場所が .env.<環境> の 1 つになる。wrangler-compose が Cloudflare の外のサービスを初めて扱う。アプリの登録は試行版の API に頼るので、Codemagic 側の変更で壊れうる
+- key: b
+  label: 改めない(作らない)
+  effect: 仕様は変わらない。いまの手作業(画面での登録と値の写し)が残る
+recommend: a
+why: 依頼が wrangler-compose の拡張で、marche-ar の値の写し直しと食い違いは実際に起きている手間と事故の元。定義の「手元で開発したものを安全にリモートへ展開する」の中で、アプリがその環境に向くことも展開の一部と言える。
+docs:
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 定義
+  quote: wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は wrangler login で付与される API のみとする。(2026-10-13)
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T18:10:30.119243+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-6 に引き継ぎました
+superseded_by:
+- Q-6
+created_at: 2026-10-30T17:42:44.004384+09:00
+updated_at: 2026-10-30T18:10:30.119557+09:00
+rev: 2

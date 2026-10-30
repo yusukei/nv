@@ -1,0 +1,37 @@
+id: Q-4
+state: superseded
+question: Codemagic の API トークンは、どこから受けますか？
+background: |-
+  Codemagic の API トークンは利用者個人のもの(Codemagic の画面の Teams > Personal Account > Integrations > Codemagic API で見る)。できることは、その人のチームでの役割で決まる。wrangler-compose が作って配ることはできず、利用者が 1 回は手で入れることになる(REQ-016「API キーを手で発行する段取りを持たない」への例外になる)。
+  marche-ar の deploy/.env.<環境> は、元の値をパスワード管理の共有の保管庫に控えて、人どうしで共有している(deploy/wrangler-compose.yaml の先頭の注記)。Cloudflare の側は、個人の wrangler login で認証している。
+intent: 個人のトークンが共有の .env に混ざらず、ほかの人のトークンで操作することが起きない受け方を決めたい。
+options:
+- key: a
+  label: 環境変数 CODEMAGIC_API_TOKEN だけで受ける。.env.<環境> に書くと止まる
+  effect: wrangler login と同じく、操作する人のトークンで動く。共有の .env からトークンが漏れない。シェルの設定などに、各自が 1 回入れる
+- key: b
+  label: 環境変数か .env.<環境> の CODEMAGIC_API_TOKEN で受ける
+  effect: ほかの変数と同じ扱いで分かりやすい。ただし共有の .env に書けば、ほかの人がその人のトークン(とその人の権限)で操作することになる
+recommend: a
+why: トークンは個人のもので、marche-ar の .env は人どうしで共有されている。b ではトークンが共有の保管庫に入り、誰が操作したかが分からなくなる。
+docs:
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 決定(利用者)
+  quote: 人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T18:10:30.392426+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-7 に引き継ぎました
+superseded_by:
+- Q-7
+created_at: 2026-10-30T17:42:51.256634+09:00
+updated_at: 2026-10-30T18:10:30.392428+09:00
+rev: 2

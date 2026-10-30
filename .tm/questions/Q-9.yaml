@@ -1,0 +1,53 @@
+id: Q-9
+state: resolved
+question: wrangler-compose の役目を「Cloudflare への展開」から広げて、Codemagic(アプリのビルドを自動で行うサービス)への設定もできるようにしてよいですか？
+background: |-
+  【何の話か】
+  wrangler-compose の要求仕様の「定義」には、次の 2 つが書いてあります。
+  (1) wrangler-compose は、手元で作ったものを Cloudflare へ展開するための道具である
+  (2) 使ってよい API は、wrangler login でもらえる Cloudflare の API だけ(2026-10-13 の決定)
+  今回の依頼(I-2)は、Codemagic にアプリを登録し、ビルドに要る値(鍵やパスワードなど)を Codemagic に入れるところまでを wrangler-compose にさせるものです。Codemagic は Cloudflare ではないので、(1)(2) のどちらにも当てはまりません。作り始める前に、定義そのものを広げてよいかを決める必要があります。
+
+  【いまどうなっているか(例: marche-ar)】
+  Worker は wrangler-compose で Cloudflare に展開しています。一方、アプリのビルドに使う値は約 20 個あり、人が Codemagic の画面で 1 つずつ登録しています。値の元は .env.production にあるので、同じ値を 2 か所に手で写していることになります。
+
+  【確かめたこと】
+  Codemagic の API で、アプリの登録・変数の登録・更新・削除ができることを、本物で確かめました。.env.production の値だけから、いまの Codemagic と同じ設定(7 グループ・21 変数)を作れることも、書き込まずに読み比べて確かめました。
+  ただし、アプリの登録に使う API は Codemagic が「試行版で、予告なく変わりうる」としているものです。
+intent: Codemagic 対応を wrangler-compose の仕様に入れてよいか(定義を広げてよいか)を決めたい。
+options:
+- key: a
+  label: 広げる。定義に「Codemagic にアプリを登録し、ビルドに要る値を入れる」を足し、使ってよい API に Codemagic の API を足す
+  effect: 利用者は .env.<環境> に値を書き、up を打つだけで Cloudflare と Codemagic の両方が揃う。Codemagic の画面での手での登録が無くなる。そのかわり、Codemagic が試行版の API を変えると、アプリの登録が壊れうる(そのときは直す)
+- key: b
+  label: 広げない(この機能は作らない)
+  effect: 仕様は変わらない。利用者はこれまでどおり、Codemagic の画面で値を手で登録し続ける
+recommend: a
+why: 依頼がまさにこの拡張で、必要な API が本物で動くことも確かめた。値を 2 か所に手で写す手間と、写し間違いが無くなる。試行版の API の心配は、壊れたら直すことで足りる。
+docs:
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 定義
+  quote: wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は wrangler login で付与される API のみとする。(2026-10-13)
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+answer:
+  option: a
+  kind: user
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  at: 2026-10-30T20:43:14.240661+09:00
+  confirmed: true
+outcome:
+  note: T-2 の報告書の「決まったこと」と「要求仕様とのかね合い」に、定義を広げる前提で改める箇所を書いた。仕様書への反映は、要求仕様を改めるチケットで行う。
+  at: 2026-10-30T20:46:31.368009+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T20:41:22.013202+09:00
+updated_at: 2026-10-30T20:46:31.368009+09:00
+rev: 3

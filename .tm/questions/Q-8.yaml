@@ -1,0 +1,38 @@
+id: Q-8
+state: superseded
+question: Codemagic の変数グループに入れる値は、どこに書きますか？
+background: |-
+  .env.<環境> には、Codemagic のビルドに要る値と、Worker にだけ渡すシークレット(Codemagic に出す必要の無いもの)が混ざりうる。
+  Codemagic の変数グループは名前で codemagic.yaml から読まれ、グループの中の変数は名前と値と Secure の有無を持つ。v3 の API で、グループの作成・変数の一括登録・更新・削除ができる(本物で確かめた)。
+  Worker の値は compose ファイルの environment(秘密でない値)と secrets(シークレット)に「名前: ${変数}」で書き、書いたものだけがその Worker に渡る(REQ-005)。
+intent: Codemagic に出す値を利用者が選べ、Worker にだけ渡すシークレットが Codemagic へ出ない書き方を決めたい。
+options:
+- key: a
+  label: 'compose ファイルに、グループの名前と、その中の「名前: ${変数}」を書く(Worker の environment・secrets と同じ書き方。secrets 側に書いたものは Secure にする)'
+  effect: 書いたものだけが Codemagic へ出る。Codemagic 側の名前を .env の名前と変えられる。compose ファイルに書くことが増える
+- key: b
+  label: 書かない。.env.<環境> の値をすべて、環境の名前のグループにそのまま入れる
+  effect: 書くことは無い。ただし Worker にだけ渡すシークレットも Codemagic へ出る。名前は .env のままで、グループは 1 つになる
+recommend: a
+why: b では要らない先へシークレットが出る。a は、何を外へ出すかが compose ファイルで見え、「シークレットは書いた先にだけ見える」(REQ-005)と同じ考えで揃う。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-005
+  quote: その Worker の secrets に書いたものだけが、その Worker から見える
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T20:42:25.094454+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-11 に引き継ぎました
+superseded_by:
+- Q-11
+created_at: 2026-10-30T18:10:23.548306+09:00
+updated_at: 2026-10-30T20:42:25.094455+09:00
+rev: 2

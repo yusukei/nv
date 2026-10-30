@@ -1,0 +1,40 @@
+id: Q-5
+state: superseded
+question: Codemagic の変数グループに入れる値は、どこに書きますか？
+background: |-
+  marche-ar の deploy/.env.production には、Codemagic に入れてよい値と、入れてはいけない値が混ざっている。
+  ・入れてよい値: DELIVERY_DOMAIN・ストアの URL・APP_KEY_PUBLIC・ANDROID_UPLOAD_KEYSTORE など
+  ・入れてはいけない値: MASTER_KEY・TOOL_TOKEN_SECRET などの Worker の秘密(MASTER_KEY を失う・漏らすと暗号化したコンテンツが危うい)
+  Codemagic 側では名前も変わっている: DELIVERY_DOMAIN → MARCHE_CI_DELIVERY_DOMAIN、APP_KEY_PUBLIC → MARCHE_APP_KEY_PRODUCTION、ANDROID_UPLOAD_KEYSTORE → CM_KEYSTORE(marche-ar の docs/manual/app-build-manual.html 10-1)。
+  グループの名前(marche_staging など)は codemagic.yaml が名指しで読む。v3 の API は変数ごとに Secure(画面で値が見えない)を付けられる。
+intent: Worker の秘密を Codemagic へ出さず、Codemagic 側の名前で値を渡せる書き方を決めたい。
+options:
+- key: a
+  label: 'compose ファイルに、グループの名前と、その中の「名前: ${変数}」を書く(Worker の environment・secrets と同じ書き方。秘密の値は secrets 側に書き、Secure にする)'
+  effect: 書いたものだけが Codemagic へ出る。名前も Codemagic 側に合わせて付け替えられ、codemagic.yaml はそのまま動く。値の出どころは .env.<環境> のまま。compose ファイルに書くことが増える
+- key: b
+  label: 書かない。.env.<環境> の値をすべて、環境の名前のグループにそのまま入れる
+  effect: 書くことは無い。ただし MASTER_KEY などの Worker の秘密も Codemagic へ出る。名前は付け替えられないので、marche-ar の codemagic.yaml とビルドの台本の書き直しが要る
+recommend: a
+why: b では Worker の秘密が要らない先(Codemagic)へ出る。a は、何を外へ出すかが compose ファイルで見え、「シークレットは書いた Worker にだけ見える」(REQ-005)と同じ考えで揃う。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-005
+  quote: その Worker の secrets に書いたものだけが、その Worker から見える
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T18:10:30.797169+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-8 に引き継ぎました
+superseded_by:
+- Q-8
+created_at: 2026-10-30T17:43:00.600756+09:00
+updated_at: 2026-10-30T18:10:30.797171+09:00
+rev: 2

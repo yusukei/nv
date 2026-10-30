@@ -20,7 +20,7 @@ wrangler-compose --env production up         # 同じものを本番へ展開す
   <tr><th style="width:24%">docker compose</th><th style="width:28%">wrangler-compose</th><th>すること</th><th style="width:9%">条項</th></tr>
   <tr><td><code>-f &lt;ファイル&gt;</code></td><td><code>--env &lt;環境&gt;</code></td><td>どの組み合わせを扱うかを選ぶ。compose ファイルは 1 つで、<code>-f</code> は持たない</td><td><a href="write.html#req-006">REQ-006</a></td></tr>
   <tr><td><code>build</code></td><td><code>build [サービス…]</code></td><td>Worker を組み立てるだけ。組み立てたものは環境によらず同じ</td><td><a href="#req-008">REQ-008</a></td></tr>
-  <tr><td><code>up</code></td><td><code>up [--build] [--purge] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
+  <tr><td><code>up</code></td><td><code>up [--build] [--purge] [--update-secret] [サービス…]</code></td><td>手元: すべてを手元で動かす。リモート: 手元と同じものを展開する。<code>--update-secret</code> は既にあるシークレットも入れ直す(利用者の決定 2026-10-30)</td><td><a href="#req-009">REQ-009</a>・<a href="#req-010">REQ-010</a></td></tr>
   <tr><td><code>down</code>・<code>down -v</code></td><td><code>down [サービス…]</code>・<code>down --purge [サービス…]</code></td><td>下ろす。<code>--purge</code> ならデータも消す</td><td><a href="#req-011">REQ-011</a></td></tr>
   <tr><td><code>ps</code>・<code>logs [-f]</code></td><td><code>ps</code>・<code>logs [-f] [サービス…]</code>(<code>ps</code> はサービスを受けない)</td><td>状態とログを見る</td><td><a href="#req-012">REQ-012</a></td></tr>
   <tr><td><code>--dry-run</code></td><td><code>--dry-run</code></td><td>何も変えずに、何が変わるかを示す</td><td><a href="#req-014">REQ-014</a></td></tr>
@@ -82,7 +82,8 @@ wrangler-compose --env production up         # 同じものを本番へ展開す
 <article class="item" id="req-010"><h3><span class="id">REQ-010</span>up(リモート)</h3>
 <ul>
   <li>リモートの <code>up</code> は、手元と同じ組み立てたもの(REQ-008)を展開する。組み立てたものが無いか、コードが変わっていれば組み立て、<code>--build</code> なら必ず組み立て直す</li>
-  <li>依存の順に: 資源が無ければ作る → 移行を当てる → Worker をシークレットとともに展開する(compose ファイルから消えたシークレットは展開のあとで消す)</li>
+  <li>依存の順に: 資源が無ければ作る → 移行を当てる → Worker をシークレットとともに展開する(シークレットは無いものだけを入れ、<code>--update-secret</code> なら既にあるものも入れ直す。compose ファイルから消えたシークレットは展開のあとで消す。REQ-005)</li>
+  <li>Codemagic のサービスがあれば、その環境の Codemagic のアプリを登録し(無ければ)、変数グループを compose ファイルのとおりにする(REQ-021)</li>
   <li>何度打っても同じ結果になる。変わっていないものは変えない</li>
   <li>移行が失敗したら、その D1 を使う Worker は展開しない。どこまで済み、どこでなぜ止まったかを示し、それより後は行わない</li>
   <li>名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)で、compose ファイルに無い Worker は、<code>up</code> が消す(Cloudflare には切り離しが無く、残った Worker は公開の URL で動き続けるため。利用者の決定 2026-10-13)。どの PC から打っても同じものを消す。Durable Object を持つ Worker は、消すと保存データも消えるので、Durable Object のクラスと同じく、消す・残す・やめるを選ばせる(端末で選べない場では止まる)</li>
@@ -98,11 +99,12 @@ wrangler-compose --env production up         # 同じものを本番へ展開す
   <li>リモートの <code>down --purge</code> は、下ろすサービスのコンテナのイメージ(道具が名前を決めたもの)を Cloudflare のレジストリからも消す。前の <code>down</code> で Worker がもう無くても、compose ファイルのコンテナのものは消す。利用者が自分で置いたイメージ(<code>image</code> にレジストリのイメージとして書いたもの)と、展開した PC の Docker に残るイメージは消さない(利用者の決定 2026-10-13)</li>
   <li>サービスを指定しない <code>down --purge</code> は、名前がこの環境のもの(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> で始まる)の Worker と資源をすべて消す。compose ファイルから消したものも含み、環境に何も残らない(利用者の決定 2026-10-13)</li>
   <li>消す前に消すもの(Worker・資源の名前。手元は中身の数も。リモートは中身の数を出さない(利用者の決定 2026-10-13))を示し、環境名を打ち直して確かめる(手元の <code>--purge</code> も)。打ち直しを受けられない場では止まる。リモートの <code>down</code> は Worker を消すので、<code>--purge</code> が無くても確かめる。手元の <code>down</code>(データを消さない)は確かめない</li>
+  <li>Codemagic のサービスは、<code>down</code> でその環境の Codemagic のアプリを消す(変数グループを先に消し、<code>CODEMAGIC_APP_ID</code> も消す。<code>--purge</code> の有無で変わらない)(REQ-021)</li>
 </ul>
 </article>
 <article class="item" id="req-012"><h3><span class="id">REQ-012</span>ps・logs</h3>
 <ul>
-  <li><code>ps</code> は、サービスごとの状態(あるか・動いているか・URL・未適用の移行)と、compose ファイルとの違い(足りないもの・残っているもの)を示す。何も変えない</li>
+  <li><code>ps</code> は、サービスごとの状態(あるか・動いているか・URL・未適用の移行)と、compose ファイルとの違い(足りないもの・残っているもの)を示す。Codemagic のサービスは、アプリと変数グループの状態を示す(REQ-021)。何も変えない</li>
   <li><code>logs [-f] [サービス…]</code> は、Worker のログを docker compose と同じく行の頭にサービス名を付けて出す。リモートは Cloudflare から過去のログが取れないので、<code>-f</code> の有無によらず今からのログを追う(Ctrl+C で止まる)(利用者の決定 2026-10-13)</li>
 </ul>
 </article>
@@ -142,7 +144,7 @@ wrangler-compose --env production up         # 同じものを本番へ展開す
 <article class="item" id="req-014"><h3><span class="id">REQ-014</span>dry-run</h3>
 <ul>
   <li><code>--dry-run</code> はどの操作にも付き、何も変えずに何が変わるか(作る・変える・消すもの、当てる移行、入れる・消すシークレットの名前、展開した値)を示す。シークレットの値は出さない</li>
-  <li>リモートの <code>up</code> の <code>--dry-run</code> は、terraform plan のように、作る・変える・消す・変わらないものを、変わる項目の前後の値とともに示す。比べる相手は Cloudflare にいまあるもので、どの PC から打っても同じ結果になる。シークレットは名前だけを示す(値が変わったかは示さない)(利用者の決定 2026-10-13)</li>
+  <li>リモートの <code>up</code> の <code>--dry-run</code> は、terraform plan のように、作る・変える・消す・変わらないものを、変わる項目の前後の値とともに示す。比べる相手は Cloudflare にいまあるもので、どの PC から打っても同じ結果になる。シークレットは名前だけを示す(値が変わったかは示さない)(利用者の決定 2026-10-13)。既にあって <code>--update-secret</code> が無いので入れ直さないシークレットは、そのことを示す。Codemagic のアプリの登録と、変数グループ・変数の作る・変える・消すも示す(REQ-021)</li>
   <li>本番の操作がエラーで止まる条件では、dry-run も同じエラーで止まる</li>
 </ul>
 </article>

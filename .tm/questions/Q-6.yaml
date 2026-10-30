@@ -1,0 +1,43 @@
+id: Q-6
+state: superseded
+question: wrangler-compose が Codemagic にアプリを登録し、変数グループに値を入れられるように、定義と「使える API は wrangler login で付与されるものだけ」という決定を改めますか？
+background: |-
+  Codemagic は、モバイルなどのアプリのビルドとデプロイを自動化するサービス。Codemagic でビルドするアプリが、wrangler-compose で展開した Worker を使うとき、ビルドに要る値(シークレットを含む)を Codemagic の変数グループに人が手で登録している。値が多いと登録の手間が大きい。
+  Codemagic の API でできること(公式の資料と本物で確かめた):
+  ・アプリの登録: POST https://api.codemagic.io/apps(古い試行版の API。予告なく変わりうる)。同じリポジトリを何度でも登録でき、同じ名前のアプリが並ぶ。登録した時点で設定の出どころは codemagic.yaml になる
+  ・変数グループ: v3 の API で、アプリごとのグループの作成・一覧・削除と、変数の一括登録・更新・削除ができる。変数ごとに Secure(値を読み返せない)を付けられる
+  ・アプリの削除: DELETE /apps/{id} は公式の資料に無いが、本物で 202 を返して消えた。ただし先にアプリを消すと、そのアプリのグループが API で消せないまま残った
+  ・認証は利用者個人の API トークン(x-auth-token)
+  いまの定義は「リモート(Cloudflare の環境)へ展開する」もので、使える API は wrangler login で付与されるものだけ(2026-10-13)。
+  出典: https://docs.codemagic.io/rest-api/applications/ ・ https://codemagic.io/api/v3/schema
+intent: 依頼 I-2(アプリの登録と、.env.<環境> の値を変数グループへ入れること。登録したアプリの ID は .env.<環境> に書く。ビルドの開始は含めない)を、wrangler-compose の仕様に入れてよいかを決めたい。
+options:
+- key: a
+  label: 改める。定義に「展開した環境を使うアプリのために、Codemagic へアプリを登録し、環境の値を入れる」を足し、使える API に Codemagic の API を足す
+  effect: up 1 つで Cloudflare への展開と Codemagic の値の登録が揃い、値の置き場所が .env.<環境> の 1 つになる。wrangler-compose が Cloudflare の外のサービスを初めて扱う。アプリの登録は試行版の API に頼るので、Codemagic 側の変更で壊れうる
+- key: b
+  label: 改めない(作らない)
+  effect: 仕様は変わらない。Codemagic への登録は利用者が画面で手で行う
+recommend: a
+why: 依頼が wrangler-compose の拡張で、登録に要る API は本物で通ることを確かめた。値を 2 か所に手で写す手間と、写し違いによる食い違いが無くなる。
+docs:
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 定義
+  quote: wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は wrangler login で付与される API のみとする。(2026-10-13)
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T20:42:24.160331+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-9 に引き継ぎました
+superseded_by:
+- Q-9
+created_at: 2026-10-30T18:09:56.277152+09:00
+updated_at: 2026-10-30T20:42:24.160333+09:00
+rev: 2

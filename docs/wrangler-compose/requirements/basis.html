@@ -15,6 +15,7 @@
   <li><strong>wrangler-compose は、内部では Wrangler が稼働している。</strong></li>
   <li><strong>wrangler-compose は、ほかの wrangler-compose のアプリと一切の資源を共有せず、プロジェクト(compose ファイル)の単位で分離している。</strong></li>
   <li><strong>wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は <code>wrangler login</code> で付与される API のみとする。</strong>(2026-10-13)</li>
+  <li><strong>wrangler-compose は、展開した環境を使うアプリのために、Codemagic(アプリのビルドを自動で行うサービス)へその環境のアプリを登録し、ビルドに要る値を入れる。Codemagic への操作は Codemagic の API で行う。</strong>(2026-10-30)</li>
 </ol>
 <p>これをどう使うかは、使うアプリの側の責任である。</p>
 </div>
@@ -37,10 +38,10 @@
   <li>Cloudflare Containers に、ほかのサービスと同じ程度の基本的な対応をする。Worker のサービスの <code>containers</code> に書き、手元でも Docker で本物と同じに動かす。特定のアプリの使い方から逆算しない(2026-10-13)</li>
   <li>コンテナのイメージは Dockerfile から作り、リモートでは Cloudflare のコンテナのレジストリに置く。外部のレジストリは、すでにビルドされたイメージを使うときだけ(2026-10-13)</li>
   <li>Cloudflare のレジストリのイメージは、<code>down --purge</code> と、<code>up</code> がそのコンテナのアプリケーションを消すときに消す。展開した PC の Docker のイメージは消さない(2026-10-13)</li>
-  <li>コマンドと書式は docker compose に合わせる。勝手に足したり変えたりしない</li>
+  <li>コマンドと書式は docker compose に合わせる。勝手に足したり変えたりしない(<code>up --update-secret</code> は利用者の決定で足す。2026-10-30)</li>
   <li>何ができるべきかから決め、中で使う道具の都合で要求を変えない</li>
   <li>人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない</li>
-  <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code></li>
+  <li>docker compose の <code>image</code> の代わりに <code>type</code> を置き、Worker も D1・R2・KV・Queue もサービスとして並べる。型は <code>worker</code>・<code>d1</code>・<code>r2</code>・<code>kv</code>・<code>queue</code>・<code>codemagic</code>(<code>codemagic</code> は 2026-10-30)</li>
   <li>主に使うのは Workers・D1・R2・KV・Queues・Durable Objects・シークレット。使うものだけを作り、作るものは本物と互換にする</li>
   <li>手元では、ふつうのプロダクトを作るのに無いと困る機能を本物と同じに提供する。ほとんど使わない機能は再現しない</li>
   <li>Cloudflare の操作には Wrangler と Cloudflare の API を使う。使える API は <code>wrangler login</code> で付与される API のみ(2026-10-13。2026-10-12 の決定を改める)</li>
@@ -50,6 +51,9 @@
   <li>1 つの compose ファイルが 1 つの塊。中のサービスはつながり(<code>bindings</code>・<code>consumes</code>)で互いの資源を使い、塊の外(別の compose ファイル・別のプロジェクト)とは、プロセス・ポート・データの置き場・Worker の呼び出し先の登録を含めて資源を一切共有しない(2026-10-12)</li>
   <li>Worker のフォルダには、環境に依存しない組み立てのためのものだけを置いてよい。振る舞いに関わる設定は書けない</li>
   <li>シークレットは Worker ごとのシークレットとして入れる</li>
+  <li>シークレットは、無いときだけ作る。既にあるものは <code>up --update-secret</code> のときだけ上書きする。値を読み返せず、変わったかが分からないため。Worker のシークレットと Codemagic の Secure の値で同じにする。手元(<code>--env local</code>)には上書きされて困る値が残らないので、毎回 <code>.env.local</code> の値を使う(2026-10-30)</li>
+  <li>Codemagic: 1 つの環境に 1 つの Codemagic のアプリ。登録したアプリの ID は道具が <code>.env.&lt;環境&gt;</code> の <code>CODEMAGIC_APP_ID</code> に書き足し、次からはそのアプリだけを扱う。変数グループの名前に環境の名前を入れない(環境の違いは <code>.env.&lt;環境&gt;</code> の値で表す)(2026-10-30)</li>
+  <li>Codemagic: 変数グループは compose ファイルの設定に従う。Codemagic に出すのは compose ファイルに書いた値だけで、書いていないグループ・変数は消す。API トークンは、ほかの値と同じく環境変数か <code>.env.&lt;環境&gt;</code> の <code>CODEMAGIC_API_TOKEN</code> から読む。アプリとグループは <code>up</code> で再構築できるので、<code>down</code> で消す。ビルドの開始は扱わない(2026-10-30)</li>
   <li>r2 のサービスにも <code>ports</code> を書ける。そのポートが手元の R2 の口(S3 互換の API とバケットの CORS・公開の URL)になる</li>
   <li>実際の名前は、道具がプロジェクトと環境の名前を前に付けて決める(<code>&lt;プロジェクト&gt;--&lt;環境&gt;--&lt;名前&gt;</code>)。名前は <code>name</code> に書き、省けばサービスの名前(利用者の決定 2026-10-13)</li>
   <li>1 つのサービスは 1 つの Worker か 1 つの資源。同じ型の資源を増やすときはサービスを足す(利用者の決定 2026-10-13「名前で指定すれば良いだけ」)</li>
@@ -68,8 +72,10 @@
   <tr><td>サービス</td><td>compose ファイルの <code>services</code> の 1 つ。型(<code>type</code>)を持つ</td></tr>
   <tr><td>環境</td><td>建てる先。<code>local</code>(この PC)か、リモートの環境(<code>staging</code>・<code>production</code>・<code>pr-123</code> など、名前は自由)</td></tr>
   <tr><td>組み立てたもの</td><td><code>build</code> が Worker のコードから作るもの。docker のイメージに当たり、環境によらず同じ</td></tr>
-  <tr><td>作り直せるもの</td><td>Worker。compose ファイルとコードから <code>up</code> で同じものができる</td></tr>
+  <tr><td>作り直せるもの</td><td>Worker と、Codemagic のアプリ・変数グループ。compose ファイルとコード(と <code>.env.&lt;環境&gt;</code>)から <code>up</code> で同じものができる</td></tr>
   <tr><td>データ</td><td>D1・R2・KV・Queue の中身と、Durable Objects の中身。作り直せない</td></tr>
+  <tr><td>Codemagic のアプリ</td><td>Codemagic に登録した、ビルドの単位。リポジトリ 1 つを指す。1 つの環境に 1 つ</td></tr>
+  <tr><td>変数グループ</td><td>Codemagic のアプリの中で、ビルドに渡す値をまとめる入れ物。<code>codemagic.yaml</code> が名前で読む。値ごとに Secure(秘密。登録後は読み返せない)を付けられる</td></tr>
 </table>
 </section>
 

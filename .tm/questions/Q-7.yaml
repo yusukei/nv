@@ -1,0 +1,37 @@
+id: Q-7
+state: superseded
+question: Codemagic の API トークンは、どこから受けますか？
+background: |-
+  Codemagic の API トークンは利用者個人のもので、Codemagic の画面(Teams > Personal Account > Integrations > Codemagic API)で見る。できることは、その人のチームでの役割で決まる。wrangler-compose が作って配ることはできず、利用者が 1 回は手で入れる(REQ-016「API キーを手で発行する段取りを持たない」への例外になる)。
+  .env.<環境> は git には入れないが、プロジェクトの値の置き場所として人どうしで共有されうる。Cloudflare の側は、操作する人の wrangler login で認証している。
+intent: 個人のトークンの受け方を決めたい。
+options:
+- key: a
+  label: 環境変数か .env.<環境> の CODEMAGIC_API_TOKEN で受ける(ほかの変数と同じ探し方)
+  effect: ほかの値と同じく .env.<環境> に書けて分かりやすい。.env を共有すると、ほかの人がその人のトークン(と権限)で操作することになる
+- key: b
+  label: 環境変数 CODEMAGIC_API_TOKEN だけで受ける。.env.<環境> に書くと止まる
+  effect: wrangler login と同じく、操作する人のトークンで動く。.env を共有してもトークンは広がらない。各自がシェルの設定などに 1 回入れる
+recommend: a
+why: ほかの値と同じ探し方(環境変数 → .env.<環境>)で、REQ-004 の決まりにそのまま乗る。共有するかどうかは使う側が決めることで、環境変数で上書きもできる。共有が心配なら b。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-004
+  quote: 値は環境変数、次にプロジェクトの .env.<環境>(--env で選んだもの)から読む
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+thread:
+- at: 2026-10-30T20:42:24.661388+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: Q-10 に引き継ぎました
+superseded_by:
+- Q-10
+created_at: 2026-10-30T18:10:09.998653+09:00
+updated_at: 2026-10-30T20:42:24.661389+09:00
+rev: 2

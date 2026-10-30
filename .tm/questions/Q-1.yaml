@@ -1,0 +1,43 @@
+id: Q-1
+state: withdrawn
+question: wrangler-compose が Codemagic へアプリケーションを登録してよいように、定義と「使える API は wrangler login で付与されるものだけ」という決定を改めますか？
+background: |-
+  Codemagic に登録する API は POST https://api.codemagic.io/apps です（リポジトリの URL と、任意でチーム ID を渡すと、アプリの ID と名前が返る）。非公開のリポジトリは、Codemagic の GitHub App を入れておくか、POST /apps/new で SSH の秘密鍵を渡します。この API は「試行版のため予告なく変わりうる」と書かれており、新しい v3 の API には登録がありません。
+  認証は利用者個人の API トークン（x-auth-token ヘッダ）で、Codemagic の画面（Teams > Personal Account > Integrations > Codemagic API）から写すしかありません。
+  いまの仕様では、定義が「リモート（Cloudflare の環境）へ展開する」もの、使える API が「wrangler login で付与される API のみ」（2026-10-13）、REQ-016 が「API キーを手で発行する段取りを持たない」になっています。どれも Codemagic への登録とぶつかるので、仕様に答えが無く、利用者が決めることになります。
+  出典: https://docs.codemagic.io/rest-api/applications/ ・ https://codemagic.io/api/v3/schema
+intent: wrangler-compose を拡張して Codemagic への登録を受け持たせる（依頼 I-2）ために、仕様のどこまでを改めるかを決めたい。
+options:
+- key: a
+  label: wrangler-compose に入れる。定義に Codemagic への登録を足し、トークンは .env.<環境> か環境変数で受ける
+  effect: 依頼どおり wrangler-compose の up で登録できる。定義と 2026-10-13 の決定を改め、REQ-016 に「Codemagic の API トークンは利用者が 1 回だけ入れる」という例外を足す。トークンはシークレットとして扱う（画面に出さない、git に入れない）。試行版の API に頼るため、Codemagic 側の変更で壊れうる
+- key: b
+  label: wrangler-compose の外の別コマンドにする（nv と wrangler-compose を分けたのと同じ形）
+  effect: wrangler-compose の定義と決定は変えずに済む。そのかわり、コマンドがもう 1 つ増え、compose ファイルとは別に設定を持つことになる
+- key: c
+  label: いまは作らない
+  effect: 仕様は変わらない。登録は Codemagic の画面で手で行う
+recommend: a
+why: 依頼が「wrangler-compose の拡張」なので a が依頼に合う。トークンを 1 回入れる手間は、Cloudflare の wrangler login と同じ程度で、資源を手で作る段取りとは違う。b は依頼の形から外れる。
+docs:
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 定義
+  quote: wrangler-compose は、Cloudflare への操作を Wrangler のコマンドと Cloudflare の API で行う。ただし、使える API は wrangler login で付与される API のみとする。(2026-10-13)
+- path: docs/wrangler-compose/requirements/basis.html
+  anchor: 決定(利用者)
+  quote: 人が手で行う段取り(設定を手で書き足す、値を手で入れる、資源を手で作る、API キーを手で発行する)が要る形にしない
+request: I-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+withdrawn:
+  reason: 別のモバイルアプリを登録する話だと取り違えた前提で書いたため。登録の範囲は、利用者の回答で「アプリの登録に加えて、.env.<環境> の値を変数グループに入れるところまで(b)」と決まった。marche-ar を実例に Q-3〜Q-5 で出し直す。
+  at: 2026-10-30T17:42:28.930299+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T17:37:45.416478+09:00
+updated_at: 2026-10-30T17:42:28.930299+09:00
+rev: 2

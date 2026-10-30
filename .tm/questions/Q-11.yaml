@@ -1,0 +1,60 @@
+id: Q-11
+state: resolved
+question: Codemagic に入れる値は、compose ファイルにどの値をどの名前で入れるかを書き出す形にしますか？ それとも .env の値を全部そのまま入れますか？
+background: |-
+  【何の話か】
+  Codemagic では、ビルドに使う値を「変数グループ」という入れ物に分けて登録します。codemagic.yaml は、そのグループの名前を指して値を読みます。グループの中の値には、それぞれ Secure(秘密。登録後は画面でも API でも読み返せない)を付けるかどうかを決めます。
+  一方、.env.<環境> には、Codemagic のビルドに要る値だけでなく、Worker にだけ渡すシークレット(Codemagic へ出す必要の無いもの)も入っています。wrangler-compose が .env のどの値を、Codemagic のどのグループに、どの名前で、Secure かどうかを付けて入れるかを、どこで決めるかを決めます。
+
+  【例: a の書き方(compose ファイル)】
+  codemagic:
+    groups:
+      app_store_connect:            ← Codemagic のグループの名前
+        environment:                ← 秘密でない値(Secure を付けない)
+          - APP_STORE_CONNECT_KEY_ID         ← .env の同じ名前の値を入れる
+        secrets:                    ← 秘密の値(Secure を付ける)
+          - APP_STORE_CONNECT_PRIVATE_KEY
+      store:
+        environment:
+          STORE_DOMAIN: ${DELIVERY_DOMAIN}  ← 名前を変えて入れることもできる
+  Worker の environment・secrets と同じ書き方です。
+
+  【確かめたこと】
+  marche-ar で、いまの Codemagic と同じ 7 グループ・21 変数を、この書き方で .env.production から作れることを、書き込まずに読み比べて確かめました。その中で、同じ「鍵の ID」でも Secure にしていないもの(APP_STORE_CONNECT_KEY_ID)があり、どれを Secure にするかを利用者が書き分けられる必要があると分かりました。
+intent: Codemagic へ出す値と、その名前・Secure の有無をどこで決めるかを決めたい。
+options:
+- key: a
+  label: compose ファイルに、グループごとに入れる値を書き出す(上の例の形)
+  effect: 書いた値だけが Codemagic へ出る。Worker にだけ渡すシークレットは出ない。名前の付け替えと Secure の有無を値ごとに決められる。利用者は compose ファイルにグループと値の名前を並べる手間がある(最初の 1 回)
+- key: b
+  label: compose ファイルには書かず、.env.<環境> の値を全部、環境の名前のグループ 1 つにそのまま入れる
+  effect: 書くことは無い。ただし Worker にだけ渡すシークレットや Cloudflare のアカウント ID なども Codemagic へ出る。名前は .env のままで、グループは 1 つだけ。Secure を付けるかどうかを値ごとに決められない。いまの codemagic.yaml のグループの名前も書き直しになる
+recommend: a
+why: b では要らない先に秘密が出て、Secure の有無も選べない。a は何を Codemagic に出すかが compose ファイルを見れば分かり、Worker の書き方と同じなので覚えることも少ない。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-005
+  quote: その Worker の secrets に書いたものだけが、その Worker から見える
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+answer:
+  option: a
+  kind: user
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  at: 2026-10-30T20:44:18.377516+09:00
+  confirmed: true
+outcome:
+  note: T-2 の報告書に、グループごとに environment・secrets を書き出す形と書き方の例を書き、この形でのシミュレーションの結果も載せた。仕様書への反映は、要求仕様を改めるチケットで行う。
+  at: 2026-10-30T20:46:33.671608+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T20:42:04.260932+09:00
+updated_at: 2026-10-30T20:46:33.671608+09:00
+rev: 3

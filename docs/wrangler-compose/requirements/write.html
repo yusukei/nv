@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/write.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>01. compose ファイルを書く</h1>
-<p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007・REQ-020。</p></section>
+<p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007・REQ-020・REQ-021。</p></section>
 
 <section class="section"><h2 id="example">compose ファイルの例</h2>
 <pre><code># wrangler-compose.yaml
@@ -92,6 +92,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <tr><td><code>r2</code></td><td><code>name</code>・<code>ports</code>(手元の R2 の口)・<code>public</code>・<code>public_port</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code></td><td>R2 バケット 1 つ</td></tr>
   <tr><td><code>kv</code></td><td><code>name</code></td><td>KV 名前空間 1 つ</td></tr>
   <tr><td><code>queue</code></td><td><code>name</code></td><td>Queue 1 つ</td></tr>
+  <tr><td><code>codemagic</code></td><td><code>repository</code>(必須。登録するリポジトリの URL)・<code>groups</code>(REQ-021)</td><td>Codemagic のアプリ 1 つと、その変数グループ</td></tr>
 </table>
 <ul>
   <li><code>name</code> は Cloudflare での名前の最後の部分(<a href="#req-006">REQ-006</a>)。道具が前に <code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> を付ける。省けばサービスの名前。同じプロジェクトの中で重なると止まる</li>
@@ -100,7 +101,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li><code>placement</code>(<code>mode: smart</code>)・<code>observability</code>(<code>enabled</code>・<code>head_sampling_rate</code>)・<code>cache</code>(<code>enabled</code>)は Wrangler の同じ名前の設定と同じ形で書き、そのまま Worker の設定になる。書かないものは Cloudflare の既定に任せ、道具は値を入れない。<code>mode</code> が <code>smart</code> 以外・<code>enabled</code> が true/false 以外・<code>head_sampling_rate</code> が 0〜1 の外のときは、<code>services.&lt;名前&gt;.&lt;キー&gt;</code> で場所を示して止まる</li>
   <li><code>compatibility_date</code> は、Worker をどの日付の時点の Workers の動き方で動かすかを決める日付(例 <code>"2026-09-01"</code>)。Cloudflare は動き方の変更を日付ごとに区切り、Worker はその日までの変更だけを受ける。省くと動かした日の日付になり、手元とリモート・動かした日ごとに動き方が変わりうるので、必須とする(利用者の決定)。無ければ止まる</li>
   <li><code>durable_objects</code> は、その Worker のコードにある Durable Object のクラス名の一覧(Durable Objects は Worker の中のものなので、型にはしない)</li>
-  <li>型は使うものから足す。足すときは、手元で本物と互換に動く手立てを同時に決める</li>
+  <li>型は使うものから足す。足すときは、手元で本物と互換に動く手立てを同時に決める(<code>codemagic</code> は手元に当たるものが無いので、手元では何もしない。REQ-021)</li>
 </ul>
 </article>
 <article class="item" id="req-003"><h3><span class="id">REQ-003</span>つながり</h3>
@@ -139,6 +140,7 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>道具が値を決める変数(<code>WC_</code> で始まる)がある。<code>WC_R2_&lt;サービス&gt;_S3</code>(サービスの名前は英大文字にし <code>-</code> は <code>_</code>)は、その R2 のバケットの S3 互換の API の接続先(パス形式でバケット名まで): 手元は <code>http://127.0.0.1:&lt;ports&gt;/cdn-cgi/local/r2/s3/&lt;資源の名前&gt;</code>(r2 のサービスに <code>ports</code> が要る)、リモートは <code>https://&lt;CLOUDFLARE_ACCOUNT_ID&gt;[.&lt;jurisdiction&gt;].r2.cloudflarestorage.com/&lt;実際の名前&gt;</code>。Worker が S3 互換の API で R2 を読み書きするとき、接続先を人が環境ごとに書かずに済むようにする(利用者の決定。2026-10-12)。使えるのは Worker の <code>environment</code> の値だけで、ほかの場所・無いバケット・決まらないとき(手元で <code>ports</code> が無い、リモートでアカウントの ID が無い)は止まる。<code>${X:-${WC_R2_STORAGE_S3}}</code> のように既定にも使える</li>
   <li><code>WC_R2_&lt;サービス&gt;_S3_KEY</code>・<code>WC_R2_&lt;サービス&gt;_S3_SECRET</code> は、手元の S3 互換の API の鍵。鍵はプロジェクトごとの乱数で、道具が作って <code>.wrangler/compose/local/s3-keys.json</code>(本人だけが読める)に置き、画面には出さない。秘密の値なので、使えるのは Worker の <code>secrets</code> の値だけ。リモートの鍵(R2 の API トークン)は道具が用意せず、アプリの側で扱う(利用者の決定 2026-10-13)。リモートでこの変数を使うと止まる(<code>${R2_KEY:-${WC_R2_STORAGE_S3_KEY}}</code> のように既定として書けば、<code>.env.&lt;環境&gt;</code> の値が入る)(利用者の決定 2026-10-12。決まった鍵は誰でも知っているので、LAN に開いた口が誰にでも読み書き・削除される)</li>
   <li><code>.env.&lt;環境&gt;</code> は git に入れない。git の中で <code>.gitignore</code> で外れていない、またはすでに git に入っていれば止まる</li>
+  <li>Codemagic のサービス(REQ-021)があるときは、<code>CODEMAGIC_API_TOKEN</code>(Codemagic の API トークン)を、ほかの値と同じく環境変数、次に <code>.env.&lt;環境&gt;</code> から読む。無ければ Codemagic に触れる前に止まり、トークンの取り方を示す。<code>CODEMAGIC_APP_ID</code>(その環境の Codemagic のアプリの ID)は道具が <code>.env.&lt;環境&gt;</code> に書き足し・消す(利用者の決定 2026-10-30)</li>
 </ul>
 </article>
 <article class="item" id="req-005"><h3><span class="id">REQ-005</span>シークレット</h3>
@@ -147,7 +149,8 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>シークレットの値は必ず変数から取る。compose ファイルに値を書くと(変数を含まない値・<code>NAME=値</code> の並び)止まる。シークレットが git に入らないため</li>
   <li>その Worker の <code>secrets</code> に書いたものだけが、その Worker から見える</li>
   <li>0.1.7 までの書き方(Worker の <code>vars</code>、一番上の <code>secrets</code> と <code>environment: &lt;変数名&gt;</code>)は、書き直し方を示して止まる(利用者の決定。2026-10-12: docker compose の一番上の secrets はファイルとして渡すための仕組みで、Workers では名前が 3 つになるだけ)</li>
-  <li><code>up</code> が、手元でもリモートでも、その Worker のシークレットとして入れる。compose ファイルから消したシークレットは、<code>up</code> が消す</li>
+  <li><code>up</code> が、その Worker のシークレットとして入れる。手元(<code>--env local</code>)は毎回 <code>.env.local</code> の値を入れる。リモートは、Worker にまだ無いシークレットだけを入れ、既にあるものは <code>up --update-secret</code> のときだけ入れ直す(値を読み返せず、変わったかが分からないため。Codemagic の Secure の値も同じ。利用者の決定 2026-10-30)。既にあって入れ直さなかったものがあれば、その名前と、値を変えたなら <code>--update-secret</code> を付けることを知らせる</li>
+  <li>compose ファイルから消したシークレットは、<code>up</code> が消す</li>
   <li>値が無ければ止まり、無い変数の名前を示す</li>
 </ul>
 </article>
@@ -169,7 +172,7 @@ STRIPE_KEY=sk_test_...</code></pre>
 <ul>
   <li>Worker のフォルダ(<code>build</code>)には、コードと、環境に依存しない組み立てのためのもの(どのファイルから組み立てるか、組み立ての手順など)だけを置いてよい</li>
   <li>振る舞いに関わる設定(名前・つながり・値・ルート・定期実行・環境など)がフォルダの中にあれば、何もせずに止まり、compose ファイルのどこに書くかを示す</li>
-  <li>道具はプロジェクトのファイルを書き換えない。道具が作るものは、プロジェクトの中の決まった場所(<code>.wrangler/compose/</code>)に置く。git のリポジトリの中なら、そこが git から外れていなければ止まる。リポジトリでなければ確かめない(2026-10-13)</li>
+  <li>道具はプロジェクトのファイルを書き換えない(<code>.env.&lt;環境&gt;</code> の <code>CODEMAGIC_APP_ID</code> の行だけは例外。REQ-021)。道具が作るものは、プロジェクトの中の決まった場所(<code>.wrangler/compose/</code>)に置く。git のリポジトリの中なら、そこが git から外れていなければ止まる。リポジトリでなければ確かめない(2026-10-13)</li>
 </ul>
 </article>
 <article class="item" id="req-020"><h3><span class="id">REQ-020</span>コンテナ</h3>
@@ -191,6 +194,28 @@ STRIPE_KEY=sk_test_...</code></pre>
   <li>Cloudflare のレジストリに置いたイメージは、リモートの <code>down --purge</code> で消す(REQ-011)。また <code>up</code> がコンテナのアプリケーションを消すとき(compose から消したコンテナ・消したクラス・compose に無い Worker)は、そのイメージも消す(あとから見つける手掛かりが無くなるため。利用者の決定 2026-10-13)。<code>down</code>(<code>--purge</code> なし)では消さない</li>
   <li><code>backup</code>・<code>restore</code> はコンテナを扱わない。コンテナは残すデータを持たない(ディスクは止まると消える)</li>
   <li>コンテナを使えないアカウント(Workers の有料プランでない)では、Cloudflare の答えを示して止まる</li>
+</ul>
+</article>
+<article class="item" id="req-021"><h3><span class="id">REQ-021</span>Codemagic</h3>
+<pre><code>  mobile:
+    type: codemagic
+    repository: https://github.com/example/shop   # 登録するリポジトリ(必須)
+    groups:                                        # Codemagic の変数グループ。名前は codemagic.yaml が読む名前
+      store:
+        environment:                               # 秘密でない値(Worker の environment と同じ書き方)
+          STORE_DOMAIN: ${WEB_DOMAIN}
+        secrets: [STORE_APP_KEY]                   # Secure にする値(Worker の secrets と同じ書き方。値は必ず変数から)</code></pre>
+<ul>
+  <li><code>codemagic</code> のサービスは、Codemagic(アプリのビルドを自動で行うサービス)でビルドするアプリのために、その環境の Codemagic のアプリを登録し、ビルドに要る値を変数グループに入れる。値の出どころは、Worker と同じく <code>.env.&lt;環境&gt;</code>(REQ-004)。人が Codemagic の画面で値を写さずに済むようにする(利用者の決定 2026-10-30)</li>
+  <li>1 つの環境に 1 つの Codemagic のアプリ。アプリの ID は <code>.env.&lt;環境&gt;</code> の <code>CODEMAGIC_APP_ID</code> に置く。無ければ、リモートの <code>up</code> が <code>repository</code> を Codemagic に登録し、返った ID を <code>.env.&lt;環境&gt;</code> に書き足し、パスワード管理などの控えも直すよう知らせる。新しく登録するときは、まだ無い環境の初めての <code>up</code> と同じく、登録することを示して確かめる(REQ-015)</li>
+  <li>道具が触るのは、その環境の <code>CODEMAGIC_APP_ID</code> のアプリだけ。Codemagic のアプリの名前はリポジトリの名前になり、<code>&lt;プロジェクト&gt;--&lt;環境&gt;--</code> を付けられないので、持ち主は名前でなく ID で決める。環境どうしで同じ名前のアプリが並ぶので、見分けたいときは利用者が Codemagic の画面で名前を直す(利用者の決定 2026-10-30)</li>
+  <li>変数グループは compose ファイルの設定に従う: 書いたグループを作り、中身を書いたとおりにする。書いていないグループと、書いたグループの中の書いていない変数は消す。グループの名前に環境の名前を入れない(環境の違いは <code>.env.&lt;環境&gt;</code> の値で表す)(利用者の決定 2026-10-30)</li>
+  <li><code>environment</code> の値は Secure を付けずに入れ、Codemagic の値と違えば変え、同じなら変えない。<code>secrets</code> の値は Secure を付けて入れ、無いときだけ作り、既にあるものは <code>up --update-secret</code> のときだけ上書きする(REQ-005 と同じ)。値が空になった変数は入れず、既にあれば消す</li>
+  <li>手元(<code>--env local</code>)では何もしない。Codemagic のサービスがあれば、手元では何もしないことを知らせる(REQ-018)</li>
+  <li><code>down</code> は、その環境の Codemagic のアプリを消す(アプリも変数グループも <code>up</code> で再構築できるため。<code>--purge</code> の有無で変わらない)。変数グループを先に消してからアプリを消し(アプリを先に消すとグループが消せずに残る。本物で確かめた)、<code>.env.&lt;環境&gt;</code> の <code>CODEMAGIC_APP_ID</code> を消す。そのアプリのビルドの履歴と成果物も消えることを示し、リモートの <code>down</code> と同じく環境名の打ち直しで確かめる(REQ-011)</li>
+  <li><code>--dry-run</code> は、登録するか、作る・変える・消すグループと変数を示す。Secure の値は名前と、あるかどうかだけを示す(REQ-014)。<code>ps</code> は、アプリ(ID・名前・リポジトリ)と、グループごとの変数の名前・Secure か・値があるかと、compose ファイルとの違いを示す(REQ-012)</li>
+  <li>API トークンも Secure の値も、画面・ログに出さない(REQ-015)。Codemagic がエラーを返したら、その答えを示して止まる。途中で止まったときは、どこまで済んだかを示し、もう一度 <code>up</code> すれば揃う</li>
+  <li>扱わないもの: ビルドの開始、ワークフローの設定(<code>codemagic.yaml</code> が持つ)。最初に 1 度、利用者が Codemagic と GitHub をつなぎ、API トークンを用意する(REQ-016)</li>
 </ul>
 </article>
 </section>

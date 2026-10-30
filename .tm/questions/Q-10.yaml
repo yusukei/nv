@@ -1,0 +1,52 @@
+id: Q-10
+state: resolved
+question: Codemagic を操作するための鍵(API トークン)を、wrangler-compose はどこから読むようにしますか？
+background: |-
+  【何の話か】
+  wrangler-compose が Codemagic を操作するには、Codemagic の API トークン(合言葉のような長い文字列)が要ります。このトークンは Codemagic の利用者 1 人ごとに 1 つあり、Codemagic の画面(Teams > Personal Account > Integrations > Codemagic API)で見られます。wrangler-compose が自分で作ることはできないので、利用者が最初に 1 回、どこかに書いておく必要があります。その「どこか」を決めます。
+
+  【いまの wrangler-compose の値の読み方】
+  compose ファイルの ${変数} の値は、まず PC の環境変数から探し、無ければ .env.<環境>(例 .env.production)から探します(REQ-004)。Cloudflare 側の認証は、各自が 1 回 nv run wrangler login を打つ方式で、.env には書きません。
+
+  【例】
+  marche-ar では、いま deploy/.env.production に CODEMAGIC_API_TOKEN=… と書いてあります。
+
+  【気をつける点】
+  .env.<環境> をチームで共有している場合、そこにトークンを書くと、ほかの人もそのトークンで Codemagic を操作できます。Codemagic 側の記録には、トークンの持ち主が操作したように残ります。
+intent: トークンの置き場所を決めたい。
+options:
+- key: a
+  label: ほかの値と同じく、環境変数か .env.<環境> の CODEMAGIC_API_TOKEN から読む
+  effect: いまの marche-ar の書き方のまま動く。読み方がほかの値と同じなので分かりやすい。.env を共有するとトークンも共有される(共有したくなければ、各自が環境変数に書けばよい)
+- key: b
+  label: PC の環境変数 CODEMAGIC_API_TOKEN だけから読む。.env.<環境> に書いてあれば止まる
+  effect: wrangler login と同じく、操作する人自身のトークンでしか動かない。各自がシェルの設定(~/.zshrc など)に 1 回書く。marche-ar は .env.production からトークンを移す必要がある
+recommend: a
+why: ほかの値と読み方が同じで覚えることが増えない。共有したくない人は環境変数に書けば済み、どちらを選ぶかを使う人に任せられる。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-004
+  quote: 値は環境変数、次にプロジェクトの .env.<環境>(--env で選んだもの)から読む
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+answer:
+  option: a
+  kind: user
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  at: 2026-10-30T20:43:22.806838+09:00
+  confirmed: true
+outcome:
+  note: T-2 の報告書に「CODEMAGIC_API_TOKEN を環境変数か .env.<環境> から読む」と書いた(決まったこと・6 節)。仕様書への反映は、要求仕様を改めるチケットで行う。
+  at: 2026-10-30T20:46:32.477660+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T20:41:40.643386+09:00
+updated_at: 2026-10-30T20:46:32.477661+09:00
+rev: 3

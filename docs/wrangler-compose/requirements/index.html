@@ -95,7 +95,7 @@
 <tr><th><code>down</code></th><td>依存の逆の順に下ろす</td><td><span class="badge yes">残す</span></td><td>リモートは環境名を打ち直す。手元は確かめない</td><td>REQ-011</td></tr>
 <tr><th><code>down --purge</code></th><td>下ろす</td><td><span class="badge no">消す</span></td><td><span class="badge warn">環境名を打ち直す</span>(手元も)</td><td>REQ-011・015</td></tr>
 </tbody></table>
-<p class="lead">消す操作は、消すものを示してから環境名の打ち直しで確かめる。打ち直しを受けられない場(CI など)では止まる。</p>
+<p class="lead">消す操作は、消すものを示してから環境名の打ち直しで確かめる。打ち直しを受けられない場(CI など)では止まる。Codemagic のアプリと変数グループは Worker と同じく作り直せるもので、<code>up</code> で compose ファイルのとおりにし、<code>down</code> で消す(REQ-021)。</p>
 
 </section>
 <section class="section"><h2 id="req-list">要求の一覧</h2><p class="lead">番号を押すと本文へ移る。右は載っているページ。</p><div class="rqbox"><ul class="rq">
@@ -119,14 +119,15 @@
 <li><a class="rid" href="common.html#req-018">REQ-018</a><span class="rt">手元と本番の違いの知らせ</span><span class="rs">03. 全体の条件と範囲</span></li>
 <li><a class="rid" href="common.html#req-019">REQ-019</a><span class="rt">配り方・表示の言語</span><span class="rs">03. 全体の条件と範囲</span></li>
 <li><a class="rid" href="write.html#req-020">REQ-020</a><span class="rt">コンテナ</span><span class="rs">01. compose ファイルを書く</span></li>
+<li><a class="rid" href="write.html#req-021">REQ-021</a><span class="rt">Codemagic</span><span class="rs">01. compose ファイルを書く</span></li>
 </ul></div></section>
 <section class="section"><h2 id="pages">この冊のページ</h2>
 <div class="idxgrid">
-<a class="idxcard" href="write.html"><div class="idxnum">要求</div><h3>01. compose ファイルを書く</h3><p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007。</p></a>
+<a class="idxcard" href="write.html"><div class="idxnum">要求</div><h3>01. compose ファイルを書く</h3><p>利用者が書くもの(compose ファイル・.env.&lt;環境&gt;・Worker のフォルダ)と、その決まり。REQ-001〜007・REQ-020・REQ-021。</p></a>
 <a class="idxcard" href="commands.html"><div class="idxnum">要求</div><h3>02. コマンド</h3><p>build・up・down・ps・logs・backup・restore・--dry-run が何をするか。REQ-008〜014。</p></a>
 <a class="idxcard" href="common.html"><div class="idxnum">要求</div><h3>03. 全体の条件と範囲</h3><p>どの操作にも掛かる決まり(安全・手で行う段取り・道具のサービス・違いの知らせ・配り方)と、範囲外。REQ-015〜019。</p></a>
 <a class="idxcard" href="basis.html"><div class="idxnum">確認</div><h3>決定と用語</h3><p>すべての要求のもとになる定義、docker compose から受け継ぐ理念、利用者の決定、用語。</p></a>
-<a class="idxcard" href="acceptance.html"><div class="idxnum">確認</div><h3>受け入れ条件</h3><p>要求仕様の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(--env local)の条件は網を切った PC でも確かめられ、手元の PC で動かす(GitHub Actions はリリースのビルドだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(--env ac-1 など)で、利用者の許可を得てから確かめる。本番では行わない。</p></a>
+<a class="idxcard" href="acceptance.html"><div class="idxnum">確認</div><h3>受け入れ条件</h3><p>要求仕様の REQ-001〜021 を満たしたと言える条件。番号は要求と 1 対 1。手元(--env local)の条件は網を切った PC でも確かめられ、手元の PC で動かす(GitHub Actions はリリースのビルドだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(--env ac-1 など)で、利用者の許可を得てから確かめる。本番では行わない。</p></a>
 </div>
 </section>
 

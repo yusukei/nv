@@ -1,0 +1,46 @@
+id: T-3
+title: 要求仕様に Codemagic 対応(REQ-021)と --update-secret を入れる
+state: done
+priority: medium
+body: |-
+  T-2 の報告書(版 5)の「決まったこと」と、未決だった D1〜D4・D6〜D8 を推奨どおりに(利用者が「作業が進まない」と言ったため、作り方の細部は推奨で進める)、要求仕様に書き込む。
+  直すページ: basis.html(定義・決定)、write.html(REQ-002 の型・REQ-004・REQ-005・新しい REQ-021 Codemagic)、commands.html(コマンドの表・REQ-010・REQ-011・REQ-012・REQ-014)、common.html(REQ-015・REQ-016・範囲外)、acceptance.html(AC-005・AC-021)、index.html(要求の一覧・作り直せるもの)、README。
+  完了の条件: 全ページで番号・題・目次がそろっている(docs-site-consistency)。詳細仕様と実装は別のチケット。
+request: I-2
+after:
+- T-2
+assignee:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+report:
+  changed: |-
+    要求仕様に Codemagic 対応を書き込んだ: 定義 5・決定・用語(basis)、型 codemagic・CODEMAGIC_API_TOKEN/APP_ID・シークレットの --update-secret・REQ-021(write)、up/down/ps/dry-run(commands)、安全・手で行う段取り・範囲外(common)、AC-005 の改訂と AC-021(acceptance)、要求の一覧(index)、README。
+    未決だった D1〜D4・D6〜D8 は報告書の推奨どおりに書いた(type: codemagic・repository を書く・ID が無ければ登録して確かめる・手元は何もしない・確かめは環境名の打ち直し・空の値は入れず消す・ps の中身)。
+  verified: |-
+    6 ページの HTML の閉じ忘れが無いことを確かめた。REQ-021 が要求の一覧・ページの説明・受け入れ条件の範囲(REQ-001〜021)に出ることを確かめた(受け入れ条件の「REQ-001〜019」の古い書き方も直した)。
+    ブラウザで見た目は確かめていない。
+  remaining: |-
+    コミットしていない(利用者の指示待ち)。
+    詳細仕様(Codemagic の API の使い方と順序)・実装・本物での受け入れ確認(AC-021)は後続のチケット。
+    試験で残った Codemagic のグループ 5 つの片づけ(サポートへの依頼)。
+log:
+- at: 2026-10-30T21:23:31.151939+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 担当を取って始めました
+- at: 2026-10-30T21:26:09.164953+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  text: 完了しました
+created_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T21:23:28.138936+09:00
+updated_at: 2026-10-30T21:26:09.164954+09:00
+rev: 3

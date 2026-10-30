@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/requirements/acceptance.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 要求仕様</div><h1>受け入れ条件</h1>
-<p><a href="index.html">要求仕様</a>の REQ-001〜019 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、手元の PC で動かす(GitHub Actions はリリースのビルドだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。</p></section>
+<p><a href="index.html">要求仕様</a>の REQ-001〜021 を満たしたと言える条件。番号は要求と 1 対 1。手元(<code>--env local</code>)の条件は網を切った PC でも確かめられ、手元の PC で動かす(GitHub Actions はリリースのビルドだけ)。リモートの条件は、試験用の Cloudflare アカウントの使い捨ての環境(<code>--env ac-1</code> など)で、利用者の許可を得てから確かめる。本番では行わない。Codemagic の条件(AC-021)も、試験用の Codemagic のアカウントで、利用者の許可を得てから確かめる。</p></section>
 
 <section class="section"><h2 id="fixture">試験用のプロジェクト</h2>
 <p>要求仕様の「compose ファイルの例」と同じ形: Worker の <code>web</code>・<code>api</code>、<code>db</code>(D1)・<code>files</code> と <code>uploads</code>(R2。<code>uploads</code> は <code>name: incoming</code>)・<code>cache</code>(KV)・<code>jobs</code>(Queue)、<code>api</code> の Durable Object <code>Counter</code>、シークレット <code>stripe-key</code>。<code>api</code> は、受けた要求で D1・R2・KV に書き、Queue に送り、Durable Object で数え、受け取った Queue のメッセージを KV に書く。<code>web</code> は <code>api</code> を呼んだ結果と、シークレットがあるかを返す。</p>
@@ -51,7 +51,8 @@
 <ul>
   <li><code>STRIPE_KEY</code> が、手元でもリモートでも、<code>secrets</code> に並べた Worker からだけ見える</li>
   <li><code>environment</code>・<code>secrets</code> は対応表でも並びでも同じに読まれる。シークレットの値を compose ファイルに書くと止まり、その値はどこにも出ない。<code>vars</code> と一番上の <code>secrets</code> は書き直し方を示して止まる</li>
-  <li>値を変えて <code>up</code> すると変わり、compose ファイルから消して <code>up</code> すると Worker からも消える</li>
+  <li>手元: 値を変えて <code>up</code> すると変わる。リモート: 値を変えて <code>up</code> しても変わらず、入れ直さなかったシークレットの名前と <code>--update-secret</code> が示される。<code>up --update-secret</code> で変わる。まだ無いシークレットは <code>--update-secret</code> が無くても入る</li>
+  <li>compose ファイルから消して <code>up</code> すると Worker からも消える</li>
   <li>値が無いと止まり、無い変数の名前が出る</li>
 </ul>
 </article>
@@ -186,6 +187,19 @@
   <li>リモート: <code>down --purge</code> のあと、その環境のコンテナのイメージが Cloudflare のレジストリに残らない。先に <code>down</code> してから <code>down --purge</code> しても同じ。ほかの環境のイメージは残る</li>
   <li>リモート: compose からコンテナを消して <code>up</code> すると、そのアプリケーションと一緒にイメージもレジストリから消える(<code>--dry-run</code> の計画にも出る)。compose に無い Worker を <code>up</code> が消すときも同じ</li>
   <li>境界: 途中で止めたリモートの <code>up</code>(イメージを送る前に止める)は、どこまで済んだかを示し、もう一度の <code>up</code> でコンテナの返事が届く状態に揃う</li>
+</ul>
+</article>
+<article class="item" id="ac-021"><h3><span class="id">AC-021</span>Codemagic <span class="refs"><a href="write.html#req-021">REQ-021</a></span></h3>
+<ul>
+  <li>試験用のプロジェクトに <code>codemagic</code> のサービス(グループ 2 つ。秘密でない値と Secure の値を両方持つ)を足し、<code>CODEMAGIC_APP_ID</code> の無い <code>.env.ac-1</code> で <code>up</code> すると、登録することを示して確かめ、Codemagic にアプリができ、その ID が <code>.env.ac-1</code> に書き足される。グループと変数の名前・Secure か・秘密でない値が compose ファイルのとおりになる</li>
+  <li>何も変えずに 2 度目の <code>up</code> をすると、アプリを増やさず、Codemagic を何も変えない</li>
+  <li>秘密でない値を <code>.env.ac-1</code> で変えて <code>up</code> すると変わる。Secure の値を変えて <code>up</code> しても変わらず、そのことと <code>--update-secret</code> が示される。<code>up --update-secret</code> で入れ直される</li>
+  <li>compose ファイルからグループを 1 つと、もう 1 つのグループの変数を 1 つ消して <code>up</code> すると、どちらも Codemagic から消える。Codemagic の画面でグループを足して <code>up</code> すると、そのグループも消える</li>
+  <li>別の環境(<code>--env ac-2</code>)で <code>up</code> すると、別のアプリができ、<code>ac-1</code> のアプリとグループは変わらない</li>
+  <li><code>down</code> のあと、<code>ac-1</code> のアプリとグループが Codemagic に残らず、<code>.env.ac-1</code> から <code>CODEMAGIC_APP_ID</code> が消える。<code>ac-2</code> のアプリは残る。もう一度 <code>up</code> すると、新しいアプリで同じ状態に戻る</li>
+  <li><code>--dry-run up</code> は、登録・グループと変数の作る・変える・消すを示し、Codemagic を変えない。<code>ps</code> はアプリと変数の状態を示す。どちらにも、API トークンと Secure の値が出ない</li>
+  <li><code>--env local up</code> は Codemagic に触れず、手元では何もしないことを知らせる</li>
+  <li>失敗: <code>CODEMAGIC_API_TOKEN</code> が無い、または誤っていると、Codemagic に触れる前、または Codemagic の答えを示して止まる。<code>repository</code> が無い・知らないキーを書く・<code>secrets</code> に値をそのまま書くと、何もせずに止まり、場所と理由を示す</li>
 </ul>
 </article>
 </section>

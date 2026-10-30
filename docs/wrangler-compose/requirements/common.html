@@ -12,15 +12,15 @@
 <ul>
   <li>リモートに展開するのは、手元と同じ組み立てたものだけ(REQ-010)</li>
   <li>消す操作は、消すものを示し、環境名の打ち直しで確かめる</li>
-  <li>まだ無い環境への初めての <code>up</code> は、新しく作ることを示して確かめる(環境名の打ち間違いで新しい環境を建てない)</li>
+  <li>まだ無い環境への初めての <code>up</code> は、新しく作ることを示して確かめる(環境名の打ち間違いで新しい環境を建てない)。Codemagic のアプリを新しく登録するときも同じ(REQ-021)</li>
   <li>リモートの <code>up</code> は、上の初めての環境と消す操作のほかは、確かめを求めずに進める(CI から展開できるように。利用者の決定 2026-10-13)</li>
-  <li>シークレットの値を、どの操作でも画面・ログ・バックアップに出さない</li>
+  <li>シークレットの値を、どの操作でも画面・ログ・バックアップに出さない。Codemagic の API トークンと、Codemagic に入れる Secure の値も同じ</li>
   <li><code>.env.&lt;環境&gt;</code> とバックアップが git に入る形なら止まる</li>
 </ul>
 </article>
 <article class="item" id="req-016"><h3><span class="id">REQ-016</span>手で行う段取りを持たない</h3>
 <ul>
-  <li>利用者が用意するのは、compose ファイル・コード・<code>.env.&lt;環境&gt;</code> だけ。人が行うのは Cloudflare へのログインを 1 度だけ</li>
+  <li>利用者が用意するのは、compose ファイル・コード・<code>.env.&lt;環境&gt;</code> だけ。人が行うのは Cloudflare へのログインを 1 度だけ。Codemagic のサービスを使うときは、加えて、Codemagic と GitHub をつなぐことと、Codemagic の API トークンを <code>.env.&lt;環境&gt;</code> か環境変数に書くことを 1 度だけ(利用者の決定 2026-10-30)</li>
   <li>資源の作成、移行、シークレットの投入、手元の S3 互換の API の鍵など、ほかに要るものはすべて道具が用意する。ただし、リモートの R2 の S3 互換の API の鍵はアプリの側で扱う(REQ-004。利用者の決定 2026-10-13)</li>
 </ul>
 </article>
@@ -48,7 +48,8 @@
   <li>docker compose にあって要らないもの: <code>image</code>(<code>type</code> が代わり)・<code>-f</code>(<code>--env</code> が代わり)・<code>profiles</code>・<code>extends</code>・<code>include</code>・<code>networks</code>・<code>volumes</code>・<code>scale</code>・<code>exec</code>・<code>run</code></li>
   <li>DNS・WAF・Access などゾーンの設定</li>
   <li>コンテナの <code>durable_object</code> 方針(公開ベータ)と、<code>containers</code> の細かいキー(段階的な入れ替え・ssh・置き場の制限・観測の上書き)。要るときに足す</li>
-  <li>Wrangler のコマンドでも Cloudflare の API でも行えない操作</li>
+  <li>Wrangler のコマンドでも Cloudflare の API でも行えない操作(Codemagic の API で行う REQ-021 の操作は除く)</li>
+  <li>Codemagic のビルドの開始と、ワークフローの設定(<code>codemagic.yaml</code> が持つ)(利用者の決定 2026-10-30)</li>
 </ul>
 </section>
 

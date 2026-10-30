@@ -5,7 +5,7 @@ Node・npm を uv のように扱う `nv` と、Cloudflare Workers の環境を 
 | コマンド | 受け持つもの | 持たないもの | 要求仕様 |
 |---|---|---|---|
 | `nv` | Node・npm を uv のように扱う(Node の版の固定と取得、`sync`・`run`・`x`、スキル、`self update`) | Cloudflare に触れること・Wrangler を動かすこと | [docs/nv](docs/nv/requirements/index.html) |
-| `wrangler-compose` | 手元で開発した Workers のサービス群を docker compose のように動かし、リモートへ展開する(`--env <環境名> up / build / down [--purge] / ps / logs / backup / restore`) | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements/index.html) |
+| `wrangler-compose` | 手元で開発した Workers のサービス群を docker compose のように動かし、リモートへ展開する(`--env <環境名> up / build / down [--purge] / ps / logs / backup / restore`)。その環境を使うアプリの Codemagic への登録と、ビルドに要る値の登録も行う | Node・npm の取得と版のこと | [docs/wrangler-compose](docs/wrangler-compose/requirements/index.html) |
 
 ## 2 つの境目
 
@@ -94,6 +94,10 @@ wrangler-compose --env staging ps
 wrangler-compose --env staging logs api
 wrangler-compose --env staging down
 ```
+
+リモートのシークレットは、無いときだけ入れる。`.env.<環境名>` で値を変えたときは `up --update-secret` で入れ直す(値を読み返せないため)。
+
+`type: codemagic` のサービスを書くと、リモートの `up` がその環境の Codemagic のアプリを登録し(ID は `.env.<環境名>` の `CODEMAGIC_APP_ID` に書き足す)、`groups` に書いた値を変数グループに入れる。書いていないグループ・変数は消し、`down` でアプリごと消す。要るのは Codemagic と GitHub をつなぐことと、`CODEMAGIC_API_TOKEN`(環境変数か `.env.<環境名>`)を 1 度だけ。書き方は[要求仕様の REQ-021](docs/wrangler-compose/requirements/write.html#req-021)。いまは仕様だけで、まだ作っていない。
 
 リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/detail/local-support.html](docs/wrangler-compose/detail/local-support.html) にある。
 

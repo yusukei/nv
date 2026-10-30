@@ -1,0 +1,48 @@
+id: Q-12
+state: resolved
+question: 手元(--env local)で動かすときの Worker のシークレットは、--update-secret が無くても、毎回 .env.local の値を使ってよいですか？
+background: |-
+  【何の話か】
+  シークレットの扱いは「無いときだけ作り、既にあるものは --update-secret を付けたときだけ上書きする」と決まりました(依頼 I-2 のコメント C-5・C-6。Codemagic と Worker で統一)。
+  リモート(staging・production など)では、Cloudflare に Worker のシークレットが残っているので、「既にあるか」が分かり、この決まりがそのまま当てはまります。
+  一方、手元(--env local)では、Worker のシークレットはどこにも残りません。wrangler-compose が up のたびに .env.local の値をその場で Worker に渡しているだけです。そのため、手元には「既にある」という状態がそもそもありません。
+
+  【例】
+  .env.local の APP_KEY を書き換えて wrangler-compose --env local up を打ったとき、新しい値で動くかどうかの話です。
+intent: 手元でのシークレットの扱いを、統一した決まりの中でどう読むかを決めたい。
+options:
+- key: a
+  label: 手元は毎回 .env.local の値を使う(--update-secret は要らない)
+  effect: .env.local を書き換えて up すれば、そのまま新しい値で動く。いまの動きと同じ。手元には「既にある値」が無いので、決まりにも反していない
+- key: b
+  label: 手元も「既にある」を記録しておき、値を変えるときは --update-secret を付ける
+  effect: リモートと操作が同じになる。そのかわり、.env.local を書き換えても --update-secret を忘れると古い値で動き、手元の開発で迷いやすい。そのためだけに、古い値を手元に保存する仕組みも要る
+recommend: a
+why: --update-secret は「読み返せない値を、うっかり上書きしない」ための決まりで、手元には上書きされて困る値が残っていない。b は守るものが無いのに手間と迷いだけが増える。
+docs:
+- path: docs/wrangler-compose/requirements/write.html
+  anchor: REQ-005
+  quote: up が、手元でもリモートでも、その Worker のシークレットとして入れる。compose ファイルから消したシークレットは、up が消す
+ticket: T-2
+asked_by:
+  kind: agent
+  name: claude-code
+  session: ea7464d3-d354-4d15-a57d-288fbae69698
+answer:
+  option: a
+  kind: user
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  at: 2026-10-30T20:44:28.419259+09:00
+  confirmed: true
+outcome:
+  note: T-2 の報告書の「決まったこと」に、手元は毎回 .env.local の値を使うと書いた。REQ-005 の改める内容にも入れた。仕様書への反映は、要求仕様を改めるチケットで行う。
+  at: 2026-10-30T20:46:34.546356+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+created_at: 2026-10-30T20:42:20.619153+09:00
+updated_at: 2026-10-30T20:46:34.546356+09:00
+rev: 3
