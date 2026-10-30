@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 const API: &str = "https://api.codemagic.io";
 const API_V3: &str = "https://codemagic.io/api/v3";
+const GITHUB_API: &str = "https://api.github.com";
 
 fn say(msg: String) {
     eprintln!("wrangler-compose: {msg}");
@@ -55,11 +56,18 @@ pub fn token(c: &Compose) -> Result<String> {
 /// at one place; anything but this machine must be HTTPS, so the token
 /// never travels in the clear.
 fn bases() -> Result<(String, String)> {
-    let Some(base) = std::env::var("CODEMAGIC_API_BASE_URL")
-        .ok()
-        .filter(|b| !b.is_empty())
-    else {
+    let Some(base) = base_from_env("CODEMAGIC_API_BASE_URL")? else {
         return Ok((API.to_string(), API_V3.to_string()));
+    };
+    Ok((base.clone(), format!("{base}/api/v3")))
+}
+
+/// An address given in `var` (for tests), without the trailing slash; it
+/// must be HTTPS unless it is this machine, so a token never travels in
+/// the clear. None when `var` is not set.
+fn base_from_env(var: &str) -> Result<Option<String>> {
+    let Some(base) = std::env::var(var).ok().filter(|b| !b.is_empty()) else {
+        return Ok(None);
     };
     let base = base.trim_end_matches('/').to_string();
     let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
@@ -69,11 +77,128 @@ fn bases() -> Result<(String, String)> {
         });
     if !base.starts_with("https://") && !local {
         bail!(crate::tr!(
-            "CODEMAGIC_API_BASE_URL は https:// にしてください(何もしていません)",
-            "CODEMAGIC_API_BASE_URL must be https:// (nothing was done)"
+            "{var} は https:// にしてください(何もしていません)",
+            "{var} must be https:// (nothing was done)"
         ));
     }
-    Ok((base.clone(), format!("{base}/api/v3")))
+    Ok(Some(base))
+}
+
+/// The owner and name of a github.com repository, read from the URL written
+/// in the compose file (`https://github.com/<owner>/<name>`,
+/// `git@github.com:<owner>/<name>.git`, `ssh://git@github.com/<owner>/<name>`);
+/// None for a repository anywhere else.
+pub fn github_path(repository: &str) -> Option<(String, String)> {
+    let rest = repository.split_once("://").map_or(repository, |(_, r)| r);
+    let (host, path) = rest.split_once(['/', ':'])?;
+    let host = host.rsplit('@').next().unwrap_or(host);
+    if !host.eq_ignore_ascii_case("github.com") {
+        return None;
+    }
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some((owner.to_string(), name.to_string()))
+}
+
+/// The GitHub credential git already has for github.com (its credential
+/// helper), never asking for one.
+fn git_credential() -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("git")
+        .args(["credential", "fill"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child
+        .stdin
+        .take()?
+        .write_all(b"protocol=https\nhost=github.com\n\n")
+        .ok()?;
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("password="))
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+}
+
+/// The repository as Codemagic's "add from GitHub" sends it, read from
+/// GitHub's API (DES-022): None when the repository is not on github.com.
+/// The credential (GITHUB_TOKEN, else git's) goes only in the
+/// Authorization header and is never shown.
+pub fn github_repository(c: &Compose, repository: &str) -> Result<Option<Value>> {
+    let Some((owner, name)) = github_path(repository) else {
+        return Ok(None);
+    };
+    let base = base_from_env("GITHUB_API_BASE_URL")?.unwrap_or_else(|| GITHUB_API.to_string());
+    let (token, from) = match &c.github_token {
+        Some(t) => (Some(t.clone()), "GITHUB_TOKEN"),
+        None => (git_credential(), "git credential"),
+    };
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .user_agent(concat!("wrangler-compose/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into();
+    let mut req = agent
+        .get(format!("{base}/repos/{owner}/{name}"))
+        .header("accept", "application/vnd.github+json")
+        .header("x-github-api-version", "2022-11-28");
+    if let Some(t) = &token {
+        req = req.header("authorization", &format!("Bearer {t}"));
+    }
+    let mut res = req
+        .call()
+        .context(crate::tr!("GitHub につながりません", "cannot reach GitHub"))?;
+    let status = res.status().as_u16();
+    let text = res.body_mut().read_to_string().unwrap_or_default();
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let file = c.env_file.display();
+    match status {
+        200 => {}
+        404 => bail!(crate::tr!(
+            "GitHub で {owner}/{name}({repository})を読めません。無いか、非公開で読む資格がありません。非公開なら、そのリポジトリを読める GITHUB_TOKEN=<トークン> を {file} か環境変数に書くか、git に GitHub の資格を入れてください(何もしていません)",
+            "GitHub cannot read {owner}/{name} ({repository}): it does not exist, or it is private and there is no credential that reads it. For a private one, write GITHUB_TOKEN=<token> that reads it in {file} or set it in the environment, or give git a GitHub credential (nothing was done)"
+        )),
+        401 => bail!(crate::tr!(
+            "GitHub が資格({from})を受け付けません。{file} か環境変数の GITHUB_TOKEN を直してください(何もしていません)",
+            "GitHub does not accept the credential ({from}); fix GITHUB_TOKEN in {file} or the environment (nothing was done)"
+        )),
+        _ => bail!(crate::tr!(
+            "GitHub API {status}: {}(何もしていません)",
+            "GitHub API {status}: {} (nothing was done)",
+            v["message"].as_str().unwrap_or("")
+        )),
+    }
+    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    if v["id"].as_u64().is_none() {
+        bail!(crate::tr!(
+            "GitHub の答えにリポジトリの ID がありません({repository})",
+            "GitHub's answer has no repository id ({repository})"
+        ));
+    }
+    Ok(Some(json!({
+        "provider": "github",
+        "id": v["id"],
+        "name": s("name"),
+        "htmlUrl": s("html_url"),
+        "gitUrl": s("clone_url"),
+        "hooksUrl": s("hooks_url"),
+        "language": v["language"].as_str().unwrap_or("other"),
+        "owner": { "name": v["owner"]["login"].as_str().unwrap_or(&owner) },
+        "defaultBranch": s("default_branch"),
+    })))
 }
 
 pub struct Cm {
@@ -233,13 +358,22 @@ impl Cm {
         }
     }
 
-    /// Registers the repository as a new app; its id.
-    pub fn register(&self, repository: &str) -> Result<String> {
-        let v = self.call(
-            "POST",
-            &format!("{}/apps", self.api),
-            Some(&json!({ "repositoryUrl": repository })),
-        )?;
+    /// Every app the token sees (the apps API's list).
+    pub fn apps(&self) -> Result<Vec<Value>> {
+        let v = self.call("GET", &format!("{}/apps", self.api), None)?;
+        Ok(v["applications"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// Registers the repository as a new app; its id. A GitHub repository
+    /// (`repo`, from `github_repository`) goes as Codemagic's screen sends
+    /// it, so the app is linked to GitHub; a URL alone makes a "Manually
+    /// added" app (measured 2026-10-30).
+    pub fn register(&self, repository: &str, repo: Option<&Value>) -> Result<String> {
+        let body = match repo {
+            Some(r) => json!({ "repo": r, "skipFirstBuild": true, "projectType": "other" }),
+            None => json!({ "repositoryUrl": repository }),
+        };
+        let v = self.call("POST", &format!("{}/apps", self.api), Some(&body))?;
         v["_id"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -567,31 +701,86 @@ pub fn diff(want: &Codemagic, now: &[Group], update_secret: bool) -> Diff {
 
 // ---------------------------------------------------------------- up
 
+/// Whether Codemagic registered a GitHub repository without reaching it
+/// through its GitHub App. POST /apps still succeeds then, but the app's
+/// repository comes back as `provider: generic` ("Manually added") instead of
+/// `github` (measured 2026-10-30): an app that cannot build.
+fn not_linked(repository: &str, app: &Value) -> bool {
+    github_path(repository).is_some() && app["repository"]["provider"].as_str() != Some("github")
+}
+
+/// What to do about an app registered without the GitHub App.
+fn link_hint() -> String {
+    crate::tr!(
+        "GitHub で、このリポジトリに Codemagic の GitHub App を入れて(リポジトリへの許可を足して)ください",
+        "install Codemagic's GitHub App on this repository on GitHub (or give it access to the repository)"
+    )
+}
+
 /// What Codemagic has for this environment now (read with GET only).
 pub struct Now {
     /// CODEMAGIC_APP_ID; None means up registers a new app.
     pub app_id: Option<String>,
     pub groups: Vec<Group>,
+    /// Without an app yet: the GitHub repository to register (None for one
+    /// elsewhere), and the ids of every app there was before registering.
+    pub repo: Option<Value>,
+    pub known: Vec<String>,
 }
 
 /// Reads the app and its groups. An id whose app is gone stops: up does not
-/// register another one behind the user's back.
-pub fn read(cm: &Cm, c: &Compose) -> Result<Now> {
+/// register another one behind the user's back. Neither does an app
+/// Codemagic holds without the GitHub App (see `not_linked`).
+pub fn read(cm: &Cm, c: &Compose, want: &Codemagic) -> Result<Now> {
     let Some(id) = c.codemagic_app_id.clone() else {
+        // Before registering: the repository on GitHub, and no app of it on
+        // Codemagic already (Codemagic hands that one back instead of a new
+        // one, and it may be another environment's or another person's).
+        let repo = github_repository(c, &want.repository)?;
+        let apps = cm.apps()?;
+        if let Some(r) = &repo
+            && let Some(a) = apps.iter().find(|a| {
+                a["repository"]["provider"].as_str() == Some("github")
+                    && a["repository"]["id"] == r["id"]
+            })
+        {
+            let found = a["_id"].as_str().unwrap_or("");
+            bail!(crate::tr!(
+                "Codemagic には {} のアプリ {found}({})が既にあります。Codemagic は 1 つのリポジトリに 1 つしかアプリを持たないので、登録しません。この環境で使うなら、CODEMAGIC_APP_ID={found} を {} に書いてください(何もしていません)",
+                "Codemagic already has an app {found} for {} ({}); it holds one app per repository, so none is registered. To use it for this environment, write CODEMAGIC_APP_ID={found} in {} (nothing was done)",
+                want.repository,
+                a["appName"].as_str().unwrap_or(""),
+                c.env_file.display()
+            ));
+        }
         return Ok(Now {
             app_id: None,
             groups: Vec::new(),
+            repo,
+            known: apps
+                .iter()
+                .filter_map(|a| a["_id"].as_str().map(str::to_string))
+                .collect(),
         });
     };
-    if cm.app(&id)?.is_none() {
+    let Some(app) = cm.app(&id)? else {
         bail!(crate::tr!(
             "Codemagic にアプリ {id}(CODEMAGIC_APP_ID)がありません。{} から CODEMAGIC_APP_ID の行を消して up すると、新しく登録します(何もしていません)",
             "Codemagic has no app {id} (CODEMAGIC_APP_ID); remove the CODEMAGIC_APP_ID line from {} and up registers a new one (nothing was done)",
             c.env_file.display()
         ));
+    };
+    if not_linked(&want.repository, &app) {
+        bail!(crate::tr!(
+            "Codemagic のアプリ {id} は GitHub と結ばれていません(リポジトリの種類が github でない)。このままではビルドできません。{}。そのあと down でこのアプリを消し、up で登録し直してください(何もしていません)",
+            "Codemagic app {id} is not linked to GitHub (its repository is not of the github kind) and cannot build; {}, then remove this app with down and register it again with up (nothing was done)",
+            link_hint()
+        ));
     }
     let groups = cm.groups(&id)?;
     Ok(Now {
+        repo: None,
+        known: Vec::new(),
         app_id: Some(id),
         groups,
     })
@@ -665,7 +854,7 @@ pub fn plan(svc: &str, want: &Codemagic, now: &Now, d: &Diff) -> Vec<(char, Stri
 }
 
 /// Makes Codemagic what the plan says: registers the app (writing its id to
-/// `.env.<env>`), then the group changes in order. Every step is said as it
+/// `.env.<env>`; an app not linked to GitHub is deleted again and up stops), then the group changes in order. Every step is said as it
 /// is done, so a stop shows how far it got; another up finishes the rest.
 pub fn apply(cm: &Cm, act: &Act, c: &Compose, want: &Codemagic, now: &Now, d: &Diff) -> Result<()> {
     let file = c.env_file.display().to_string();
@@ -680,7 +869,32 @@ pub fn apply(cm: &Cm, act: &Act, c: &Compose, want: &Codemagic, now: &Now, d: &D
                     want.repository
                 ),
                 || {
-                    id = cm.register(&want.repository)?;
+                    id = cm.register(&want.repository, now.repo.as_ref())?;
+                    if now.known.contains(&id) {
+                        bail!(crate::tr!(
+                            "Codemagic は新しいアプリを作らず、既にあるアプリ {id} を返しました。消さず、{file} にも書いていません。この環境で使うなら CODEMAGIC_APP_ID={id} を書いてください",
+                            "Codemagic made no new app and handed back the existing app {id}; it was not deleted, and {file} was not written. To use it for this environment, write CODEMAGIC_APP_ID={id}"
+                        ));
+                    }
+                    let app = cm.app(&id)?.unwrap_or(Value::Null);
+                    if not_linked(&want.repository, &app) {
+                        let undo = match cm.delete_app(&id) {
+                            Ok(()) => crate::tr!(
+                                "登録したアプリ {id} は消しました",
+                                "the app {id} just registered was deleted"
+                            ),
+                            Err(e) => crate::tr!(
+                                "登録したアプリ {id} を消せませんでした({e})。Codemagic の画面で消してください",
+                                "the app {id} just registered could not be deleted ({e}); delete it on Codemagic's screen"
+                            ),
+                        };
+                        bail!(crate::tr!(
+                            "Codemagic は {} を GitHub と結ばずに登録しました(リポジトリの種類が github でない)。このアプリではビルドできません。{undo}。{}。そのあと、もう一度 up してください({file} に CODEMAGIC_APP_ID は書いていません)",
+                            "Codemagic registered {} without linking it to GitHub (its repository is not of the github kind), so the app cannot build; {undo}. {}, then up again ({file} has no CODEMAGIC_APP_ID written)",
+                            want.repository,
+                            link_hint()
+                        ));
+                    }
                     crate::dotenv::append_line(&c.env_file, "CODEMAGIC_APP_ID", &id).with_context(|| {
                         crate::tr!(
                             "Codemagic にアプリ {id} を登録しましたが、{file} に書けません。CODEMAGIC_APP_ID={id} をご自身で書き足してください",
@@ -1083,5 +1297,63 @@ mod tests {
             cm.hide("bad token tok-123 and s3cr3t"),
             "bad token *** and ***"
         );
+    }
+    #[test]
+    fn the_github_owner_and_name_come_from_the_url() {
+        let p = |o: &str, n: &str| Some((o.to_string(), n.to_string()));
+        assert_eq!(
+            github_path("https://github.com/acme/shop"),
+            p("acme", "shop")
+        );
+        assert_eq!(
+            github_path("https://github.com/acme/shop.git"),
+            p("acme", "shop")
+        );
+        assert_eq!(
+            github_path("https://github.com/acme/shop/"),
+            p("acme", "shop")
+        );
+        assert_eq!(
+            github_path("git@github.com:acme/shop.git"),
+            p("acme", "shop")
+        );
+        assert_eq!(
+            github_path("ssh://git@github.com/acme/shop"),
+            p("acme", "shop")
+        );
+        assert_eq!(
+            github_path("https://user@GitHub.com/acme/shop"),
+            p("acme", "shop")
+        );
+        assert_eq!(github_path("https://github.com/acme"), None);
+        assert_eq!(github_path("https://github.com/acme/shop/tree/main"), None);
+        assert_eq!(github_path("https://gitlab.com/acme/shop"), None);
+        assert_eq!(
+            github_path("https://github.com.evil.example/acme/shop"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_github_repository_must_come_back_as_github() {
+        let app = |p: &str| json!({ "repository": { "provider": p } });
+        let url = "https://github.com/example/shop";
+        assert!(!not_linked(url, &app("github")));
+        assert!(not_linked(url, &app("generic")));
+        assert!(not_linked(
+            "https://GitHub.com/example/shop.git",
+            &app("generic")
+        ));
+        assert!(not_linked(
+            "git@github.com:example/shop.git",
+            &app("generic")
+        ));
+        assert!(not_linked(url, &json!({ "repository": {} })));
+        // Other hosts are not judged: Codemagic has no GitHub App for them.
+        assert!(!not_linked("https://gitlab.example/shop", &app("generic")));
+        assert!(!not_linked(
+            "https://github.com.evil.example/shop",
+            &app("generic")
+        ));
     }
 }

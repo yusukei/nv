@@ -6,7 +6,9 @@
 # --update-secret, unwritten variables and groups go, another environment's
 # app is never touched, down deletes the groups before the app and removes
 # the id line, --dry-run and ps only read and never show a value, --env local
-# does not touch Codemagic, and the ways it stops. It checks the tool's own
+# does not touch Codemagic, and the ways it stops. A GitHub repository is read
+# from GitHub (owner and name from the compose file's URL) and registered as
+# Codemagic's screen does; an app Codemagic already has for it is not taken. It checks the tool's own
 # steps; real Codemagic behavior is checked on a test account (AC-021).
 # Needs: nv and wrangler-compose in $BIN, curl, python3, util-linux script.
 set -euo pipefail
@@ -20,7 +22,7 @@ git init -q .
 cat >> wrangler-compose.yaml <<'YAML'
   mobile:
     type: codemagic
-    repository: https://github.com/example/shop
+    repository: https://github.com/example/${SHOP_REPO:-shop}
     groups:
       store:
         environment:
@@ -35,6 +37,8 @@ YAML
 for e in ac-1 ac-2; do
   printf 'CLOUDFLARE_ACCOUNT_ID=acc\nSTRIPE_KEY=sk_test_remote\nWEB_DOMAIN=shop-%s.example\nSTORE_APP_KEY=store-secret-1\nFIREBASE_KEY=fb-secret-1' "$e" > ".env.$e"
 done
+# Codemagic holds one app per GitHub repository, so ac-2 builds another one.
+printf '\nSHOP_REPO=shop-2' >> .env.ac-2
 "$BIN/nv" run npm install --no-audit --no-fund >/dev/null
 
 port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
@@ -49,12 +53,20 @@ for p in "$CF" "$CM"; do
   for _ in $(seq 1 50); do curl -s "http://127.0.0.1:$p/" >/dev/null && break; sleep 0.1; done
 done
 export CLOUDFLARE_API_BASE_URL="http://127.0.0.1:$CF/client/v4" CLOUDFLARE_API_TOKEN=fake CLOUDFLARE_ACCOUNT_ID=acc
-export CODEMAGIC_API_BASE_URL="http://127.0.0.1:$CM"
+export CODEMAGIC_API_BASE_URL="http://127.0.0.1:$CM" GITHUB_API_BASE_URL="http://127.0.0.1:$CM/github"
+# No GitHub credential from this PC's git reaches the fake.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GITHUB_TOKEN
 export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost NV_LANG=en
 
 wc() { "$BIN/wrangler-compose" "$@" 2>&1; }
 # Answer the retype through a terminal, as a person would: wc_yes <env> args…
-wc_yes() { local e=$1; shift; printf '%s\n' "$e" | script -qec "$BIN/wrangler-compose --env $e $*" /dev/null 2>&1; }
+if [[ $(uname) == Darwin ]]; then
+  # macOS's script sends the end of input at once; keep it open a while.
+  wc_yes() { local e=$1; shift; { printf '%s\n' "$e"; sleep 3; } | script -q /dev/null "$BIN/wrangler-compose" --env "$e" "$@" 2>&1; }
+else
+  wc_yes() { local e=$1; shift; printf '%s\n' "$e" | script -qec "$BIN/wrangler-compose --env $e $*" /dev/null 2>&1; }
+fi
 fail() { echo "FAIL: $*"; tail -20 cm.log; exit 1; }
 cm() { grep -a -c "$1" cm.log || true; }
 # Changes Codemagic was asked to make since the log had $1 lines.
@@ -82,7 +94,7 @@ grep -q 'no Codemagic API token' <<<"$out" || fail "token message: $out"
 grep -q 'Teams > Personal Account > Integrations > Codemagic API' <<<"$out" || fail "where to find the token: $out"
 grep -a -q 'accounts' api.log && fail "Cloudflare was touched without a Codemagic token"
 cp wrangler-compose.yaml compose.orig
-for change in '    repository: https://github.com/example/shop\n|' \
+for change in '    repository: https://github.com/example/${SHOP_REPO:-shop}\n|' \
   '    type: codemagic\n|    type: codemagic\n    branch: main\n' \
   '        secrets: [STORE_APP_KEY]\n|        secrets: { STORE_APP_KEY: raw-secret-1 }\n'; do
   python3 -c 'import sys; a, b = sys.argv[1].replace("\\n", "\n").split("|"); s = open("compose.orig").read(); assert a in s; open("wrangler-compose.yaml", "w").write(s.replace(a, b))' "$change"
@@ -132,6 +144,33 @@ grep -q "added CODEMAGIC_APP_ID=$ID1" <<<"$out" || fail "id not announced: $out"
 want='{"firebase": {"FB_KEY": ["fb-secret-1", true], "PROJECT": ["shop-dev", false], "REGION": ["asia", false]}, "store": {"STORE_APP_KEY": ["store-secret-1", true], "STORE_DOMAIN": ["shop-ac-1.example", false]}}'
 [[ "$(app_state "$ID1")" == "$want" ]] || fail "groups after up: $(app_state "$ID1")"
 [[ $(cm 'POST /api/v3/variable-groups/.*/variables$') == 4 ]] || fail "one bulk call per group and Secure"
+[[ $(cm 'GET /github/repos/example/shop$') -ge 1 ]] || fail "the repository was not read from GitHub"
+state | python3 -c '
+import json, sys
+a = json.load(sys.stdin)["apps"][sys.argv[1]]
+assert a["provider"] == "github" and a["gid"], a' "$ID1" || fail "not registered as a GitHub repository"
+
+# Codemagic already has an app for the repository: nothing is registered, and
+# the app is named, not taken (Codemagic would hand it back).
+n=$(lines)
+out=$(SHOP_REPO=shop wc --env ac-2 --dry-run up) && fail "ran for a repository with an app"
+grep -q "Codemagic already has an app $ID1 for https://github.com/example/shop (shop)" <<<"$out" || fail "existing app message: $out"
+grep -q "write CODEMAGIC_APP_ID=$ID1 in" <<<"$out" || fail "how to use it not said: $out"
+[[ $(changes_since "$n") == 0 ]] || fail "Codemagic changed for a repository with an app"
+
+# A private repository: GitHub is read with GITHUB_TOKEN, never shown; without
+# a credential, or with a wrong one, it stops before Codemagic is changed.
+n=$(lines)
+out=$(SHOP_REPO=private-shop wc --env ac-2 --dry-run up) && fail "ran without reading a private repository"
+grep -q 'GitHub cannot read example/private-shop' <<<"$out" || fail "private repository message: $out"
+grep -q 'GITHUB_TOKEN=<token>' <<<"$out" || fail "how to read it not said: $out"
+out=$(SHOP_REPO=private-shop GITHUB_TOKEN=gh-wrong wc --env ac-2 --dry-run up) && fail "ran with a wrong GitHub credential"
+grep -q 'GitHub does not accept the credential (GITHUB_TOKEN)' <<<"$out" || fail "wrong GitHub credential message: $out"
+grep -q 'gh-wrong' <<<"$out" && fail "the GitHub credential was shown"
+out=$(SHOP_REPO=private-shop GITHUB_TOKEN=gh-token wc --env ac-2 --dry-run up) || fail "a private repository with GITHUB_TOKEN: $out"
+grep -q 'https://github.com/example/private-shop will be registered' <<<"$out" || fail "private registration not announced: $out"
+grep -q 'gh-token' <<<"$out" && fail "the GitHub credential was shown"
+[[ $(changes_since "$n") == 0 ]] || fail "a dry run changed Codemagic"
 
 # A wrong token: Codemagic's answer at its first call, never the token.
 out=$(CODEMAGIC_API_TOKEN=wrong-token-9 wc --env ac-1 --dry-run up) && fail "ran with a wrong token"
@@ -140,13 +179,34 @@ grep -q 'wrong-token-9' <<<"$out" && fail "the token was shown"
 # The rate limit: how long to wait.
 out=$(CODEMAGIC_API_TOKEN=cm-ratelimited wc --env ac-1 --dry-run up) && fail "ran past the rate limit"
 grep -q 'try again in 42 seconds' <<<"$out" || fail "rate limit message: $out"
-# Without an app yet, the first call is the registration: it stops there with
-# Codemagic's answer, says another up finishes, and writes no id.
+# Without an app yet, a wrong token stops at reading Codemagic's apps, before
+# anything is registered; a token that may only read stops at the
+# registration with Codemagic's answer, says another up finishes, and writes
+# no id.
 out=$(CODEMAGIC_API_TOKEN=wrong-token-9 wc_yes ac-2 up) && fail "registered with a wrong token"
-grep -q 'Codemagic API 401' <<<"$out" || fail "wrong token at registration: $out"
-grep -q 'Another up finishes the rest' <<<"$out" || fail "how to finish not said: $out"
+grep -q 'Codemagic API 401' <<<"$out" || fail "wrong token without an app: $out"
 grep -q 'wrong-token-9' <<<"$out" && fail "the token was shown"
+out=$(CODEMAGIC_API_TOKEN=cm-readonly wc_yes ac-2 up) && fail "registered with a read-only token"
+grep -q 'Codemagic API 403' <<<"$out" || fail "read-only token at registration: $out"
+grep -q 'Another up finishes the rest' <<<"$out" || fail "how to finish not said: $out"
 grep -q CODEMAGIC_APP_ID .env.ac-2 && fail "an id was written after a failed registration"
+
+# A repository the GitHub App does not reach: Codemagic still registers it
+# (provider generic), so up deletes that app again, writes no id and says how
+# to link it. An app like that already in CODEMAGIC_APP_ID stops up too.
+sed -i.bak 's#github.com/example/#github.com/elsewhere/#' wrangler-compose.yaml && rm wrangler-compose.yaml.bak
+n=$(lines)
+out=$(wc_yes ac-2 up) && fail "up went on with an unlinked repository"
+grep -q 'without linking it to GitHub' <<<"$out" || fail "unlinked message: $out"
+grep -q "Codemagic's GitHub App" <<<"$out" || fail "how to link not said: $out"
+grep -q CODEMAGIC_APP_ID .env.ac-2 && fail "an id was written for an unlinked app"
+[[ $(tail -n +"$((n + 1))" cm.log | grep -a -c -E '^DELETE /apps/') == 1 ]] || fail "the unlinked app was not deleted"
+[[ $(tail -n +"$((n + 1))" cm.log | grep -a -c -E '^POST /api/v3/') == 0 ]] || fail "groups were made on an unlinked app"
+G=$(curl -fsS -X POST -H 'x-auth-token: cm-token' -H 'content-type: application/json' "$API/apps" -d '{"repositoryUrl":"https://github.com/elsewhere/shop"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+out=$(CODEMAGIC_APP_ID=$G wc --env ac-2 --dry-run up) && fail "ran with an unlinked app"
+grep -q "Codemagic app $G is not linked to GitHub" <<<"$out" || fail "unlinked app message: $out"
+curl -fsS -o /dev/null -X DELETE -H 'x-auth-token: cm-token' "$API/apps/$G"
+cp compose.orig wrangler-compose.yaml
 
 # Nothing changed: no app is added and nothing is changed.
 n=$(lines)

@@ -1,0 +1,49 @@
+id: T-6
+title: GitHub App で結ばれていないリポジトリを Codemagic に登録したら止まる
+state: done
+priority: high
+body: GitHub App で結ばれていない GitHub のリポジトリでも POST /apps は成功し、repository.provider が generic のアプリができる(2026-10-30 本物で確認)。ビルドできないアプリを黙って作り、CODEMAGIC_APP_ID まで書いてしまう。登録したあと GET /apps/{id} で provider を確かめ、github.com の URL なのに github でなければ、そのアプリを消して止まる(DES-022)。
+request: I-3
+assignee:
+  kind: agent
+  name: claude-code
+  session: b55b9b3c-1386-40a1-85ca-0b1c760f373c
+report:
+  changed: |-
+    codemagic.rs: 登録の直後に GET /apps/{id} で repository.provider を読み、github.com の URL なのに github でなければ、そのアプリを消して止める(CODEMAGIC_APP_ID は書かない)。既にある CODEMAGIC_APP_ID のアプリが同じ状態でも止める
+    fake-codemagic.py: github.com/example/ 以外は provider generic で登録する(本物どおり)。codemagic-smoke.sh: その場合を足し、macOS の script でも答えを送れるようにした
+    DES-022(d03-remote.html)・README・SKILL.md に 1 文ずつ足した
+  verified: |-
+    本物の Codemagic: GitHub App の届かない octocat/Hello-World を POST /apps すると 200 で provider generic・owner Manually added になった(すぐ DELETE、202)。正常な 3 アプリは provider github
+    単体試験 a_github_repository_must_come_back_as_github: 直す前は失敗、直したあとは成功。cargo test すべて成功
+    codemagic-smoke.sh: 直す前は「up went on with an unlinked repository」で失敗、直したあとは macOS で最後まで通った
+  remaining: |-
+    github.com 以外(GitLab・Bitbucket など)は判定していない
+    直した wrangler-compose で本物の Codemagic に登録する試しはしていない
+    コミットはまだしていない
+log:
+- at: 2026-10-30T23:00:48.358145+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: b55b9b3c-1386-40a1-85ca-0b1c760f373c
+  text: 担当を取って始めました
+- at: 2026-10-30T23:06:53.123301+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: b55b9b3c-1386-40a1-85ca-0b1c760f373c
+  text: 完了しました
+- at: 2026-10-30T23:24:43.776810+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: c240c9d2-51a2-4099-8c12-90de19b04fa8
+  text: '前提を直した: URL だけの POST /apps は、GitHub App が届くリポジトリでも必ず generic(Manually added)になる(本物で確かめた)。Codemagic の画面と同じく GitHub から読んだリポジトリの情報を repo として送れば github で登録できる。登録の前に GitHub を読み(非公開は GITHUB_TOKEN か git の資格)、同じリポジトリのアプリが既にあれば止まる(Codemagic は 2 度目に既存のアプリを返す)。generic なら消して止まる処理は残す'
+created_by:
+  kind: agent
+  name: claude-code
+  session: b55b9b3c-1386-40a1-85ca-0b1c760f373c
+created_at: 2026-10-30T23:00:44.745499+09:00
+updated_at: 2026-10-30T23:24:43.776810+09:00
+rev: 4

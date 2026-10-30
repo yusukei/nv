@@ -1,0 +1,45 @@
+id: I-3
+words: 今のままでは、GitHub App が無いときに壊れたアプリを黙って作ってしまいます。登録したあとにリポジトリの種類を確かめて止まるよう、wrangler-compose を直したほうがよいです
+said_at: 2026-10-30T23:00:38.351139+09:00
+via: conversation
+recorded_by:
+  kind: agent
+  name: claude-code
+  session: b55b9b3c-1386-40a1-85ca-0b1c760f373c
+priority: medium
+split:
+  state: done
+  session: 92bb0331-3cbc-42b2-bd2b-37ead10f03e5
+  cost_usd: 0.2488528
+  steps:
+  - 依頼を読み始めました
+  - 「GitHub App|repositoryType|repository_type|github_app」を探しました
+  - .tm/requests/I-3.yaml を読みました
+  - 「api\.codemagic\.io/apps|/apps\b」を探しました
+  - 「DES-022|REQ-021」を探しました
+  - crates/wrangler-compose/src/codemagic.rs を読みました
+  - .tm/tickets/T-6.yaml を読みました
+  - 依頼 I-3 のチケット T-6(GitHub App で結ばれていないリポジトリを登録したら止まる)がもう作られていて、作業中(doing)なので、新しくは作らない
+  - スレッドで答えました
+  - チケットに分け終えました
+updated_at: 2026-10-30T23:01:03.537764+09:00
+replies:
+- id: R-1
+  at: 2026-10-30T23:01:00.033169+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+    session: 92bb0331-3cbc-42b2-bd2b-37ead10f03e5
+  text: |-
+    この依頼はもうチケット T-6「GitHub App で結ばれていないリポジトリを Codemagic に登録したら止まる」になっていて、作業中です。中身は次のとおりで、ご依頼の範囲をすべて含んでいます。
+    - 登録したあとに GET /apps/{id} でリポジトリの種類(provider)を確かめる
+    - github.com の URL なのに種類が github でなければ、作ったアプリを消して止まる(CODEMAGIC_APP_ID も書かない)
+
+    同じチケットが二つにならないよう、新しいチケットは作っていません。今のコード(crates/wrangler-compose/src/codemagic.rs の登録の処理)は、登録が成功すると何も確かめずに CODEMAGIC_APP_ID を書き足しています。T-6 はまさにこの部分を直すものです。
+- id: R-2
+  at: 2026-10-30T23:01:03.528168+09:00
+  by:
+    kind: agent
+    name: 起票エージェント
+  text: チケットを 1 件に分けました。まず T-6（GitHub App で結ばれていないリポジトリを Codemagic に登録したら止まる）から始められます。
+rev: 14

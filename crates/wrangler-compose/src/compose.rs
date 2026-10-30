@@ -29,6 +29,9 @@ pub struct Compose {
     pub codemagic_token: Option<String>,
     pub codemagic_app_id: Option<String>,
     pub codemagic_app_id_from_env: bool,
+    /// GITHUB_TOKEN (environment, else `.env.<env>`), for reading a private
+    /// GitHub repository before registering it on Codemagic (DES-022).
+    pub github_token: Option<String>,
     /// The local S3-compatible API keys (REQ-009): random per project, kept
     /// in `.wrangler/compose/local/s3-keys.json`. None for other environments.
     pub local_s3: Option<S3Keys>,
@@ -639,8 +642,8 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     // (DES-022).
     let from_env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
     let from_file = |name: &str| file_vars.get(name).filter(|v| !v.is_empty()).cloned();
-    let (codemagic_token, codemagic_app_id, codemagic_app_id_from_env) = if env == "local" {
-        (None, None, false)
+    let (codemagic_token, codemagic_app_id, codemagic_app_id_from_env, github_token) = if env == "local" {
+        (None, None, false, None)
     } else {
         let env_id = from_env("CODEMAGIC_APP_ID");
         let from = env_id.is_some();
@@ -648,6 +651,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
             from_env("CODEMAGIC_API_TOKEN").or_else(|| from_file("CODEMAGIC_API_TOKEN")),
             env_id.or_else(|| from_file("CODEMAGIC_APP_ID")),
             from,
+            from_env("GITHUB_TOKEN").or_else(|| from_file("GITHUB_TOKEN")),
         )
     };
     let vars = Vars(file_vars);
@@ -700,6 +704,7 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     compose.codemagic_token = codemagic_token;
     compose.codemagic_app_id = codemagic_app_id;
     compose.codemagic_app_id_from_env = codemagic_app_id_from_env;
+    compose.github_token = github_token;
     if env == "local" {
         compose.local_s3 = Some(local_s3_keys(&root)?);
     }
@@ -1256,6 +1261,7 @@ impl Checker {
             codemagic_token: None,
             codemagic_app_id: None,
             codemagic_app_id_from_env: false,
+            github_token: None,
             local_s3: None,
             services,
         })

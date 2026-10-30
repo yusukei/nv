@@ -756,7 +756,7 @@ pub fn up(
     let cm = match (codemagic, cm_token) {
         (Some((_, c)), Some(t)) => {
             let cm = crate::codemagic::Cm::new(t, crate::codemagic::secret_values(c))?;
-            let now = crate::codemagic::read(&cm, &ctx.compose)?;
+            let now = crate::codemagic::read(&cm, &ctx.compose, c)?;
             let d = crate::codemagic::diff(c, &now.groups, update_secret);
             Some((cm, now, d))
         }

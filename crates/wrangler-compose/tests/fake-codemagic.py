@@ -4,7 +4,14 @@ Codemagic's addresses are served here: the apps API at / and v3 at /api/v3
 (CODEMAGIC_API_BASE_URL points the tool at both). It imitates what was
 measured on the real Codemagic (2026-10-30): a Secure value comes back as
 null, and an app deleted before its groups leaves them readable but
-impossible to delete (500). Lists come in pages of 2, so paging is
+impossible to delete (500); a GitHub repository the GitHub App does not
+reach (here: anything outside github.com/example/) is still registered, as
+provider "generic". A GitHub repository sent as Codemagic's screen sends
+it ("repo") is linked when the GitHub App reaches it (github.com/example/),
+and a second one of the same repository hands back the first app. GitHub's
+API is served at /github (GITHUB_API_BASE_URL): the example/ and elsewhere/
+repositories, of which example/private-shop needs GH_TOKEN. The token
+cm-readonly may only read. Lists come in pages of 2, so paging is
 exercised. It is not a model of Codemagic. Logs every request to stderr;
 GET /__state gives the whole state (Secure values too) for the test to
 check."""
@@ -12,6 +19,7 @@ import json, re, sys, threading, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = "cm-token"
+GH_TOKEN = "gh-token"
 PAGE = 2
 S = {"apps": {}, "groups": {}}  # app id -> {repo, name}; group id -> {app, name, vars[]}
 LOCK = threading.Lock()
@@ -66,10 +74,15 @@ def route(method, path, raw, headers):
         return 200, {}, {}
     if p == "/__state":
         return 200, S, {}
+    m = re.fullmatch(r"/github/repos/([^/]+)/([^/]+)", p)
+    if m:
+        return github(m.group(1), m.group(2), headers.get("authorization")) + ({},)
     token = headers.get("x-auth-token")
+    if token == "cm-readonly" and method != "GET":
+        return 403, {"message": "You do not have permission to perform this action"}, {}
     if token == "cm-ratelimited":
         return 429, {"message": "Too many requests"}, {"ratelimit-reset": "42"}
-    if token != TOKEN:
+    if token not in (TOKEN, "cm-readonly"):
         return 401, {"message": "Authentication credentials were not provided or are invalid"}, {}
     try:
         j = json.loads(raw) if raw else {}
@@ -79,15 +92,53 @@ def route(method, path, raw, headers):
     return r[0], r[1], {}
 
 
+def github(owner, name, auth):
+    if owner not in ("example", "elsewhere"):
+        return 404, {"message": "Not Found"}
+    if auth is not None and auth != f"Bearer {GH_TOKEN}":
+        return 401, {"message": "Bad credentials"}
+    if name == "private-shop" and auth is None:
+        return 404, {"message": "Not Found"}
+    gid = int(uuid.uuid5(uuid.NAMESPACE_URL, f"{owner}/{name}").int % 10**9)
+    return 200, {"id": gid, "name": name, "full_name": f"{owner}/{name}",
+                 "owner": {"login": owner}, "private": name == "private-shop",
+                 "html_url": f"https://github.com/{owner}/{name}",
+                 "clone_url": f"https://github.com/{owner}/{name}.git",
+                 "hooks_url": f"https://api.github.com/repos/{owner}/{name}/hooks",
+                 "language": "Rust", "default_branch": "main"}
+
+
+def app_json(i, app):
+    return {"_id": i, "appName": app["name"],
+            "repository": {"id": app["gid"], "htmlUrl": app["repo"], "provider": app["provider"]}}
+
+
 def respond(method, p, q, j):
     # The apps API.
+    if p == "/apps" and method == "GET":
+        return 200, {"applications": [app_json(i, a) for i, a in S["apps"].items()]}
+    if p == "/apps" and method == "POST" and "repo" in j:
+        r = j["repo"]
+        missing = [k for k in ("name", "gitUrl", "language", "hooksUrl") if not r.get(k)]
+        if missing:
+            return 400, {"error": "Invalid repository: missing required fields " + ", ".join(missing)}
+        for i, a in S["apps"].items():
+            if a["provider"] == "github" and a["gid"] == r.get("id"):
+                return 200, {"_id": i, "appName": a["name"]}
+        i = new_id()
+        linked = r.get("provider") == "github" and (r.get("owner") or {}).get("name") == "example"
+        S["apps"][i] = {"repo": r.get("htmlUrl"), "name": r["name"], "gid": r.get("id"),
+                        "provider": "github" if linked else "generic"}
+        return 200, {"_id": i, "appName": r["name"]}
     if p == "/apps" and method == "POST":
         repo = j.get("repositoryUrl") or ""
         if not repo:
             return 400, {"message": "repositoryUrl is required"}
         i = new_id()
         name = re.sub(r"\.git$", "", repo.rstrip("/").rsplit("/", 1)[-1])
-        S["apps"][i] = {"repo": repo, "name": name}
+        linked = repo.startswith("https://github.com/example/")
+        S["apps"][i] = {"repo": repo, "name": name, "gid": None,
+                        "provider": "github" if linked else "generic"}
         return 200, {"_id": i, "appName": name}
     m = re.fullmatch(r"/apps/([^/]+)", p)
     if m:
@@ -95,8 +146,7 @@ def respond(method, p, q, j):
         if app is None:
             return 404, {"message": "Application not found"}
         if method == "GET":
-            return 200, {"application": {"_id": m.group(1), "appName": app["name"],
-                                         "repository": {"htmlUrl": app["repo"]}}}
+            return 200, {"application": app_json(m.group(1), app)}
         if method == "DELETE":
             # The groups stay behind (see the docstring).
             del S["apps"][m.group(1)]

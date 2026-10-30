@@ -39,7 +39,11 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
   value in `.env.<env>`, run `up --update-secret`. The same goes for Codemagic's Secure values.
 - A `type: codemagic` service registers the environment's Codemagic app on the first remote `up` (with the
   retype) and writes `CODEMAGIC_APP_ID` into `.env.<env>`; `down` deletes the app. It needs
-  `CODEMAGIC_API_TOKEN` from the user; never print it. Nothing happens locally, and its variables
+  `CODEMAGIC_API_TOKEN` from the user; never print it. If Codemagic's GitHub App does not reach the
+  repository, `up` deletes the app it just registered and stops: the user installs the App, then `up` again.
+  A github.com repository is read from GitHub first (a private one with `GITHUB_TOKEN` or git's credential;
+  never print it). Codemagic holds one app per repository: if one exists, `up` stops and names its id; ask the
+  user before writing it to `CODEMAGIC_APP_ID`, and never delete an app you did not create in this session. Nothing happens locally, and its variables
   need no value in `.env.local`.
 - `${WC_R2_<SERVICE>_S3}` in a Worker's `environment` is the bucket's S3-compatible endpoint, filled in by
   the tool for local and remote; do not write endpoints per environment by hand.

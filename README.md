@@ -97,7 +97,7 @@ wrangler-compose --env staging down
 
 リモートのシークレットは、無いときだけ入れる。`.env.<環境名>` で値を変えたときは `up --update-secret` で入れ直す(値を読み返せないため)。
 
-`type: codemagic` のサービスを書くと、リモートの `up` がその環境の Codemagic のアプリを登録し(ID は `.env.<環境名>` の `CODEMAGIC_APP_ID` に書き足す)、`groups` に書いた値を変数グループに入れる。書いていないグループ・変数は消し、`down` でアプリごと消す。要るのは Codemagic と GitHub をつなぐことと、`CODEMAGIC_API_TOKEN`(環境変数か `.env.<環境名>`)を 1 度だけ。書き方は[要求仕様の REQ-021](docs/wrangler-compose/requirements/write.html#req-021)。手元(`--env local`)では Codemagic に触れず、Codemagic のサービスに書いた変数は `.env.local` に無くてもよい。偽の API での試験だけで、本物の Codemagic ではまだ確かめていない。
+`type: codemagic` のサービスを書くと、リモートの `up` がその環境の Codemagic のアプリを登録し(ID は `.env.<環境名>` の `CODEMAGIC_APP_ID` に書き足す)、`groups` に書いた値を変数グループに入れる。書いていないグループ・変数は消し、`down` でアプリごと消す。GitHub のリポジトリは、`repository` の URL から持ち主と名前を読んで GitHub の API でリポジトリを読み、Codemagic の画面の「GitHub から足す」と同じ形で登録する(非公開のリポジトリは `GITHUB_TOKEN`(環境変数か `.env.<環境名>`)か git の資格で読む)。Codemagic は 1 つのリポジトリに 1 つしかアプリを持たないので、既にあれば登録せずに止まり、その ID を示す。要るのは Codemagic と GitHub をつなぐこと(Codemagic の GitHub App がリポジトリに届いていないと、`up` は登録したアプリを消して止まる)と、`CODEMAGIC_API_TOKEN`(環境変数か `.env.<環境名>`)を 1 度だけ。書き方は[要求仕様の REQ-021](docs/wrangler-compose/requirements/write.html#req-021)。手元(`--env local`)では Codemagic に触れず、Codemagic のサービスに書いた変数は `.env.local` に無くてもよい。偽の API での試験だけで、本物の Codemagic ではまだ確かめていない。
 
 リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/detail/local-support.html](docs/wrangler-compose/detail/local-support.html) にある。
 
