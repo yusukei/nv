@@ -3,5 +3,5 @@ name: wrangler-compose
 format: 1
 counters:
   request: 2
-  ticket: 3
+  ticket: 4
   question: 12

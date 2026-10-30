@@ -24,7 +24,7 @@ FAKE=$!
 trap 'kill $FAKE 2>/dev/null || true' EXIT
 for _ in $(seq 1 50); do curl -s "http://127.0.0.1:$PORT/" >/dev/null && break; sleep 0.1; done
 export CLOUDFLARE_API_BASE_URL="http://127.0.0.1:$PORT/client/v4" CLOUDFLARE_API_TOKEN=fake CLOUDFLARE_ACCOUNT_ID=acc
-export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+export NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost NV_LANG=en # the checks read the English messages
 
 wc() { "$BIN/wrangler-compose" "$@" 2>&1; }
 # Answer the retype through a terminal, as a person would.
