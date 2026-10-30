@@ -4,6 +4,7 @@
 mod i18n;
 mod build;
 mod cf;
+mod codemagic;
 mod compose;
 mod configs;
 mod containers;
@@ -57,6 +58,9 @@ enum Cmd {
         /// Also delete this environment's D1, KV, R2 and queues no longer in the compose file
         #[arg(long)]
         purge: bool,
+        /// Set secrets that already exist again (remote; Workers and Codemagic's Secure values)
+        #[arg(long)]
+        update_secret: bool,
         /// Services to start, with what they depend on (default: all)
         services: Vec<String>,
     },
@@ -137,6 +141,11 @@ const JA_ARGS: &[(&str, &str, &str)] = &[
         "up",
         "purge",
         "compose ファイルから消えた、この環境の D1・KV・R2・Queue も消す",
+    ),
+    (
+        "up",
+        "update_secret",
+        "既にあるシークレットも入れ直す(リモート。Worker と Codemagic の Secure の値)",
     ),
     (
         "up",
@@ -254,11 +263,14 @@ fn dispatch(cli: Cli) -> Result<()> {
     // `local` reaches either way (DES-014).
     match (cli.command, ctx.local) {
         (Cmd::Build { services }, _) => build::build(&ctx, &services).map(|_| ()),
+        // --update-secret does nothing locally: .env.local's values go in
+        // every time (DES-023).
         (
             Cmd::Up {
                 build,
                 purge,
                 services,
+                ..
             },
             true,
         ) => {
@@ -277,10 +289,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             Cmd::Up {
                 build,
                 purge,
+                update_secret,
                 services,
             },
             false,
-        ) => remote::up(&ctx, build, &services, purge),
+        ) => remote::up(&ctx, build, &services, purge, update_secret),
         (Cmd::Down { purge, services }, true) => local::down(&ctx, purge, &services),
         (Cmd::Down { purge, services }, false) => remote::down(&ctx, purge, &services),
         (Cmd::Ps, true) => local::ps(&ctx),

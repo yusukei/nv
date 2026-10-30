@@ -124,6 +124,11 @@ def route(method, path, raw, headers):
         j = json.loads(raw) if raw else None
     except Exception:
         j = None
+    # For the test only: the value a Worker's secret holds now.
+    m = re.fullmatch(r"/__secret/([^/]+)/([^/]+)", p)
+    if m:
+        sc = S["scripts"].get(m.group(1)) or {}
+        return ok((sc.get("secrets") or {}).get(m.group(2)))
     if p == "/client/v4/accounts" or p == "/accounts":
         return ok([{"id": ACC, "name": "Test"}], {"result_info": {"page": 1, "total_pages": 1}})
     if p in ("/client/v4/user", "/user"):

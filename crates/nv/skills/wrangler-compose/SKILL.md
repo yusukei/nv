@@ -7,7 +7,7 @@ description: Run, inspect, stop, back up and restore Cloudflare Workers projects
 
 Projects with a `wrangler-compose.yaml` are run with `wrangler-compose`, not with `wrangler dev`,
 `wrangler deploy` or `wrangler d1 migrations apply` directly. The file lists services like docker compose
-(`type: worker`, `d1`, `r2`, `kv`, `queue`); differences between environments come only from `${VAR}`
+(`type: worker`, `d1`, `r2`, `kv`, `queue`, `codemagic`); differences between environments come only from `${VAR}`
 values in the environment or `.env.<env>`. `--env local` runs everything on this machine; any other name is a
 remote environment on Cloudflare (needs `nv run wrangler login` once).
 
@@ -35,6 +35,11 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
 - A Worker's non-secret values go in its `environment` and its secrets in its `secrets`, both as in docker
   compose (`NAME: value` or a list). A secret's value must be `${VAR}`; values come from `.env.<env>`.
   Never print, commit or copy secret values.
+- Remotely, a secret that already exists is not set again (its value cannot be read back): after changing a
+  value in `.env.<env>`, run `up --update-secret`. The same goes for Codemagic's Secure values.
+- A `type: codemagic` service registers the environment's Codemagic app on the first remote `up` (with the
+  retype) and writes `CODEMAGIC_APP_ID` into `.env.<env>`; `down` deletes the app. It needs
+  `CODEMAGIC_API_TOKEN` from the user; never print it. Nothing happens locally.
 - `${WC_R2_<SERVICE>_S3}` in a Worker's `environment` is the bucket's S3-compatible endpoint, filled in by
   the tool for local and remote; do not write endpoints per environment by hand.
 - `${WC_R2_<SERVICE>_S3_KEY}` / `${WC_R2_<SERVICE>_S3_SECRET}` in a Worker's `secrets` are the local S3 keys

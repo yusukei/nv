@@ -22,6 +22,13 @@ pub struct Compose {
     /// remote environment works only on that account (REQ-006).
     pub env_file: PathBuf,
     pub account_id: Option<String>,
+    /// Codemagic (REQ-021), for remote environments only: the API token and
+    /// the environment's app id, each from the environment, else
+    /// `.env.<env>`. `app_id_from_env` says the id came from the
+    /// environment, so `.env.<env>` is not rewritten (DES-022).
+    pub codemagic_token: Option<String>,
+    pub codemagic_app_id: Option<String>,
+    pub codemagic_app_id_from_env: bool,
     /// The local S3-compatible API keys (REQ-009): random per project, kept
     /// in `.wrangler/compose/local/s3-keys.json`. None for other environments.
     pub local_s3: Option<S3Keys>,
@@ -91,6 +98,7 @@ pub enum Kind {
     R2(Vec<Resource<Bucket>>),
     Kv(Vec<Resource<()>>),
     Queue(Vec<Resource<()>>),
+    Codemagic(Box<Codemagic>),
 }
 
 impl Service {
@@ -103,6 +111,7 @@ impl Service {
             Kind::R2(l) => l.first().and_then(|r| r.name.as_deref()),
             Kind::Kv(l) => l.first().and_then(|r| r.name.as_deref()),
             Kind::Queue(l) => l.first().and_then(|r| r.name.as_deref()),
+            Kind::Codemagic(_) => None,
         };
         explicit.unwrap_or(&self.name)
     }
@@ -116,6 +125,7 @@ impl Kind {
             Kind::R2(_) => "r2",
             Kind::Kv(_) => "kv",
             Kind::Queue(_) => "queue",
+            Kind::Codemagic(_) => "codemagic",
         }
     }
 }
@@ -213,6 +223,24 @@ pub struct Container {
     /// A named type (`lite`…) or `{ vcpu, memory_mib, disk_mb }`.
     pub instance_type: Option<Value>,
     pub max_instances: Option<u64>,
+}
+
+/// A Codemagic app and its variable groups (REQ-021): nothing on
+/// Cloudflare, and nothing locally.
+#[derive(Debug, Default)]
+pub struct Codemagic {
+    pub repository: String,
+    /// In the compose file's order.
+    pub groups: Vec<VarGroup>,
+}
+
+/// One variable group: `environment` values go in as they are, `secrets`
+/// as Secure (Codemagic never gives those back).
+#[derive(Debug, Default)]
+pub struct VarGroup {
+    pub name: String,
+    pub environment: BTreeMap<String, String>,
+    pub secrets: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -607,6 +635,21 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
         .get("CLOUDFLARE_ACCOUNT_ID")
         .filter(|v| !v.is_empty())
         .cloned();
+    // Codemagic is never touched locally, so its token is not read there
+    // (DES-022).
+    let from_env = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+    let from_file = |name: &str| file_vars.get(name).filter(|v| !v.is_empty()).cloned();
+    let (codemagic_token, codemagic_app_id, codemagic_app_id_from_env) = if env == "local" {
+        (None, None, false)
+    } else {
+        let env_id = from_env("CODEMAGIC_APP_ID");
+        let from = env_id.is_some();
+        (
+            from_env("CODEMAGIC_API_TOKEN").or_else(|| from_file("CODEMAGIC_API_TOKEN")),
+            env_id.or_else(|| from_file("CODEMAGIC_APP_ID")),
+            from,
+        )
+    };
     let vars = Vars(file_vars);
     let raw = docker_forms(strip_extensions(raw), file)?;
     let mut missing = BTreeSet::new();
@@ -654,6 +697,9 @@ pub fn load(file: &Path, env: &str) -> Result<Compose> {
     let mut compose = compose.expect("no errors means a compose file");
     compose.env_file = env_file;
     compose.account_id = account_id;
+    compose.codemagic_token = codemagic_token;
+    compose.codemagic_app_id = codemagic_app_id;
+    compose.codemagic_app_id_from_env = codemagic_app_id_from_env;
     if env == "local" {
         compose.local_s3 = Some(local_s3_keys(&root)?);
     }
@@ -747,53 +793,13 @@ fn docker_forms(mut v: Value, file: &Path) -> Result<Value> {
                     "services.{sname}.vars: vars is now environment (as in docker compose)"
                 ));
             }
-            for key in ["environment", "secrets"] {
-                let at = format!("services.{sname}.{key}");
-                match o.get_mut(key) {
-                    Some(Value::Array(items)) => {
-                        let mut m = Map::new();
-                        for item in items.iter() {
-                            let Value::String(item) = item else {
-                                errors.push(crate::tr!(
-                                    "{at}: 並びには NAME か NAME=値 を書いてください",
-                                    "{at}: list items are NAME or NAME=value"
-                                ));
-                                continue;
-                            };
-                            match item.split_once('=') {
-                                Some((k, val)) if key == "environment" => {
-                                    m.insert(k.to_string(), Value::String(val.to_string()));
-                                }
-                                Some(_) => errors.push(crate::tr!(
-                                    "{at}: シークレットの値は並びに書けません。名前だけを並べると同じ名前の変数から取ります",
-                                    "{at}: a secret's value cannot be written in the list; a bare name reads the variable of the same name"
-                                )),
-                                None => {
-                                    m.insert(item.clone(), Value::String(format!("${{{item}}}")));
-                                }
-                            }
-                        }
-                        o.insert(key.to_string(), Value::Object(m));
+            env_forms(o, &format!("services.{sname}"), &mut errors);
+            // A codemagic service's groups take the same forms (REQ-021).
+            if let Some(Value::Object(groups)) = o.get_mut("groups") {
+                for (g, gv) in groups.iter_mut() {
+                    if let Value::Object(go) = gv {
+                        env_forms(go, &format!("services.{sname}.groups.{g}"), &mut errors);
                     }
-                    // `NAME:` with no value is an empty value (REQ-002).
-                    Some(Value::Object(m)) if key == "environment" => {
-                        for val in m.values_mut() {
-                            if val.is_null() {
-                                *val = Value::String(String::new());
-                            }
-                        }
-                    }
-                    Some(Value::Object(m)) if key == "secrets" => {
-                        for (name, val) in m.iter() {
-                            if !val.as_str().is_some_and(reads_variable) {
-                                errors.push(crate::tr!(
-                                    "{at}.{name}: シークレットの値は ${{変数}} で環境変数か .env.<環境> から取ってください(compose ファイルに値を書かない)",
-                                    "{at}.{name}: take a secret's value from a variable with ${{VAR}} (the environment or .env.<env>), never the compose file"
-                                ));
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
         }
@@ -814,6 +820,60 @@ fn docker_forms(mut v: Value, file: &Path) -> Result<Value> {
         );
     }
     Ok(v)
+}
+
+/// `environment` and `secrets` of one mapping (a service, or a codemagic
+/// group) in the mapping form; `base` is where it is, for messages.
+fn env_forms(o: &mut Map<String, Value>, base: &str, errors: &mut Vec<String>) {
+    for key in ["environment", "secrets"] {
+        let at = format!("{base}.{key}");
+        match o.get_mut(key) {
+            Some(Value::Array(items)) => {
+                let mut m = Map::new();
+                for item in items.iter() {
+                    let Value::String(item) = item else {
+                        errors.push(crate::tr!(
+                            "{at}: 並びには NAME か NAME=値 を書いてください",
+                            "{at}: list items are NAME or NAME=value"
+                        ));
+                        continue;
+                    };
+                    match item.split_once('=') {
+                        Some((k, val)) if key == "environment" => {
+                            m.insert(k.to_string(), Value::String(val.to_string()));
+                        }
+                        Some(_) => errors.push(crate::tr!(
+                            "{at}: シークレットの値は並びに書けません。名前だけを並べると同じ名前の変数から取ります",
+                            "{at}: a secret's value cannot be written in the list; a bare name reads the variable of the same name"
+                        )),
+                        None => {
+                            m.insert(item.clone(), Value::String(format!("${{{item}}}")));
+                        }
+                    }
+                }
+                o.insert(key.to_string(), Value::Object(m));
+            }
+            // `NAME:` with no value is an empty value (REQ-002).
+            Some(Value::Object(m)) if key == "environment" => {
+                for val in m.values_mut() {
+                    if val.is_null() {
+                        *val = Value::String(String::new());
+                    }
+                }
+            }
+            Some(Value::Object(m)) if key == "secrets" => {
+                for (name, val) in m.iter() {
+                    if !val.as_str().is_some_and(reads_variable) {
+                        errors.push(crate::tr!(
+                            "{at}.{name}: シークレットの値は ${{変数}} で環境変数か .env.<環境> から取ってください(compose ファイルに値を書かない)",
+                            "{at}.{name}: take a secret's value from a variable with ${{VAR}} (the environment or .env.<env>), never the compose file"
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Whether a value as written refers to a variable (`$VAR` or `${…}`; `$$`
@@ -908,6 +968,8 @@ const BUCKET_KEYS: &[&str] = &[
     "jurisdiction",
 ];
 const NAME_ONLY: &[&str] = &["name"];
+const CODEMAGIC_KEYS: &[&str] = &["type", "repository", "groups"];
+const GROUP_KEYS: &[&str] = &["environment", "secrets"];
 
 impl Checker {
     fn err(&mut self, at: &str, msg: String) {
@@ -1022,8 +1084,8 @@ impl Checker {
                 self.err(
                     &format!("{at}.type"),
                     crate::tr!(
-                        "型(worker・d1・r2・kv・queue)を書いてください",
-                        "set a type (worker, d1, r2, kv or queue)"
+                        "型(worker・d1・r2・kv・queue・codemagic)を書いてください",
+                        "set a type (worker, d1, r2, kv, queue or codemagic)"
                     ),
                 );
                 continue;
@@ -1082,12 +1144,13 @@ impl Checker {
                     &[],
                     |_, _, _| (),
                 ))),
+                "codemagic" => Some(Kind::Codemagic(Box::new(self.codemagic(&at, o)))),
                 other => {
                     self.err(
                         &format!("{at}.type"),
                         crate::tr!(
-                            "知らない型「{other}」です(worker・d1・r2・kv・queue のどれか)",
-                            "unknown type \"{other}\" (use worker, d1, r2, kv or queue)"
+                            "知らない型「{other}」です(worker・d1・r2・kv・queue・codemagic のどれか)",
+                            "unknown type \"{other}\" (use worker, d1, r2, kv, queue or codemagic)"
                         ),
                     );
                     None
@@ -1150,6 +1213,9 @@ impl Checker {
             context,
             env_file: PathBuf::new(),
             account_id: None,
+            codemagic_token: None,
+            codemagic_app_id: None,
+            codemagic_app_id_from_env: false,
             local_s3: None,
             services,
         })
@@ -1185,6 +1251,23 @@ impl Checker {
                     );
                 }
             }
+        }
+        // One Codemagic app per environment, kept in one CODEMAGIC_APP_ID
+        // (REQ-021).
+        let codemagic: Vec<&str> = services
+            .iter()
+            .filter(|s| matches!(s.kind, Kind::Codemagic(_)))
+            .map(|s| s.name.as_str())
+            .collect();
+        if codemagic.len() > 1 {
+            self.err(
+                &format!("services.{}", codemagic[1]),
+                crate::tr!(
+                    "codemagic のサービスは 1 つまでです(1 つの環境に Codemagic のアプリ 1 つ。{} と重なります)",
+                    "only one codemagic service is allowed (one Codemagic app per environment; {} is one already)",
+                    codemagic[0]
+                ),
+            );
         }
         let mut consumers: BTreeMap<String, String> = BTreeMap::new();
         for s in services {
@@ -1293,6 +1376,127 @@ impl Checker {
             }
         }
         out
+    }
+
+    /// A codemagic service (REQ-021): the repository to register and the
+    /// variable groups, each with `environment` and `secrets` already in
+    /// the mapping form (`docker_forms`).
+    fn codemagic(&mut self, at: &str, o: &Map<String, Value>) -> Codemagic {
+        self.unknown_keys(at, o, CODEMAGIC_KEYS);
+        let mut c = Codemagic::default();
+        match o.get("repository") {
+            Some(Value::String(r)) if !r.trim().is_empty() => c.repository = r.trim().to_string(),
+            Some(Value::String(_)) | None => self.err(
+                &format!("{at}.repository"),
+                crate::tr!(
+                    "Codemagic に登録するリポジトリの URL を書いてください",
+                    "set the URL of the repository to register on Codemagic"
+                ),
+            ),
+            Some(_) => self.err(
+                &format!("{at}.repository"),
+                crate::tr!("文字列にしてください", "must be a string"),
+            ),
+        }
+        let groups = match o.get("groups") {
+            None => Map::new(),
+            Some(Value::Object(m)) => m.clone(),
+            Some(_) => {
+                self.err(
+                    &format!("{at}.groups"),
+                    crate::tr!(
+                        "グループの名前 → environment・secrets の対応表にしてください",
+                        "must be a mapping of group name → environment and secrets"
+                    ),
+                );
+                Map::new()
+            }
+        };
+        for (name, g) in &groups {
+            let gat = format!("{at}.groups.{name}");
+            // Codemagic's own rule for group names.
+            if name.is_empty() || name.contains('.') || name.contains('$') {
+                self.err(
+                    &gat,
+                    crate::tr!(
+                        "グループの名前に . と $ は使えません(Codemagic の決まり)",
+                        "group names cannot contain . or $ (Codemagic's rule)"
+                    ),
+                );
+            }
+            let mut group = VarGroup {
+                name: name.clone(),
+                ..VarGroup::default()
+            };
+            let g = match g {
+                Value::Object(m) => m.clone(),
+                // `store:` with nothing under it: an empty group.
+                Value::Null => Map::new(),
+                _ => {
+                    self.err(
+                        &gat,
+                        crate::tr!(
+                            "environment・secrets の対応表にしてください",
+                            "must be a mapping of environment and secrets"
+                        ),
+                    );
+                    continue;
+                }
+            };
+            self.unknown_keys(&gat, &g, GROUP_KEYS);
+            for (key, out) in [
+                ("environment", &mut group.environment),
+                ("secrets", &mut group.secrets),
+            ] {
+                match g.get(key) {
+                    None => {}
+                    Some(Value::Object(m)) => {
+                        for (var, v) in m {
+                            match v {
+                                Value::String(t) => {
+                                    out.insert(var.clone(), t.clone());
+                                }
+                                Value::Number(_) | Value::Bool(_) if key == "environment" => {
+                                    out.insert(var.clone(), v.to_string());
+                                }
+                                _ => self.err(
+                                    &format!("{gat}.{key}.{var}"),
+                                    crate::tr!("文字列にしてください", "must be a string"),
+                                ),
+                            }
+                        }
+                    }
+                    Some(_) => self.err(
+                        &format!("{gat}.{key}"),
+                        if key == "environment" {
+                            crate::tr!(
+                                "「名前: 値」の対応表か、NAME=値 の並びにしてください",
+                                "must be a mapping of NAME: value or a list of NAME=value"
+                            )
+                        } else {
+                            crate::tr!(
+                                "「名前: ${{変数}}」の対応表か、名前の並びにしてください",
+                                "must be a mapping of NAME: ${{VAR}} or a list of names"
+                            )
+                        },
+                    ),
+                }
+            }
+            // One variable is either plain or Secure.
+            for var in group.environment.keys() {
+                if group.secrets.contains_key(var) {
+                    self.err(
+                        &format!("{gat}.secrets.{var}"),
+                        crate::tr!(
+                            "「{var}」は environment にもあります。1 つのグループに同じ名前の変数は 1 つです",
+                            "\"{var}\" is also in environment; a group has one variable of a name"
+                        ),
+                    );
+                }
+            }
+            c.groups.push(group);
+        }
+        c
     }
 
     fn d1(&mut self, at: &str, m: &Map<String, Value>, root: &Path) -> D1 {
@@ -2204,6 +2408,7 @@ pub fn resource_keys(s: &Service) -> Vec<String> {
         Kind::R2(r) => r.iter().map(|x| x.key.clone()).collect(),
         Kind::Kv(r) => r.iter().map(|x| x.key.clone()).collect(),
         Kind::Queue(r) => r.iter().map(|x| x.key.clone()).collect(),
+        Kind::Codemagic(_) => Vec::new(),
     }
 }
 
@@ -2231,6 +2436,12 @@ fn resolve_target(t: &str, types: &Types) -> std::result::Result<Target, String>
             "there is no service \"{svc}\""
         ));
     };
+    if ty == "codemagic" {
+        return Err(crate::tr!(
+            "「{svc}」は codemagic のサービスなので、Worker からはつなげません",
+            "\"{svc}\" is a codemagic service; Workers cannot bind to it"
+        ));
+    }
     if ty == "worker" {
         return Ok(match sub {
             None => Target::Worker(svc.to_string()),
@@ -3184,5 +3395,74 @@ services:
                 .to_string();
             assert!(err.contains(want), "{want}: {err}");
         }
+    }
+
+    const CODEMAGIC: &str = "  mobile:\n    type: codemagic\n    repository: https://github.com/example/shop\n    groups:\n      store:\n        environment:\n          STORE_DOMAIN: ${WEB_DOMAIN}\n          EMPTY:\n        secrets: [STORE_APP_KEY]\n      firebase:\n        environment: [PROJECT=shop-dev]\n        secrets:\n          FB_KEY: ${FIREBASE_KEY}\n";
+
+    #[test]
+    fn a_codemagic_service_is_read_with_both_forms() {
+        let yaml = format!("{ONE_WORKER}{CODEMAGIC}");
+        let (_d, c) = project(
+            &yaml,
+            Some("WEB_DOMAIN=shop.example\nSTORE_APP_KEY=k1\nFIREBASE_KEY=f1\n"),
+        );
+        let c = c.unwrap();
+        let Kind::Codemagic(m) = &c.service("mobile").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(m.repository, "https://github.com/example/shop");
+        let names: Vec<&str> = m.groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["store", "firebase"]);
+        assert_eq!(m.groups[0].environment["STORE_DOMAIN"], "shop.example");
+        assert_eq!(m.groups[0].environment["EMPTY"], "");
+        assert_eq!(m.groups[0].secrets["STORE_APP_KEY"], "k1");
+        assert_eq!(m.groups[1].environment["PROJECT"], "shop-dev");
+        assert_eq!(m.groups[1].secrets["FB_KEY"], "f1");
+        // Nothing of it is a resource on Cloudflare.
+        assert!(resource_keys(c.service("mobile").unwrap()).is_empty());
+        // The token is never read locally.
+        assert_eq!(c.codemagic_token, None);
+    }
+
+    #[test]
+    fn codemagic_mistakes_stop_with_where_and_why() {
+        let env = Some("WEB_DOMAIN=d\nSTORE_APP_KEY=k\nFIREBASE_KEY=f\n");
+        for (from, to, want) in [
+            ("    repository: https://github.com/example/shop\n", "", "mobile.repository"),
+            ("    groups:\n", "    branch: main\n    groups:\n", "mobile.branch"),
+            ("        secrets: [STORE_APP_KEY]\n", "        secrets: { STORE_APP_KEY: raw-1 }\n", "mobile.groups.store.secrets.STORE_APP_KEY"),
+            ("        secrets: [STORE_APP_KEY]\n", "        secrets: [STORE_APP_KEY=raw-1]\n", "mobile.groups.store.secrets"),
+            ("      store:\n", "      st.ore:\n", "mobile.groups.st.ore"),
+            ("        secrets: [STORE_APP_KEY]\n", "        secrets: [STORE_APP_KEY]\n        vars: {}\n", "mobile.groups.store.vars"),
+            ("        secrets: [STORE_APP_KEY]\n", "        secrets: [STORE_DOMAIN]\n", "mobile.groups.store.secrets.STORE_DOMAIN"),
+            ("    type: codemagic\n", "    type: codemagic\n    ports: [\"1:1\"]\n", "mobile.ports"),
+        ] {
+            let yaml = format!("{ONE_WORKER}{}", CODEMAGIC.replace(from, to));
+            assert_ne!(yaml, format!("{ONE_WORKER}{CODEMAGIC}"), "{want}");
+            let err = project(&yaml, env.map(|e| format!("{e}STORE_DOMAIN=x\n")).as_deref())
+                .1
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+            assert!(!err.contains("raw-1"), "the secret leaked: {err}");
+        }
+        // One app per environment, so one codemagic service.
+        let two = format!("{ONE_WORKER}{CODEMAGIC}{}", CODEMAGIC.replace("  mobile:", "  mobile2:"));
+        let err = project(&two, env).1.unwrap_err().to_string();
+        assert!(err.contains("services.mobile2") && err.contains("codemagic"), "{err}");
+        // A Worker cannot bind to it.
+        let bound = format!(
+            "{}    bindings:\n      M: mobile\n{CODEMAGIC}",
+            ONE_WORKER
+        );
+        let err = project(&bound, env).1.unwrap_err().to_string();
+        assert!(err.contains("services.web.bindings.M"), "{err}");
+        // Tool variables belong to Workers only.
+        let tool = format!(
+            "{ONE_WORKER}{}",
+            CODEMAGIC.replace("${WEB_DOMAIN}", "${WC_R2_FILES_S3}")
+        );
+        let err = project(&tool, env).1.unwrap_err().to_string();
+        assert!(err.contains("services.mobile.groups.store.environment.STORE_DOMAIN"), "{err}");
     }
 }

@@ -94,6 +94,8 @@ pub fn names(c: &Compose, env: &str) -> Result<Names> {
                     resources.push(res("queue", s, &r.key, &r.name, &prefix, None, None));
                 }
             }
+            // Nothing on Cloudflare (REQ-021).
+            Kind::Codemagic(_) => {}
         }
     }
     for r in &resources {
@@ -578,7 +580,7 @@ fn hash_of(parts: &[&[u8]]) -> String {
 
 /// Says what happens; in a dry run only says it (DES-015: the same steps
 /// either way, so a dry run stops where the real one would).
-struct Act {
+pub(crate) struct Act {
     dry: bool,
     /// Collects what would be done instead of saying it (the plan).
     sink: Option<std::cell::RefCell<Vec<String>>>,
@@ -604,7 +606,7 @@ impl Act {
             .unwrap_or_default()
     }
 
-    fn run(&self, what: String, f: impl FnOnce() -> Result<()>) -> Result<()> {
+    pub(crate) fn run(&self, what: String, f: impl FnOnce() -> Result<()>) -> Result<()> {
         if let Some(sink) = &self.sink {
             sink.borrow_mut().push(what);
             Ok(())
@@ -686,8 +688,24 @@ fn run_wrangler(mut cmd: std::process::Command, what: String) -> Result<()> {
 
 // ---------------------------------------------------------------- up
 
-pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> {
+pub fn up(
+    ctx: &Ctx,
+    rebuild: bool,
+    only: &[String],
+    purge: bool,
+    update_secret: bool,
+) -> Result<()> {
     let services = ctx.compose.closure(only)?;
+    // The codemagic service: its token is checked before anything on
+    // Cloudflare or Codemagic is touched (DES-022).
+    let codemagic = services.iter().find_map(|s| match &s.kind {
+        Kind::Codemagic(c) => Some((s.name.as_str(), &**c)),
+        _ => None,
+    });
+    let cm_token = match codemagic {
+        Some(_) => Some(crate::codemagic::token(&ctx.compose)?),
+        None => None,
+    };
     let has_containers = services
         .iter()
         .any(|s| matches!(&s.kind, Kind::Worker(w) if !w.containers.is_empty()));
@@ -731,8 +749,19 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
         ));
     }
     let mut records = read_records(ctx);
-    let first = !n.workers.values().any(|w| seen.scripts.contains_key(w))
+    let first = (!n.workers.is_empty() || !n.resources.is_empty())
+        && !n.workers.values().any(|w| seen.scripts.contains_key(w))
         && !n.resources.iter().any(|r| seen.has(r));
+    // What Codemagic has, read with GET only (DES-022).
+    let cm = match (codemagic, cm_token) {
+        (Some((_, c)), Some(t)) => {
+            let cm = crate::codemagic::Cm::new(t, crate::codemagic::secret_values(c))?;
+            let now = crate::codemagic::read(&cm, &ctx.compose)?;
+            let d = crate::codemagic::diff(c, &now.groups, update_secret);
+            Some((cm, now, d))
+        }
+        _ => None,
+    };
 
     // 3. What needs a yes first: a new environment, Durable Object classes
     //    that go away with their data, and dropped Workers to delete.
@@ -742,6 +771,17 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
             "環境 {} はまだ Cloudflare にありません。新しく作ります",
             "environment {} does not exist on Cloudflare yet; it will be created",
             ctx.env
+        ));
+    }
+    // A new Codemagic app, like a new environment (REQ-015).
+    if let (Some((svc, c)), Some((_, now, _))) = (codemagic, &cm)
+        && now.app_id.is_none()
+    {
+        asks.push(crate::tr!(
+            "{svc}: 環境 {} の Codemagic のアプリはまだありません。{} を新しく登録します",
+            "{svc}: environment {} has no Codemagic app yet; {} will be registered",
+            ctx.env,
+            c.repository
         ));
     }
     // Durable Object classes gone from the compose file: deleted (with
@@ -857,6 +897,10 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
     // the same from every PC. A dry run ends with it.
     let mut ids = seen.ids(&n);
     let mut plan = Plan::default();
+    // Secrets each Worker already has: only missing ones are put in,
+    // unless --update-secret (REQ-005, DES-023).
+    let mut secrets_now: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut kept_secrets: Vec<String> = Vec::new();
     for s in &services {
         let in_service: Vec<&Res> = n.resources.iter().filter(|r| r.service == s.name).collect();
         for r in in_service {
@@ -930,6 +974,8 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                 continue;
             }
             let (now, deployed, message) = current_shape(&cf, &script)?;
+            let again: Vec<&String> = w.secrets.keys().filter(|k| now.secrets.contains(*k)).collect();
+            secrets_now.insert(s.name.clone(), now.secrets.clone());
             let containers = container_plan(
                 &seen,
                 &script,
@@ -952,12 +998,30 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                 // A container to make, change or delete goes with a deploy.
                 plan.changed.insert(s.name.clone());
             }
-            if d.is_empty() {
-                plan.add('=', format!("Worker {script}"), d);
-            } else {
-                plan.changed.insert(s.name.clone());
-                plan.add('~', format!("Worker {script}"), d);
+            if update_secret {
+                for k in &again {
+                    d.push(crate::tr!(
+                        "secrets.{k}: 入れ直す(値は出さない)",
+                        "secrets.{k}: set again (value not shown)"
+                    ));
+                }
+            } else if !again.is_empty() {
+                let list: Vec<&str> = again.iter().map(|k| k.as_str()).collect();
+                kept_secrets.push(format!("{}: {}", s.name, list.join(", ")));
             }
+            let sign = if d.is_empty() { '=' } else { '~' };
+            if sign == '~' {
+                plan.changed.insert(s.name.clone());
+            }
+            if !update_secret {
+                for k in &again {
+                    d.push(crate::tr!(
+                        "secrets.{k}: あるので変えない(入れ直すには --update-secret)",
+                        "secrets.{k}: already there; unchanged (--update-secret sets it again)"
+                    ));
+                }
+            }
+            plan.add(sign, format!("Worker {script}"), d);
             for (sign, what, d) in containers {
                 plan.add(sign, what, d);
             }
@@ -994,8 +1058,28 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
             );
         }
     }
+    if let (Some((svc, c)), Some((_, now, d))) = (codemagic, &cm) {
+        for (sign, what, details) in crate::codemagic::plan(svc, c, now, d) {
+            plan.add(sign, what, details);
+        }
+        if !d.kept.is_empty() {
+            let list: Vec<String> = d.kept.iter().map(|(g, v)| format!("{g}.{v}")).collect();
+            kept_secrets.push(format!("{svc}: {}", list.join(", ")));
+        }
+    }
     plan.show();
+    // Secrets not set again: said once (REQ-005, DES-023).
+    let kept_note = (!kept_secrets.is_empty()).then(|| {
+        crate::tr!(
+            "既にあるシークレットは入れ直していません({})。値を変えたなら up --update-secret を付けてください",
+            "secrets already there were not set again ({}); if you changed their values, add --update-secret to up",
+            kept_secrets.join("; ")
+        )
+    });
     if ctx.dry_run {
+        if let Some(note) = &kept_note {
+            say(note.clone());
+        }
         say(crate::tr!(
             "dry-run なので何も変えていません",
             "dry run: nothing was changed"
@@ -1166,6 +1250,8 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
                     dropped_classes.get(&s.name),
                     kept_classes.get(&s.name),
                     plan.changed.contains(&s.name),
+                    secrets_now.get(&s.name),
+                    update_secret,
                     &mut records,
                     &mut gone_apps,
                 )?;
@@ -1231,11 +1317,22 @@ pub fn up(ctx: &Ctx, rebuild: bool, only: &[String], purge: bool) -> Result<()> 
         return Ok(());
     }
     write_records(ctx, &records)?;
+    // Codemagic after Cloudflare: a stop on Cloudflare leaves it untouched
+    // (DES-022).
+    if let (Some((_, c)), Some((cm, now, d))) = (codemagic, &cm) {
+        crate::codemagic::apply(cm, &act, &ctx.compose, c, now, d).context(crate::tr!(
+            "Codemagic の途中で止まりました。Cloudflare の展開は済んでいます。Codemagic で済んだことは上に示したところまでです。もう一度 up すれば揃います",
+            "stopped part-way on Codemagic; Cloudflare is deployed, and on Codemagic what is shown above was done. Another up finishes the rest"
+        ))?;
+    }
     say(crate::tr!(
         "環境 {} に展開しました",
         "deployed to environment {}",
         ctx.env
     ));
+    if let Some(note) = &kept_note {
+        say(note.clone());
+    }
     if containers_deployed {
         say(crate::tr!(
             "コンテナの入れ替えは、このあとも Cloudflare で段階的に続きます。初めての展開では、コンテナが動き出すまで数分かかることがあります",
@@ -1926,6 +2023,8 @@ fn deploy_worker(
     dropped: Option<&Vec<String>>,
     kept: Option<&Vec<String>>,
     changed_on_cloud: bool,
+    secrets_now: Option<&BTreeSet<String>>,
+    update_secret: bool,
     records: &mut Value,
     gone_apps: &mut Vec<String>,
 ) -> Result<bool> {
@@ -1956,7 +2055,16 @@ fn deploy_worker(
         )?;
     }
     let secrets = &w.secrets;
-    let secret_text = serde_json::to_string(&secrets)?;
+    // Only the secrets the Worker does not have yet, or all of them with
+    // --update-secret: a deploy keeps the secrets not in --secrets-file
+    // (DES-023).
+    let send: BTreeMap<&String, &String> = secrets
+        .iter()
+        .filter(|(k, _)| update_secret || !secrets_now.is_some_and(|now| now.contains(*k)))
+        .collect();
+    let secret_text = serde_json::to_string(&send)?;
+    // Names only: a changed value alone does not deploy again (DES-023).
+    let secret_names = serde_json::to_string(&secrets.keys().collect::<Vec<_>>())?;
     // Deleted-class tombstones only matter once: the next deploy without
     // them is the same Worker.
     let mut same = portable(&cfg, &hashes);
@@ -1969,12 +2077,14 @@ fn deploy_worker(
     let hash = hash_of(&[
         built.hash.as_bytes(),
         same.to_string().as_bytes(),
-        secret_text.as_bytes(),
+        secret_names.as_bytes(),
     ]);
     // Unchanged both on Cloudflare (what any PC sees) and since this PC's
-    // last deploy (which also covers the secrets' values).
-    let unchanged =
-        exists && !changed_on_cloud && records["workers"][&script]["hash"] == hash.as_str();
+    // last deploy; --update-secret always deploys a Worker with secrets.
+    let unchanged = exists
+        && !changed_on_cloud
+        && (!update_secret || secrets.is_empty())
+        && records["workers"][&script]["hash"] == hash.as_str();
     if unchanged {
         say(crate::tr!(
             "{}: 変わっていないので展開しません",
@@ -1983,7 +2093,7 @@ fn deploy_worker(
         ));
     } else {
         deployed = true;
-        let names: Vec<&String> = secrets.keys().collect();
+        let names: Vec<&String> = send.keys().copied().collect();
         act.run(
             crate::tr!(
                 "{}: {} として展開する(シークレット: {})",
@@ -2007,7 +2117,7 @@ fn deploy_worker(
                 }
                 cmd.arg("-c").arg(&cfg_path);
                 let file = dir.join("secrets.json");
-                if !secrets.is_empty() {
+                if !send.is_empty() {
                     crate::local::write_private(&file, &secret_text)?;
                     cmd.arg("--secrets-file").arg(&file);
                 }
@@ -2145,12 +2255,31 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
     if !only.is_empty() {
         ctx.compose.closure(only)?;
     }
+    // The codemagic service goes with every down, --purge or not (REQ-021);
+    // its token is checked before anything is touched.
+    let codemagic = ctx
+        .compose
+        .services
+        .iter()
+        .filter(|s| only.is_empty() || only.contains(&s.name))
+        .find(|s| matches!(s.kind, Kind::Codemagic(_)));
+    let cm_token = match codemagic {
+        Some(_) => Some(crate::codemagic::token(&ctx.compose)?),
+        None => None,
+    };
     let n = names(&ctx.compose, &ctx.env)?;
     let prefix = env_prefix(&ctx.compose, &ctx.env);
     let cf = Cf::connect(ctx)?;
     let seen = look(&cf, &n)?;
     let act = Act::new(ctx.dry_run);
     let ours = seen.env_resources(&prefix);
+    let cm = match cm_token {
+        Some(t) => {
+            let cm = crate::codemagic::Cm::new(t, Vec::new())?;
+            crate::codemagic::read_gone(&cm, &ctx.compose)?.map(|g| (cm, g))
+        }
+        None => None,
+    };
 
     // Workers to take down, dependents first (REQ-011). Without services
     // named, every Worker of this environment goes, those the compose file
@@ -2226,7 +2355,7 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
             images = registry_targets(&registry_images(ctx, &cf)?, &repos);
         }
     }
-    if workers.is_empty() && resources.is_empty() && images.is_empty() {
+    if workers.is_empty() && resources.is_empty() && images.is_empty() && cm.is_none() {
         say(crate::tr!(
             "環境 {} に下ろすものはありません",
             "nothing to take down in environment {}",
@@ -2260,6 +2389,30 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
             crate::tr!("レジストリのイメージ {i}", "registry image {i}")
         );
     }
+    if let Some((_, g)) = &cm {
+        let file = ctx.compose.env_file.display();
+        if g.exists {
+            let groups: Vec<&str> = g.groups.iter().map(|x| x.name.as_str()).collect();
+            eprintln!(
+                "  {}",
+                crate::tr!(
+                    "Codemagic のアプリ {}(変数グループ: {})。ビルドの履歴と成果物も消えます",
+                    "Codemagic app {} (variable groups: {}); its build history and artifacts go too",
+                    g.id,
+                    if groups.is_empty() { "-".to_string() } else { groups.join(", ") }
+                )
+            );
+        } else {
+            eprintln!(
+                "  {}",
+                crate::tr!(
+                    "Codemagic のアプリ {} はもうありません({file} の CODEMAGIC_APP_ID の行だけを消します)",
+                    "Codemagic app {} is already gone (only the CODEMAGIC_APP_ID line of {file} goes)",
+                    g.id
+                )
+            );
+        }
+    }
     if ctx.dry_run {
         say(crate::tr!(
             "上を消します。dry-run なので何も変えていません",
@@ -2274,6 +2427,8 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
                 "上の Worker とデータを消す",
                 "delete the Workers and data above"
             )
+        } else if workers.is_empty() {
+            crate::tr!("上を消す", "delete the above")
         } else {
             crate::tr!(
                 "上の Worker を下ろす(データは残る)",
@@ -2314,6 +2469,9 @@ pub fn down(ctx: &Ctx, purge: bool, only: &[String]) -> Result<()> {
         )?;
     }
     write_records(ctx, &records)?;
+    if let Some((c, g)) = &cm {
+        crate::codemagic::delete(c, &act, &ctx.compose, g)?;
+    }
     say(crate::tr!("下ろしました", "taken down"));
     Ok(())
 }
@@ -2408,6 +2566,17 @@ pub fn data_client(ctx: &Ctx) -> Result<crate::data::Client> {
 // ---------------------------------------------------------------- ps
 
 pub fn ps(ctx: &Ctx) -> Result<()> {
+    let cm = if ctx
+        .compose
+        .services
+        .iter()
+        .any(|s| matches!(s.kind, Kind::Codemagic(_)))
+    {
+        let token = crate::codemagic::token(&ctx.compose)?;
+        Some(crate::codemagic::Cm::new(token, Vec::new())?)
+    } else {
+        None
+    };
     let n = names(&ctx.compose, &ctx.env)?;
     let cf = Cf::connect(ctx)?;
     let seen = look(&cf, &n)?;
@@ -2460,6 +2629,14 @@ pub fn ps(ctx: &Ctx) -> Result<()> {
                         "container",
                         crate::tr!("残り(up が消す)", "orphan (up deletes it)")
                     );
+                }
+            }
+            // The app and its variables, never a value (REQ-021).
+            Kind::Codemagic(c) => {
+                if let Some(cm) = &cm {
+                    for [a, b, st, x] in crate::codemagic::ps_lines(cm, &ctx.compose, &s.name, c)? {
+                        crate::out!("{:<16} {:<8} {:<10} {}", a, b, st, x);
+                    }
                 }
             }
             other => {

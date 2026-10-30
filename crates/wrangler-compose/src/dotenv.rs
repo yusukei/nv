@@ -9,7 +9,9 @@
 //!   environment and the names defined earlier in the file.
 
 use crate::interp::{self, Lookup};
+use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 struct Earlier<'a>(&'a BTreeMap<String, String>);
 
@@ -128,6 +130,59 @@ enum Raw {
     Expand(String),
 }
 
+/// Adds `NAME=value` as the last line (REQ-007: the one line the tool may
+/// write, CODEMAGIC_APP_ID). Every other line and the file's permissions
+/// stay as they are.
+pub fn append_line(path: &Path, name: &str, value: &str) -> Result<()> {
+    let mut text = std::fs::read_to_string(path).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!("{name}={value}\n"));
+    replace(path, &text)
+}
+
+/// Removes the lines starting with `NAME=`, and nothing else.
+pub fn remove_lines(path: &Path, name: &str) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let start = format!("{name}=");
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|l| !l.starts_with(&start))
+        .collect();
+    if kept != text {
+        replace(path, &kept)?;
+    }
+    Ok(())
+}
+
+/// Writes a file in the same folder first and moves it into place, so a
+/// stop half-way never leaves a broken `.env` (new files are 0600).
+fn replace(path: &Path, text: &str) -> Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.wc-{}.tmp", std::process::id()));
+    let perms = std::fs::metadata(path).ok().map(|m| m.permissions());
+    let write = || -> Result<()> {
+        crate::local::write_private(&tmp, text)?;
+        if let Some(p) = &perms {
+            std::fs::set_permissions(&tmp, p.clone())?;
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    };
+    let r = write();
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
 /// Just past the end of the line holding `from` (what follows a closing
 /// quote there is a comment).
 fn end_of_line(chars: &[char], from: usize) -> usize {
@@ -174,5 +229,35 @@ mod tests {
         assert_eq!(env["Q"], "/srv/q");
         assert_eq!(env["R"], "${BASE}");
         assert_eq!(env["S"], "a\"b");
+    }
+
+    #[test]
+    fn writes_and_removes_only_the_app_id_line() {
+        let dir = std::env::temp_dir().join(format!("wc-dotenv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join(".env.ac-1");
+        // No newline at the end: one is added before the new line.
+        std::fs::write(&f, "# keep\nA=1\nCODEMAGIC_APP_IDX=keep\nB=\"x\ny\"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        append_line(&f, "CODEMAGIC_APP_ID", "app1").unwrap();
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert_eq!(text, "# keep\nA=1\nCODEMAGIC_APP_IDX=keep\nB=\"x\ny\"\nCODEMAGIC_APP_ID=app1\n");
+        assert_eq!(parse(&text)["CODEMAGIC_APP_ID"], "app1");
+        remove_lines(&f, "CODEMAGIC_APP_ID").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "# keep\nA=1\nCODEMAGIC_APP_IDX=keep\nB=\"x\ny\"\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o640);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -808,6 +808,14 @@ fn dry_run(ctx: &Ctx, services: &[&Service]) -> Result<()> {
 /// Things that behave differently locally (REQ-018).
 fn notices(services: &[&Service]) {
     for s in services {
+        // Codemagic has nothing local to stand in for it (REQ-021).
+        if let Kind::Codemagic(_) = &s.kind {
+            say(crate::tr!(
+                "{}: Codemagic のサービスは手元では何もしません(Codemagic には触れません)",
+                "{}: the Codemagic service does nothing locally (Codemagic is not touched)",
+                s.name
+            ));
+        }
         if let Kind::Worker(w) = &s.kind {
             if !w.routes.is_empty() {
                 say(crate::tr!(
@@ -1283,7 +1291,7 @@ fn data_of(c: &crate::compose::Compose, s: &Service) -> Vec<(&'static str, Strin
         Kind::D1(l) => out.extend(l.iter().map(|r| ("d1", r.key.clone()))),
         Kind::R2(l) => out.extend(l.iter().map(|r| ("r2", r.key.clone()))),
         Kind::Kv(l) => out.extend(l.iter().map(|r| ("kv", r.key.clone()))),
-        Kind::Queue(_) => {}
+        Kind::Queue(_) | Kind::Codemagic(_) => {}
     }
     out
 }

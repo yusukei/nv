@@ -72,7 +72,7 @@ nv のものはすべて `~/.nv` の下に置く(Node・npm のキャッシュ�
 
 nv と同じフォルダに置く(上の「導入」)。Wrangler はプロジェクトの依存に入れておく(`nv run npm install --save-dev wrangler@<版>`、4.149.0 以上)。
 
-プロジェクトの一番上に `wrangler-compose.yaml` を 1 つ置き(展開用のフォルダに分けるなら、そこに置いて `context: ../app` のように Wrangler の入った `package.json` のフォルダを書く)、docker compose と同じ形でサービス(`type: worker / d1 / r2 / kv / queue`)を並べる。環境ごとの違いは `${変数}` だけで書き、値は環境変数か `.env.<環境名>`(git に入れない)から入る。R2 のバケットの S3 互換の接続先は、道具が `${WC_R2_<サービス>_S3}` として手元・リモートそれぞれの値を入れる(Worker の `environment` で使う)。手元の S3 互換の API の鍵は、プロジェクトごとの乱数で道具が作り(`.wrangler/compose/local/s3-keys.json`)、Worker の `secrets` に `${WC_R2_<サービス>_S3_KEY}`・`${WC_R2_<サービス>_S3_SECRET}` で渡す(リモートは `${R2_KEY:-${WC_R2_<サービス>_S3_KEY}}` のように自分の鍵を `.env.<環境>` に書く)。例は [tests/fixture](crates/wrangler-compose/tests/fixture/wrangler-compose.yaml)。
+プロジェクトの一番上に `wrangler-compose.yaml` を 1 つ置き(展開用のフォルダに分けるなら、そこに置いて `context: ../app` のように Wrangler の入った `package.json` のフォルダを書く)、docker compose と同じ形でサービス(`type: worker / d1 / r2 / kv / queue / codemagic`)を並べる。環境ごとの違いは `${変数}` だけで書き、値は環境変数か `.env.<環境名>`(git に入れない)から入る。R2 のバケットの S3 互換の接続先は、道具が `${WC_R2_<サービス>_S3}` として手元・リモートそれぞれの値を入れる(Worker の `environment` で使う)。手元の S3 互換の API の鍵は、プロジェクトごとの乱数で道具が作り(`.wrangler/compose/local/s3-keys.json`)、Worker の `secrets` に `${WC_R2_<サービス>_S3_KEY}`・`${WC_R2_<サービス>_S3_SECRET}` で渡す(リモートは `${R2_KEY:-${WC_R2_<サービス>_S3_KEY}}` のように自分の鍵を `.env.<環境>` に書く)。例は [tests/fixture](crates/wrangler-compose/tests/fixture/wrangler-compose.yaml)。
 
 ```bash
 wrangler-compose --env local up           # 手元で全サービスを起動(ソースを直すと組み直す。Ctrl-C で止める)
@@ -97,7 +97,7 @@ wrangler-compose --env staging down
 
 リモートのシークレットは、無いときだけ入れる。`.env.<環境名>` で値を変えたときは `up --update-secret` で入れ直す(値を読み返せないため)。
 
-`type: codemagic` のサービスを書くと、リモートの `up` がその環境の Codemagic のアプリを登録し(ID は `.env.<環境名>` の `CODEMAGIC_APP_ID` に書き足す)、`groups` に書いた値を変数グループに入れる。書いていないグループ・変数は消し、`down` でアプリごと消す。要るのは Codemagic と GitHub をつなぐことと、`CODEMAGIC_API_TOKEN`(環境変数か `.env.<環境名>`)を 1 度だけ。書き方は[要求仕様の REQ-021](docs/wrangler-compose/requirements/write.html#req-021)。いまは仕様だけで、まだ作っていない。
+`type: codemagic` のサービスを書くと、リモートの `up` がその環境の Codemagic のアプリを登録し(ID は `.env.<環境名>` の `CODEMAGIC_APP_ID` に書き足す)、`groups` に書いた値を変数グループに入れる。書いていないグループ・変数は消し、`down` でアプリごと消す。要るのは Codemagic と GitHub をつなぐことと、`CODEMAGIC_API_TOKEN`(環境変数か `.env.<環境名>`)を 1 度だけ。書き方は[要求仕様の REQ-021](docs/wrangler-compose/requirements/write.html#req-021)。手元(`--env local`)では Codemagic に触れない。偽の API での試験だけで、本物の Codemagic ではまだ確かめていない。
 
 リモートの `backup`・`restore` と、R2 のバケットがある `down --purge` は、いまは使えない(作り直すまで止めている)。0.1.10 までの版は本物の Cloudflare(無料プラン)で `up`・`ps`・`logs`・`backup`・`down --purge` を確かめた(0.1.11 からは本物では確かめていない)。ただし新しく足した cron が Cloudflare 側で発火しないことがあり(素の `wrangler deploy` でも同じ)、cron は無料プランでアカウントに 5 つまで。手元で動かないものは [docs/wrangler-compose/detail/local-support.html](docs/wrangler-compose/detail/local-support.html) にある。
 

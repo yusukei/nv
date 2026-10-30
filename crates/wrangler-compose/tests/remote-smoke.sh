@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Remote flow against a fake Cloudflare API (fake-cloudflare.py), offline:
 # up of a new environment (with the retype), nothing changes on a second up,
+# existing secrets are set again only with up --update-secret (AC-005),
 # secrets / consumers / Durable Object classes removed from the compose file
 # go away, a dropped Worker goes on the next up and dropped data only with
 # up --purge, another environment's things are never touched, a failed migration
@@ -112,6 +113,39 @@ out=$(wc --env staging up)
 grep -q 'api: unchanged, not deployed' <<<"$out" || { echo "$out"; fail "redeployed after the deletion"; }
 cp compose.orig wrangler-compose.yaml
 wc_yes --env staging up >/dev/null || fail "back to the full compose file"
+
+# Secrets already there are not set again (Cloudflare never gives a value
+# back to compare): a changed value waits for --update-secret, and up says so;
+# a new name goes in without it (AC-005).
+secret() { curl -fsS "http://127.0.0.1:$PORT/__secret/shop--staging--api/$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])'; }
+[[ $(secret STRIPE_KEY) == sk_test_remote ]] || fail "secret before the change: $(secret STRIPE_KEY)"
+before=$(wc --env staging --dry-run up | grep '^  ')
+sed -i.bak 's/^STRIPE_KEY=.*/STRIPE_KEY=sk_test_changed/' .env.staging && rm .env.staging.bak
+out=$(wc --env staging --dry-run up)
+grep -q 'secrets.STRIPE_KEY: already there; unchanged (--update-secret sets it again)' <<<"$out" || fail "plan kept secret: $out"
+[[ "$(grep '^  ' <<<"$out")" == "$before" ]] || fail "a changed secret value alone changed the plan: $out"
+out=$(wc --env staging up)
+[[ $(secret STRIPE_KEY) == sk_test_remote ]] || fail "secret set again without --update-secret"
+grep -q 'secrets already there were not set again (api: STRIPE_KEY); if you changed their values, add --update-secret to up' <<<"$out" || fail "--update-secret not suggested: $out"
+grep -q 'sk_test_changed' <<<"$out" && fail "up showed a secret value"
+out=$(wc --env staging --dry-run up --update-secret)
+grep -q 'secrets.STRIPE_KEY: set again (value not shown)' <<<"$out" || fail "plan with --update-secret: $out"
+out=$(wc --env staging up --update-secret)
+grep -q 'api: deploying as shop--staging--api (secrets: STRIPE_KEY)' <<<"$out" || fail "--update-secret did not deploy: $out"
+[[ $(secret STRIPE_KEY) == sk_test_changed ]] || fail "--update-secret did not set the secret: $(secret STRIPE_KEY)"
+grep -q 'not set again' <<<"$out" && fail "--update-secret still said not set again: $out"
+cp wrangler-compose.yaml compose.secrets
+sed -i.bak 's/^    secrets: \[STRIPE_KEY\]$/    secrets: [STRIPE_KEY, NEW_KEY]/' wrangler-compose.yaml && rm wrangler-compose.yaml.bak
+echo 'NEW_KEY=nk_1' >> .env.staging
+sed -i.bak 's/^STRIPE_KEY=.*/STRIPE_KEY=sk_test_third/' .env.staging && rm .env.staging.bak
+out=$(wc --env staging up)
+grep -q 'api: deploying as shop--staging--api (secrets: NEW_KEY)' <<<"$out" || fail "a new secret name did not deploy alone: $out"
+[[ $(secret NEW_KEY) == nk_1 ]] || fail "new secret not set: $(secret NEW_KEY)"
+[[ $(secret STRIPE_KEY) == sk_test_changed ]] || fail "an existing secret was set again with the new one"
+cp compose.secrets wrangler-compose.yaml
+sed -i.bak 's/^STRIPE_KEY=.*/STRIPE_KEY=sk_test_remote/; /^NEW_KEY=/d' .env.staging && rm .env.staging.bak
+wc --env staging up --update-secret >/dev/null
+[[ $(secret STRIPE_KEY) == sk_test_remote && $(secret NEW_KEY) == None ]] || fail "secrets not back: $(secret STRIPE_KEY) $(secret NEW_KEY)"
 
 # A failed migration stops what comes after it.
 echo "FAIL_HERE;" > api/migrations/0009_bad.sql
