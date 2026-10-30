@@ -124,12 +124,12 @@ def respond(method, p, q, j):
             return 400, {"error": "Invalid repository: missing required fields " + ", ".join(missing)}
         for i, a in S["apps"].items():
             if a["provider"] == "github" and a["gid"] == r.get("id"):
-                return 200, {"_id": i, "appName": a["name"]}
+                return 200, {"application": app_json(i, a)}
         i = new_id()
         linked = r.get("provider") == "github" and (r.get("owner") or {}).get("name") == "example"
         S["apps"][i] = {"repo": r.get("htmlUrl"), "name": r["name"], "gid": r.get("id"),
                         "provider": "github" if linked else "generic"}
-        return 200, {"_id": i, "appName": r["name"]}
+        return 200, {"application": app_json(i, S["apps"][i])}
     if p == "/apps" and method == "POST":
         repo = j.get("repositoryUrl") or ""
         if not repo:

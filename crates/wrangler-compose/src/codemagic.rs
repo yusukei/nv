@@ -367,7 +367,9 @@ impl Cm {
     /// Registers the repository as a new app; its id. A GitHub repository
     /// (`repo`, from `github_repository`) goes as Codemagic's screen sends
     /// it, so the app is linked to GitHub; a URL alone makes a "Manually
-    /// added" app (measured 2026-10-30).
+    /// added" app (measured 2026-10-30). The URL form answers the id at the
+    /// top (`_id`); the repo form wraps the app in `application`, as GET
+    /// /apps/{id} does (measured 2026-10-31).
     pub fn register(&self, repository: &str, repo: Option<&Value>) -> Result<String> {
         let body = match repo {
             Some(r) => json!({ "repo": r, "skipFirstBuild": true, "projectType": "other" }),
@@ -376,6 +378,7 @@ impl Cm {
         let v = self.call("POST", &format!("{}/apps", self.api), Some(&body))?;
         v["_id"]
             .as_str()
+            .or_else(|| v["application"]["_id"].as_str())
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .ok_or_else(|| {
