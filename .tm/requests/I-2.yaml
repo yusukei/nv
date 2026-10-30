@@ -23,7 +23,7 @@ split:
   - I-2 は可否を調べて報告書を残す調査の依頼と判断。wrangler-compose はいま Cloudflare だけを扱っている（要求仕様 03 に範囲外の項目あり）ため、範囲とのかね合いも調査に含める
   - 'チケット T-2 を作りました: wrangler-compose から Codemagic へアプリを登録できるかを調べ、報告書にまとめる'
   - チケットに分け終えました
-updated_at: 2026-10-30T21:28:03.793663+09:00
+updated_at: 2026-10-30T22:02:34.023408+09:00
 results:
 - summary: |-
     調査の結論は「条件付きでできる」です。Codemagic へのアプリの登録と、ビルドに要る値(変数グループ)の登録は、Codemagic の API で本物で通りました。
@@ -51,6 +51,20 @@ results:
   tickets:
   - T-2
   - T-3
+- summary: |-
+    Codemagic 対応と up --update-secret を作り、claude/local-dev に取り込みました(bd7194c・5281ef4)。
+    cargo test(106 件)・clippy・偽の API での Codemagic の試験(AC-021)・リモートの試験(AC-005 の入れ直しを含む)・手元の試験が通っています。
+    本物の Codemagic・Cloudflare ではまだ確かめていません。試験用のアカウントで確かめるときは許可をください。
+    誤ったトークンは、アプリをまだ登録していない環境では Cloudflare の展開のあとに分かります(早く確かめる API を足すかは未決)。
+  at: 2026-10-30T22:02:34.023408+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: ea7464d3-d354-4d15-a57d-288fbae69698
+  tickets:
+  - T-2
+  - T-3
+  - T-4
 comments:
 - id: C-1
   at: 2026-10-30T17:42:27.608969+09:00
@@ -446,4 +460,4 @@ chat:
   - 前の会話の続きで返答を書いています
   - 「Codemagic.*(down|消)|(down|消).*Codemagic」を探しました
   - 返答しました
-rev: 81
+rev: 82
