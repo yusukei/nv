@@ -5,7 +5,7 @@
 </head><body><div class="layout"><nav id="sitenav" class="sidebar" data-root="../../" data-page="wrangler-compose/detail/d03-remote.html"></nav><main class="page">
 
 <section class="hero"><div class="kicker">wrangler-compose 詳細仕様</div><h1>D03. リモートの up</h1>
-<p>Cloudflare へ展開する段、Durable Objects のクラスの足し引き、R2 のバケットの設定。DES-009・010・018・021。</p></section>
+<p>Cloudflare へ展開する段、Durable Objects のクラスの足し引き、R2 のバケットの設定、コンテナ、Codemagic、シークレットの入れ直し。DES-009・010・018・021・022・023。</p></section>
 
 <section class="section"><h2>設計</h2><div class="figs"><h4 class="figttl">リモートの up の段</h4><div class="steps">
 <div class="step"><div class="n">1</div><div class="t">組み立て</div><div class="d">Cloudflare に触れる前</div></div>
@@ -17,12 +17,14 @@
 <div class="step"><div class="n">4</div><div class="t">無い資源を作る</div><div class="d">バケットの設定も合わせる</div></div>
 <div class="arrow">→</div>
 <div class="step"><div class="n">5</div><div class="t">サービスの順に</div><div class="d">移行 → Worker を上げる → 消えたものを消す</div></div>
+<div class="arrow">→</div>
+<div class="step"><div class="n">6</div><div class="t">Codemagic</div><div class="d">アプリ → グループ → 変数(DES-022)</div></div>
 </div></div>
 <article class="item" id="des-009"><h3><span class="id">DES-009</span>リモートの up <span class="refs"><a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/write.html#req-005">REQ-005</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
 <ul>
   <li>段: 組み立て(DES-007。Cloudflare に触れる前) → いまの Cloudflare を引く(DES-004) → 確かめ(初めての環境・<code>--purge</code> で消す資源があれば、まとめて示して環境名の打ち直し。消える Durable Object のクラスと、Durable Object を持つ消える Worker は、消す・残す・やめるを選ばせる) → 無い資源を作る → バケットの設定(DES-018) → サービスの順に: D1 の移行(<code>d1 migrations apply --remote</code>)、Worker を作った設定と <code>--secrets-file</code>(0600 の一時ファイル)で上げ、compose から消えたシークレットと、受け取らなくなった Queue の受け手を消す</li>
   <li>作る設定: 組み立てたものをそのまま(<code>no_bundle</code>。横のファイルも ES モジュールとして)、バインディングは実際の名前と ID、Queue の受け手は Cloudflare の既定値、<code>routes</code> は <code>/</code> か <code>*</code> を含めばルート、含まなければ独自ドメイン。<code>workers.dev</code> の URL は、<code>ports</code> を持ち(外から呼ばれる Worker)<code>routes</code> の無い Worker だけに開く(手元で <code>ports</code> の無い Worker はリモートでも外から届かない)。プレビューの URL は開かない</li>
-  <li>前回と同じ(組み立てたもの・作った設定・シークレットの値の要約が同じ)Worker は上げない。<code>--dry-run</code> は同じ段を通り、変えることを示すだけ(合言葉のファイルも作らない)</li>
+  <li>前回と同じ(組み立てたもの・作った設定・シークレットの名前が同じ。DES-023)Worker は上げない。<code>--dry-run</code> は同じ段を通り、変えることを示すだけ(合言葉のファイルも作らない)</li>
   <li>移行が失敗したら、その D1 を使う Worker と、それより後のサービスは行わない</li>
   <li>名前がこの環境のもので compose に無い Worker は、展開のあとに消す。名前がこの環境のもので compose に無い D1・KV・R2・Queue は示し、<code>--purge</code> のときだけ消す(R2 はオブジェクトの一覧の API で空にしてから消す)</li>
 </ul>
@@ -53,6 +55,28 @@
   <li><code>ps</code> は、コンテナのアプリケーションがあるかと、compose ファイルに無いもの(次の <code>up</code> が消す)を示す</li>
   <li>レジストリのイメージ: <code>down --purge</code> は、下ろす Worker のクラス(Cloudflare にあるもの)と compose ファイルのコンテナのクラスから決まるアプリケーションの名前のリポジトリにあるイメージを、<code>wrangler containers images list --json</code> で探し、<code>wrangler containers images delete</code> で消す(消す前に示し、環境名の打ち直しで確かめる)。ほかの名前のリポジトリには触らない。Wrangler はレジストリの一覧と削除を HTTPS でだけ行うので、偽の API の試験では確かめられない(本物で確かめた)</li>
   <li>イメージを先に送る: <code>up</code> は、Dockerfile のコンテナのリポジトリにイメージが 1 つも無ければ(初めて、または <code>down --purge</code> のあと)、展開の前に、Wrangler と同じ作り方(linux/amd64・provenance なし・<code>image_vars</code>)でイメージを作り、毎回新しいタグ(<code>wc-&lt;中身のハッシュ 8 文字&gt;-&lt;時刻&gt;</code>)で <code>wrangler containers push</code> する。レジストリは消したイメージのダイジェストにも答え続けるので、<code>wrangler deploy</code> は中身の同じイメージを「もうある」として送らず、Cloudflare は「イメージが無い」(<code>IMAGE_REGISTRY_DOESNT_CONTAIN_IMAGE</code>)で止まる。また、消したタグと同じ名前で送り直しても、しばらくは一覧に出ず使えない(どちらも 2026-10-13 に本物で確かめた)</li>
+</ul>
+</article>
+<article class="item" id="des-022"><h3><span class="id">DES-022</span>Codemagic <span class="refs"><a href="../requirements/write.html#req-021">REQ-021</a>・<a href="../requirements/write.html#req-004">REQ-004</a>・<a href="../requirements/commands.html#req-011">REQ-011</a>・<a href="../requirements/common.html#req-015">REQ-015</a></span></h3>
+<ul>
+  <li>読む: <code>type: codemagic</code> のキーは <code>repository</code>(必須。文字列)と <code>groups</code>(グループの名前 → <code>environment</code>・<code>secrets</code>)。<code>environment</code>・<code>secrets</code> は Worker と同じく対応表にそろえ、<code>secrets</code> に変数を含まない値があれば止める(DES-002)。グループの名前は Codemagic の決まり(<code>.</code> と <code>$</code> を含まない)に合わなければ止める</li>
+  <li>トークン: リモートで Codemagic のサービスがあるときだけ、<code>CODEMAGIC_API_TOKEN</code> を環境変数 → <code>.env.&lt;環境&gt;</code> から読む(DES-003)。無ければ、Cloudflare にも Codemagic にも触れる前に止め、Codemagic の画面のどこで見るか(Teams &gt; Personal Account &gt; Integrations &gt; Codemagic API)を示す。トークンはヘッダ <code>x-auth-token</code> にだけ入れ、画面・ログ・エラーの文に出さない。送り先は HTTPS だけ</li>
+  <li>使う API(送り先は <code>https://api.codemagic.io</code> と <code>https://codemagic.io/api/v3</code>): アプリの登録 <code>POST /apps</code>(<code>repositoryUrl</code>)・アプリを読む <code>GET /apps/{id}</code>・アプリを消す <code>DELETE /apps/{id}</code>(公式の資料に無い。本物で 202)・グループの一覧と作成 <code>GET</code>/<code>POST /api/v3/apps/{id}/variable-groups</code>・グループを消す <code>DELETE /api/v3/variable-groups/{gid}</code>・変数の一覧と一括登録 <code>GET</code>/<code>POST /api/v3/variable-groups/{gid}/variables</code>(一括登録は <code>secure</code> ごとに 1 回)・変数を変える・消す <code>PATCH</code>/<code>DELETE /api/v3/variable-groups/{gid}/variables/{vid}</code>。一覧はページを最後まで読む(<code>page_size=100</code>・<code>total_pages</code>)</li>
+  <li><code>up</code> の段(Cloudflare の段のあとに行う。Cloudflare で止まれば Codemagic に触れない): (1) <code>CODEMAGIC_APP_ID</code> があれば <code>GET /apps/{id}</code> で確かめ、無い(404)なら止めて、<code>.env.&lt;環境&gt;</code> から行を消せば登録し直すと示す。(2) 無ければ、DES-015 の確かめ(初めての環境と同じ打ち直し)のあと <code>POST /apps</code> で登録し、返った <code>_id</code> を <code>.env.&lt;環境&gt;</code> に書き足す。(3) グループと変数を読み、compose ファイルと比べて、グループを作る → 変数を作る・変える → 書いていない変数を消す → 書いていないグループを消す、の順に行う</li>
+  <li>比べ方: 秘密でない値(<code>environment</code>)は Codemagic の値と比べ、違えば <code>PATCH</code>(値)。Secure の値(<code>secrets</code>)は Codemagic が値を返さない(null)ので、名前があれば変えず、<code>--update-secret</code> のときだけ <code>PATCH</code>(値)。Secure の有無が compose ファイルと違う変数は、<code>PATCH</code> で <code>secure</code> と値を入れ直す。展開した値が空の変数は入れず、あれば消す</li>
+  <li><code>.env.&lt;環境&gt;</code> の書き換え: <code>CODEMAGIC_APP_ID=&lt;id&gt;</code> の 1 行を末尾に足す(末尾に改行が無ければ先に足す)・<code>down</code> で <code>CODEMAGIC_APP_ID=</code> で始まる行だけを消す。ほかの行と、ファイルの権限はそのまま。同じフォルダの一時ファイルに書いてから入れ替える(途中で止まっても壊さない)。環境変数で <code>CODEMAGIC_APP_ID</code> を渡したときは、それを使い、ファイルは書き換えない</li>
+  <li><code>down</code>: グループをすべて消してから <code>DELETE /apps/{id}</code> し、<code>CODEMAGIC_APP_ID</code> の行を消す(アプリを先に消すと、そのグループが消せず読めないまま残る。本物で確かめた)。アプリがもう無ければ(404)、行を消すだけにする。消す前に、アプリの ID とグループの名前を示し、ビルドの履歴と成果物も消えることを添えて、環境名の打ち直しで確かめる(DES-012 の打ち直しにまとめる)</li>
+  <li><code>--dry-run</code>・<code>ps</code>: <code>GET</code> だけを使う。plan は Cloudflare と同じ形(<code>+</code>・<code>~</code>・<code>-</code>・<code>=</code>)で、アプリの登録、グループと変数の作る・変える・消す、Secure の値の「あるので変えない」を示す。値は秘密でないものだけを前後で示す</li>
+  <li>エラー: Codemagic の答えの状態と、本文の <code>message</code> を示して止め、それまでに済んだことを示す(送った値は出さない)。429 は <code>ratelimit-reset</code> の秒数を示して止める。どの段も、もう一度 <code>up</code> すれば揃う(変える前に毎回読み直すので)</li>
+  <li>手元: <code>--env local</code> では Codemagic に触れず、トークンも読まない。<code>up</code> の初めに、Codemagic のサービスは手元では何もしないと 1 行知らせる</li>
+</ul>
+</article>
+<article class="item" id="des-023"><h3><span class="id">DES-023</span>シークレットの入れ直し(--update-secret) <span class="refs"><a href="../requirements/write.html#req-005">REQ-005</a>・<a href="../requirements/commands.html#req-010">REQ-010</a>・<a href="../requirements/commands.html#req-014">REQ-014</a></span></h3>
+<ul>
+  <li>リモートの Worker: DES-015 の 2 段目で読むシークレットの名前と比べ、<code>--secrets-file</code> に入れるのは、まだ無い名前だけにする(<code>--update-secret</code> なら compose ファイルのすべて)。<code>deploy --secrets-file</code> はファイルに無いシークレットを消さないので、既にあるものはそのまま残る(確かめた事実)。compose ファイルから消えた名前は今までどおり消す</li>
+  <li>前回と同じかの判定(DES-009): シークレットは名前の並びだけを入れ、値の要約は入れない(値を変えただけでは上げ直さない)。<code>--update-secret</code> のときは、シークレットのある Worker を必ず上げる</li>
+  <li>入れ直さなかった名前があれば、<code>up</code> の終わりに Worker ごとに名前を並べ、値を変えたなら <code>--update-secret</code> を付けるよう 1 度だけ知らせる。<code>--dry-run</code> にも同じことを示す</li>
+  <li>手元(<code>--env local</code>): 今までどおり毎回 <code>.env.local</code> の値を入れる。<code>--update-secret</code> は受けて、何もしない</li>
 </ul>
 </article>
 </section>

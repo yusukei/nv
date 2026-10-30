@@ -9,14 +9,14 @@
 
 <section class="section"><h2>設計</h2><article class="item" id="des-012"><h3><span class="id">DES-012</span>down <span class="refs"><a href="../requirements/commands.html#req-011">REQ-011</a></span></h3>
 <ul>
-  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる</li>
+  <li>リモート: 依存の逆の順に <code>delete</code>。<code>--purge</code> なら、D1 は <code>d1 delete</code>、R2 はデータのサービスで空にしてから <code>r2 bucket delete</code>、KV は <code>kv namespace delete</code>、Queue は <code>queues delete</code>。下ろさないサービスがつながる資源があれば何も消さずに止まる。Codemagic のサービスは、<code>--purge</code> の有無によらず、その環境のアプリを消す(DES-022)</li>
   <li>リモートでは消す前に中身を数えない(名前だけを示す)。打ち直しは 0.1 系のものを引き継ぐ</li>
   <li>手元: <code>down</code> は動いている <code>up</code> を止める。<code>down web</code> のように名前を付けると、動いている <code>up</code> がその Worker を外して動かし直し、ほかは動き続ける(データのサービスは手元では止めるものが無い)。下ろした Worker は、もう一度 <code>up</code>(<code>up web</code>)を打つと動いている <code>up</code> に戻る。下ろしたものが無いときの 2 つ目の <code>up</code> は止まる。<code>--purge</code> は止めたあと <code>.wrangler/compose/local/state</code> を消す。サービスを名前で指すと、そのサービスの資源とつなぐ資源(Durable Object の保存先を含む)だけを空にし、名前に無い Worker もつながる資源があれば、何も止めず何も消さずに止まる</li>
 </ul>
 </article>
 <article class="item" id="des-013"><h3><span class="id">DES-013</span>ps・logs <span class="refs"><a href="../requirements/commands.html#req-012">REQ-012</a></span></h3>
 <ul>
-  <li><code>ps</code>(リモート): Worker・資源は DES-004 の一覧、未適用の移行は D1 の履歴の表を API で <code>SELECT</code> で読む。compose に無い Worker は「残り」として出す。手元: 動いている記録と URL</li>
+  <li><code>ps</code>(リモート): Worker・資源は DES-004 の一覧、未適用の移行は D1 の履歴の表を API で <code>SELECT</code> で読む。compose に無い Worker は「残り」として出す。Codemagic のサービスは、アプリ(ID・名前・リポジトリ)と、グループごとの変数の名前・Secure か・値があるかを出し、compose ファイルとの違いを示す(DES-022)。手元: 動いている記録と URL</li>
   <li><code>logs</code>(リモート): Worker ごとに <code>wrangler tail --format json</code> を並べて動かし、<code>サービス名 | </code> を頭に付けて出す(手元の受け手と同じ形)。過去のログは読めないので、<code>-f</code> が無くても今から追う。手元: <code>up</code> が書く <code>.wrangler/compose/local/logs/up.log</code> を読む(<code>-f</code> なら追う)</li>
 </ul>
 </article>
@@ -60,7 +60,7 @@
   <li>どの操作も「確かめ → することの一覧を作る → 変える」の 3 段にし、<code>--dry-run</code> は 2 段目で一覧を示して終わる(止まる条件を本番と別に書かない)</li>
   <li>消すものを含む一覧は、変える前に環境名の打ち直しで確かめる(端末でなければ止まる)</li>
   <li>リモートの <code>up</code> の一覧は terraform plan の形にする: 2 段目で Cloudflare にいまある値を読み(資源の一覧・バケットの設定・Worker の設定(bindings・environment・互換日付)・スケジュール(crons)・経路(routes)・シークレットの名前・版の印・D1 の移行の履歴)、compose ファイルから作る値と比べて、<code>+</code> 作る・<code>~</code> 変える(項目ごとに前と後)・<code>-</code> 消す・<code>=</code> 変わらない、と数を示す。<code>--dry-run</code> はここで終わる。<code>up</code> は確かめを求めずに 3 段目に進む(初めての環境と消すものがあるときの打ち直しは今までどおり)</li>
-  <li>コードの違い: 展開のときに組み立てたもののハッシュを Worker の版の印(<code>wrangler deploy --tag</code>)に入れ、次の一覧で読み戻して比べる。この PC の記録には頼らないので、どの PC からでも同じ結果になる。シークレットは Cloudflare が値を返さないので、名前の増減だけを比べる</li>
+  <li>コードの違い: 展開のときに組み立てたもののハッシュを Worker の版の印(<code>wrangler deploy --tag</code>)に入れ、次の一覧で読み戻して比べる。この PC の記録には頼らないので、どの PC からでも同じ結果になる。シークレットは Cloudflare が値を返さないので、名前の増減だけを比べる。既にあって <code>--update-secret</code> が無いので入れないものは「あるので変えない」と示す(DES-023)。Codemagic の計画も同じ一覧に続けて示す(DES-022)</li>
 </ul>
 </article>
 </section>
