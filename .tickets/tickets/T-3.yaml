@@ -1,6 +1,6 @@
 id: T-3
 title: 要求仕様に Codemagic 対応(REQ-021)と --update-secret を入れる
-state: done
+state: closed
 priority: medium
 body: |-
   T-2 の報告書(版 5)の「決まったこと」と、未決だった D1〜D4・D6〜D8 を推奨どおりに(利用者が「作業が進まない」と言ったため、作り方の細部は推奨で進める)、要求仕様に書き込む。
@@ -37,10 +37,15 @@ log:
     name: claude-code
     session: ea7464d3-d354-4d15-a57d-288fbae69698
   text: 完了しました
+- at: 2026-10-30T23:52:52.335+09:00
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  text: クローズしました
 created_by:
   kind: agent
   name: claude-code
   session: ea7464d3-d354-4d15-a57d-288fbae69698
 created_at: 2026-10-30T21:23:28.138936+09:00
-updated_at: 2026-10-30T21:26:09.164954+09:00
-rev: 3
+updated_at: 2026-10-30T23:52:52.335001+09:00
+rev: 4

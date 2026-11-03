@@ -8,7 +8,9 @@ recorded_by:
   session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
 priority: medium
 split:
-  state: queued
+  state: stopped
   cost_usd: 0.0
-updated_at: 2026-11-03T15:31:28.388433+09:00
-rev: 1
+  steps:
+  - このマシンで頼んだものではない（git などで入ってきた）ので、自動では動かしません。動かすなら、やり直してください
+updated_at: 2026-11-03T23:59:32.530667+09:00
+rev: 2

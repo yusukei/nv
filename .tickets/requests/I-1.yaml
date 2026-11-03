@@ -15,6 +15,12 @@ recorded_by:
   name: unknown
   session: 62a44b73-c8a3-4b5f-a945-1b6586109a20
 priority: medium
+log:
+- at: 2026-10-30T23:52:54.585909+09:00
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  text: 依頼をクローズしました
 split:
   state: done
   session: dd313508-3c78-4540-8d19-5ead2041f86b
@@ -43,7 +49,7 @@ split:
   - .tm/requests/**/* を一覧しました
   - .tm/tickets/T-1.yaml を読みました
   - チケットに分け終えました
-updated_at: 2026-10-15T18:51:45.019705+09:00
+updated_at: 2026-10-30T23:52:54.585910+09:00
 results:
 - summary: |-
     できたこと: Worker の services.<名前> に placement（mode: smart）・observability（enabled・head_sampling_rate）・cache（enabled）を、wrangler.toml と同じ形で書けるようにしました。dry-run で「このキーは使えません」にはなりません。
@@ -69,6 +75,11 @@ comments:
   text: 利用者「既存のリソースは削除し、再デプロイ予定です。」— app-launcher の既存の資源は消して作り直すので、services.<名前>.name で既存の資源を引き継げるかの確認は要らない。拡張の対象は placement・observability・cache の 3 つ。
   drafted: true
   answered: true
+closed:
+  at: 2026-10-30T23:52:54.585909+09:00
+  by:
+    kind: user
+    name: Yusuke Ishikawa
 replies:
 - id: R-1
   at: 2026-10-15T18:31:58.529085+09:00
@@ -127,4 +138,4 @@ chat:
   - C-1 を受けました。返答を書きます
   - 返答を書いています
   - 返答しました
-rev: 36
+rev: 37

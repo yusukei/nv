@@ -1,6 +1,6 @@
 id: T-2
 title: wrangler-compose から Codemagic へアプリを登録できるかを調べ、報告書にまとめる
-state: done
+state: closed
 priority: medium
 body: |-
   依頼 I-2「wrangler-compose に Codemagic のサービスへアプリケーションの登録ができるように拡張したい。可能か調査したい」に答える調査。コードは変えない。
@@ -154,10 +154,15 @@ log:
     name: claude-code
     session: ea7464d3-d354-4d15-a57d-288fbae69698
   text: 成果物「Codemagic 対応の調査報告」を付け直しました（版 5）
+- at: 2026-10-30T23:52:52.317823+09:00
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  text: クローズしました
 created_by:
   kind: agent
   name: 起票エージェント
   session: 1afbb35d-d783-41fc-a590-7f01e9017c54
 created_at: 2026-10-30T17:32:44.931510+09:00
-updated_at: 2026-10-30T21:22:36.194719+09:00
-rev: 9
+updated_at: 2026-10-30T23:52:52.317824+09:00
+rev: 10

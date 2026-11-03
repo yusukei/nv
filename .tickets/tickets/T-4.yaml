@@ -1,6 +1,6 @@
 id: T-4
 title: Codemagic 対応(REQ-021・DES-022)と up --update-secret(DES-023)を実装する
-state: done
+state: closed
 priority: medium
 body: 要求仕様 REQ-021・REQ-005・REQ-010〜014・AC-005・AC-021 と、詳細仕様 DES-022・DES-023 のとおりに crates/wrangler-compose を実装する。試験は偽の Codemagic の API(tests/fake-codemagic.py・tests/codemagic-smoke.sh)と cargo test で、手元の PC で回す。本物の Codemagic・Cloudflare には触れない(受け入れの本物の確認は利用者の許可を得てから別に行う)。
 request: I-2
@@ -45,10 +45,15 @@ log:
     name: unknown
     session: 6715d70d-62fd-4ce3-acc9-5b9b6070934c
   text: 完了しました
+- at: 2026-10-30T23:52:52.351491+09:00
+  by:
+    kind: user
+    name: Yusuke Ishikawa
+  text: クローズしました
 created_by:
   kind: agent
   name: claude-code
   session: ea7464d3-d354-4d15-a57d-288fbae69698
 created_at: 2026-10-30T21:31:52.965352+09:00
-updated_at: 2026-10-30T21:57:00.778815+09:00
-rev: 4
+updated_at: 2026-10-30T23:52:52.351493+09:00
+rev: 5
