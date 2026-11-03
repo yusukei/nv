@@ -1,6 +1,6 @@
 id: T-7
 title: Worker の assets に Static Assets の振る舞いの設定を書けるようにする
-state: doing
+state: done
 priority: high
 body: assets は文字列(フォルダ)のほか、対応表 { directory, not_found_handling, html_handling, run_worker_first, binding } も受け付ける。値は Wrangler の assets 設定と同じ形で検証し、書いたものだけを手元とリモートの Worker の設定に出す。binding は Worker の env の名前空間に入る。リリースして手元の wrangler-compose を更新する。
 request: I-4
@@ -8,6 +8,21 @@ assignee:
   kind: agent
   name: claude-code
   session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+report:
+  changed: |-
+    assets に対応表の形(directory・not_found_handling・html_handling・run_worker_first・binding)を足し、値を確かめて手元とリモートの設定に出す(compose.rs・configs.rs)
+    リモートの版の印・展開の判定に assets の中身のハッシュを入れ(フォルダの外の静的ファイルの変更でも展開し直す)、plan で ASSETS のバインディングを比べる(remote.rs・build.rs)
+    tests/assets-smoke.sh・fixture-assets・偽の API の assets-upload-session を足し、仕様書(REQ-002・AC-002・DES-005・DES-015・DES-017・手元の対応表)・README・SKILL.md を直した
+    0.1.21 として配り、この PC を nv self update・nv install skill で更新した
+  verified: |-
+    cargo test 全件成功(新しい単体試験 5 件)。assets-smoke.sh: 手元で SPA の道に index.html・/api/* が Worker・env.ASSETS・文字列の形は従来どおり、偽の API で設定とバインディングの送信・2 回目は展開しない・外のファイルの変更で展開し直す。修正を外すと落ちることも確かめた
+    既存の local-smoke(ポートを 8797/8798 に替えた写し。8787/8788 は ShareDocs の up が使用中)・remote-smoke(macOS 用の script の代わりを使用)が通った
+    Release v0.1.21 公開、wrangler-compose --version は 0.1.21、配った版で assets-smoke.sh も通った
+  remaining: |-
+    本物の Cloudflare には展開していない(偽の API のみ)。html_handling・404-page は手元で動かしていない
+    assets の中身のハッシュを版の印に入れたので、assets のある既存の Worker は 0.1.21 で初めの up に一度だけ展開し直す
+    remote-smoke.sh・local-smoke.sh は macOS・日本語の設定でそのままは通らない(以前から)
+    本体の作業フォルダ(claude/local-dev)にも .tm→.tickets の未コミットの移動があり、pull の前に .tickets を片付ける必要がある
 log:
 - at: 2026-11-03T15:31:35.230068+09:00
   by:
@@ -15,10 +30,16 @@ log:
     name: claude-code
     session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
   text: 担当を取って始めました
+- at: 2026-11-03T15:47:01.363894+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+  text: 完了しました
 created_by:
   kind: agent
   name: claude-code
   session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
 created_at: 2026-11-03T15:31:31.891723+09:00
-updated_at: 2026-11-03T15:31:35.230069+09:00
-rev: 2
+updated_at: 2026-11-03T15:47:01.363895+09:00
+rev: 3
