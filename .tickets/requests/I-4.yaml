@@ -1,0 +1,14 @@
+id: I-4
+words: 'wrangler-compose の type: worker サービスの assets で、Cloudflare Workers Static Assets の振る舞いの設定(not_found_handling・html_handling・run_worker_first・binding)を指定できるようにする。今の文字列の形はそのまま使え、オブジェクトの形(directory と各設定)も受け付ける。キー名と値は Wrangler の assets 設定に合わせて検証し、手元とリモートの両方の生成設定に反映する。リリースまで行い、このマシンの wrangler-compose を新しい版に更新する(ShareDocs のセッションからの依頼。ShareDocs では SPA のクライアント側ルートが Worker に届くため index.html を取り込む回避策を入れている)。'
+said_at: 2026-11-03T15:31:28.388422+09:00
+via: conversation
+recorded_by:
+  kind: agent
+  name: claude-code
+  session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+priority: medium
+split:
+  state: queued
+  cost_usd: 0.0
+updated_at: 2026-11-03T15:31:28.388433+09:00
+rev: 1

@@ -1,0 +1,24 @@
+id: T-7
+title: Worker の assets に Static Assets の振る舞いの設定を書けるようにする
+state: doing
+priority: high
+body: assets は文字列(フォルダ)のほか、対応表 { directory, not_found_handling, html_handling, run_worker_first, binding } も受け付ける。値は Wrangler の assets 設定と同じ形で検証し、書いたものだけを手元とリモートの Worker の設定に出す。binding は Worker の env の名前空間に入る。リリースして手元の wrangler-compose を更新する。
+request: I-4
+assignee:
+  kind: agent
+  name: claude-code
+  session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+log:
+- at: 2026-11-03T15:31:35.230068+09:00
+  by:
+    kind: agent
+    name: claude-code
+    session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+  text: 担当を取って始めました
+created_by:
+  kind: agent
+  name: claude-code
+  session: c22f6d39-20c3-497b-96ce-87b363b6bfd7
+created_at: 2026-11-03T15:31:31.891723+09:00
+updated_at: 2026-11-03T15:31:35.230069+09:00
+rev: 2
