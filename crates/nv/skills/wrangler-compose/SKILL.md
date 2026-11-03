@@ -32,6 +32,10 @@ remote environment on Cloudflare (needs `nv run wrangler login` once).
   `--dry-run` to show what would be deleted; ask the user to run the real command.
 - Behaviour settings (bindings, vars, routes, crons) belong in `wrangler-compose.yaml`, not in a
   Worker folder's Wrangler config; that config may only hold build settings.
+- A Worker's static files: `assets: ./site`, or a mapping with `directory` and Wrangler's `assets` settings
+  (`not_found_handling: none | 404-page | single-page-application`, `html_handling`, `run_worker_first: true |
+  ["/api/*"]`, `binding: ASSETS` for `env.ASSETS.fetch()`). For a single-page application use
+  `not_found_handling: single-page-application` instead of serving `index.html` from the Worker's code.
 - A Worker's non-secret values go in its `environment` and its secrets in its `secrets`, both as in docker
   compose (`NAME: value` or a list). A secret's value must be `${VAR}`; values come from `.env.<env>`.
   Never print, commit or copy secret values.

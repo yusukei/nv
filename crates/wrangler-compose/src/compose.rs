@@ -205,12 +205,21 @@ pub struct Worker {
     pub crons: Vec<String>,
     pub compatibility_date: String,
     pub compatibility_flags: Vec<String>,
-    pub assets: Option<PathBuf>,
+    pub assets: Option<Assets>,
     /// `placement`, `observability` and `cache`, in Wrangler's shape, only
     /// when written: unwritten ones are left to Cloudflare's defaults.
     pub placement: Option<Value>,
     pub observability: Option<Value>,
     pub cache: Option<Value>,
+}
+
+/// `assets`: the folder of static files and, only when written, how
+/// Workers Static Assets serves them, in Wrangler's shape
+/// (`not_found_handling`, `html_handling`, `run_worker_first`, `binding`).
+#[derive(Debug, Clone)]
+pub struct Assets {
+    pub directory: PathBuf,
+    pub settings: Map<String, Value>,
 }
 
 /// A container on one of a Worker's Durable Object classes (REQ-020), with
@@ -983,6 +992,20 @@ const WORKER_KEYS: &[&str] = &[
     "placement",
     "observability",
     "cache",
+];
+const ASSETS_KEYS: &[&str] = &[
+    "directory",
+    "not_found_handling",
+    "html_handling",
+    "run_worker_first",
+    "binding",
+];
+const NOT_FOUND_HANDLING: &[&str] = &["none", "404-page", "single-page-application"];
+const HTML_HANDLING: &[&str] = &[
+    "auto-trailing-slash",
+    "force-trailing-slash",
+    "drop-trailing-slash",
+    "none",
 ];
 const CONTAINER_KEYS: &[&str] = &[
     "class",
@@ -1901,8 +1924,15 @@ impl Checker {
                 ),
             ),
         }
-        // One name space in the Worker's env: bindings, environment and
-        // secrets.
+        w.assets = self.assets(&format!("{at}.assets"), o.get("assets"), root);
+        // One name space in the Worker's env: bindings, environment, secrets
+        // and the assets binding.
+        let assets_binding = w
+            .assets
+            .as_ref()
+            .and_then(|a| a.settings.get("binding"))
+            .and_then(Value::as_str)
+            .map(|b| (b.to_string(), "assets.binding"));
         let mut names: BTreeMap<String, &str> = BTreeMap::new();
         for (name, what) in w
             .bindings
@@ -1910,10 +1940,16 @@ impl Checker {
             .map(|(b, _)| (b.clone(), "bindings"))
             .chain(w.vars.keys().map(|k| (k.clone(), "environment")))
             .chain(w.secrets.keys().map(|k| (k.clone(), "secrets")))
+            .chain(assets_binding)
         {
-            if what != "bindings" && !valid_binding(&name) {
+            let here = if what == "assets.binding" {
+                format!("{at}.{what}")
+            } else {
+                format!("{at}.{what}.{name}")
+            };
+            if what != "bindings" && what != "assets.binding" && !valid_binding(&name) {
                 self.err(
-                    &format!("{at}.{what}.{name}"),
+                    &here,
                     crate::tr!(
                         "名前「{name}」は英字・数字・_ だけにしてください(英字か _ で始める)",
                         "name \"{name}\" may only use letters, digits and _ (starting with a letter or _)"
@@ -1922,7 +1958,7 @@ impl Checker {
             }
             if name.starts_with("__WC_") {
                 self.err(
-                    &format!("{at}.{what}.{name}"),
+                    &here,
                     crate::tr!(
                         "__WC_ で始まる名前は道具が使います",
                         "names starting with __WC_ belong to the tool"
@@ -1931,7 +1967,7 @@ impl Checker {
             }
             if let Some(first) = names.insert(name.clone(), what) {
                 self.err(
-                    &format!("{at}.{what}.{name}"),
+                    &here,
                     crate::tr!(
                         "「{name}」は {first} にもあります。コードからは env.{name} 1 つしか見えないので、名前を分けてください",
                         "\"{name}\" is also in {first}; the code sees only one env.{name}, so use different names"
@@ -1953,21 +1989,6 @@ impl Checker {
             &format!("{at}.compatibility_flags"),
             o.get("compatibility_flags"),
         );
-        w.assets = self
-            .opt_string(&format!("{at}.assets"), o.get("assets"))
-            .map(|p| root.join(p));
-        if let Some(dir) = &w.assets
-            && !dir.is_dir()
-        {
-            self.err(
-                &format!("{at}.assets"),
-                crate::tr!(
-                    "フォルダ {} がありません",
-                    "folder {} does not exist",
-                    dir.display()
-                ),
-            );
-        }
         w.placement = self.settings(&format!("{at}.placement"), o.get("placement"), &["mode"]);
         if let Some(Value::Object(p)) = o.get("placement")
             && !p.contains_key("mode")
@@ -2043,6 +2064,137 @@ impl Checker {
             }
         }
         Some(Value::Object(out))
+    }
+
+    /// `assets` (REQ-002): a folder, or a mapping of `directory` and
+    /// Wrangler's Static Assets settings, each checked and kept only when
+    /// written (`${VAR}` text turned into its true/false).
+    fn assets(&mut self, at: &str, v: Option<&Value>, root: &Path) -> Option<Assets> {
+        let (dir, o) = match v? {
+            Value::String(s) => (Some(s.clone()), None),
+            Value::Object(o) => {
+                self.unknown_keys(at, o, ASSETS_KEYS);
+                let here = format!("{at}.directory");
+                let dir = self.opt_string(&here, o.get("directory"));
+                if o.get("directory").is_none() {
+                    self.err(
+                        &here,
+                        crate::tr!(
+                            "静的なファイルのフォルダを書いてください",
+                            "name the folder of static files"
+                        ),
+                    );
+                }
+                (dir, Some(o))
+            }
+            _ => {
+                self.err(
+                    at,
+                    crate::tr!(
+                        "フォルダの文字列か、directory などの対応表にしてください",
+                        "must be a folder or a mapping with directory"
+                    ),
+                );
+                return None;
+            }
+        };
+        let directory = root.join(dir?);
+        if !directory.is_dir() {
+            let here = match o {
+                Some(_) => format!("{at}.directory"),
+                None => at.to_string(),
+            };
+            self.err(
+                &here,
+                crate::tr!(
+                    "フォルダ {} がありません",
+                    "folder {} does not exist",
+                    directory.display()
+                ),
+            );
+        }
+        let mut settings = Map::new();
+        for (k, x) in o.into_iter().flatten() {
+            let here = format!("{at}.{k}");
+            let one_of = |x: &Value, allowed: &[&str]| {
+                x.as_str()
+                    .filter(|s| allowed.contains(s))
+                    .map(|s| Value::String(s.to_string()))
+            };
+            let checked = match k.as_str() {
+                "not_found_handling" | "html_handling" => {
+                    let allowed = if k == "html_handling" {
+                        HTML_HANDLING
+                    } else {
+                        NOT_FOUND_HANDLING
+                    };
+                    let got = one_of(x, allowed);
+                    if got.is_none() {
+                        let list = allowed.join(" / ");
+                        self.err(
+                            &here,
+                            crate::tr!(
+                                "{list} のどれかにしてください",
+                                "must be one of {list}"
+                            ),
+                        );
+                    }
+                    got
+                }
+                // true/false, or the paths that go to the Worker first
+                // (`/api/*`, and `!/api/docs` to leave one out).
+                "run_worker_first" => match x {
+                    Value::Bool(b) => Some(Value::Bool(*b)),
+                    Value::String(t) if t == "true" || t == "false" => {
+                        Some(Value::Bool(t == "true"))
+                    }
+                    Value::Array(_) => {
+                        let before = self.errors.len();
+                        let rules = self.strings(&here, Some(x));
+                        for r in rules
+                            .iter()
+                            .filter(|r| !(r.starts_with('/') || r.starts_with("!/")))
+                        {
+                            self.err(
+                                &here,
+                                crate::tr!(
+                                    "「{r}」は / か !/ で始めてください",
+                                    "\"{r}\" must start with / or !/"
+                                ),
+                            );
+                        }
+                        (self.errors.len() == before).then(|| serde_json::json!(rules))
+                    }
+                    _ => {
+                        self.err(
+                            &here,
+                            crate::tr!(
+                                "true か false か、パスの一覧([\"/api/*\"])にしてください",
+                                "must be true, false or a list of paths ([\"/api/*\"])"
+                            ),
+                        );
+                        None
+                    }
+                },
+                "binding" => {
+                    let b = self.opt_string(&here, Some(x));
+                    if let Some(b) = &b
+                        && !valid_binding(b)
+                    {
+                        self.err(&here, crate::tr!("名前は英字・数字・_ だけにしてください(コードから env.<名前> で見えます)", "names may only use letters, digits and _ (seen as env.<name>)"));
+                    }
+                    b.filter(|b| valid_binding(b)).map(Value::String)
+                }
+                _ => None,
+            };
+            if let Some(c) = checked {
+                settings.insert(k.clone(), c);
+            }
+        }
+        Some(Assets {
+            directory,
+            settings,
+        })
     }
 
     /// `containers` of a Worker (REQ-020): each on a Durable Object class the
@@ -3544,5 +3696,79 @@ services:
         );
         let err = project(&tool, env).1.unwrap_err().to_string();
         assert!(err.contains("services.mobile.groups.store.environment.STORE_DOMAIN"), "{err}");
+    }
+
+    #[test]
+    fn assets_is_a_folder_or_a_mapping_of_its_settings() {
+        // A folder alone, as before.
+        let (d, c) = project(&format!("{ONE_WORKER}    assets: ./web\n"), None);
+        let a = web(&c.unwrap()).assets.clone().unwrap();
+        assert_eq!(a.directory, d.0.join("./web"));
+        assert!(a.settings.is_empty());
+        let yaml = format!(
+            "{ONE_WORKER}    assets:\n      directory: ./web\n      not_found_handling: single-page-application\n      html_handling: auto-trailing-slash\n      run_worker_first: [\"/api/*\", \"!/api/docs\"]\n      binding: ASSETS\n"
+        );
+        let (d, c) = project(&yaml, None);
+        let a = web(&c.unwrap()).assets.clone().unwrap();
+        assert_eq!(a.directory, d.0.join("./web"));
+        assert_eq!(
+            Value::Object(a.settings),
+            serde_json::json!({
+                "not_found_handling": "single-page-application",
+                "html_handling": "auto-trailing-slash",
+                "run_worker_first": ["/api/*", "!/api/docs"],
+                "binding": "ASSETS",
+            })
+        );
+        // true/false also as the text ${VAR} leaves.
+        let yaml = format!(
+            "{ONE_WORKER}    assets: {{ directory: ./web, run_worker_first: \"true\" }}\n"
+        );
+        let a = web(&project(&yaml, None).1.unwrap()).assets.clone().unwrap();
+        assert_eq!(a.settings["run_worker_first"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn assets_mistakes_say_where() {
+        for (extra, want) in [
+            ("    assets: [./web]\n", "web.assets:"),
+            ("    assets: ./nowhere\n", "web.assets:"),
+            ("    assets: { not_found_handling: none }\n", "web.assets.directory"),
+            ("    assets: { directory: ./nowhere }\n", "web.assets.directory"),
+            (
+                "    assets: { directory: ./web, not_found_handling: spa }\n",
+                "web.assets.not_found_handling",
+            ),
+            (
+                "    assets: { directory: ./web, html_handling: auto }\n",
+                "web.assets.html_handling",
+            ),
+            (
+                "    assets: { directory: ./web, run_worker_first: sometimes }\n",
+                "web.assets.run_worker_first",
+            ),
+            (
+                "    assets: { directory: ./web, run_worker_first: [api/*] }\n",
+                "web.assets.run_worker_first",
+            ),
+            (
+                "    assets: { directory: ./web, binding: my-assets }\n",
+                "web.assets.binding",
+            ),
+            (
+                "    assets: { directory: ./web, binding: KEY }\n    environment: { KEY: x }\n",
+                "web.assets.binding",
+            ),
+            (
+                "    assets: { directory: ./web, serve: all }\n",
+                "web.assets.serve",
+            ),
+        ] {
+            let err = project(&format!("{ONE_WORKER}{extra}"), None)
+                .1
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+        }
     }
 }

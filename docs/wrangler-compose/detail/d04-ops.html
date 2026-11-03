@@ -60,7 +60,7 @@
   <li>どの操作も「確かめ → することの一覧を作る → 変える」の 3 段にし、<code>--dry-run</code> は 2 段目で一覧を示して終わる(止まる条件を本番と別に書かない)</li>
   <li>消すものを含む一覧は、変える前に環境名の打ち直しで確かめる(端末でなければ止まる)</li>
   <li>リモートの <code>up</code> の一覧は terraform plan の形にする: 2 段目で Cloudflare にいまある値を読み(資源の一覧・バケットの設定・Worker の設定(bindings・environment・互換日付)・スケジュール(crons)・経路(routes)・シークレットの名前・版の印・D1 の移行の履歴)、compose ファイルから作る値と比べて、<code>+</code> 作る・<code>~</code> 変える(項目ごとに前と後)・<code>-</code> 消す・<code>=</code> 変わらない、と数を示す。<code>--dry-run</code> はここで終わる。<code>up</code> は確かめを求めずに 3 段目に進む(初めての環境と消すものがあるときの打ち直しは今までどおり)</li>
-  <li>コードの違い: 展開のときに組み立てたもののハッシュを Worker の版の印(<code>wrangler deploy --tag</code>)に入れ、次の一覧で読み戻して比べる。この PC の記録には頼らないので、どの PC からでも同じ結果になる。シークレットは Cloudflare が値を返さないので、名前の増減だけを比べる。既にあって <code>--update-secret</code> が無いので入れないものは「あるので変えない」と示す(DES-023)。Codemagic の計画も同じ一覧に続けて示す(DES-022)</li>
+  <li>コードの違い: 展開のときに組み立てたもののハッシュを Worker の版の印(<code>wrangler deploy --tag</code>)に入れ、次の一覧で読み戻して比べる。この PC の記録には頼らないので、どの PC からでも同じ結果になる。静的なファイル(<code>assets</code>)は、フォルダの場所ではなく中身のハッシュ(フォルダの中の相対の道と各ファイルの中身)で入れる。Worker のフォルダの外にあるファイルだけが変わっても展開し直し、PC ごとに場所が違っても同じ印になる。<code>assets</code> の <code>binding</code> は、Worker の設定のバインディング(型 <code>assets</code>)として比べる。シークレットは Cloudflare が値を返さないので、名前の増減だけを比べる。既にあって <code>--update-secret</code> が無いので入れないものは「あるので変えない」と示す(DES-023)。Codemagic の計画も同じ一覧に続けて示す(DES-022)</li>
 </ul>
 </article>
 </section>

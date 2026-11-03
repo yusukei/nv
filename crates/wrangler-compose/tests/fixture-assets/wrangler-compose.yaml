@@ -1,0 +1,22 @@
+name: pages
+services:
+  # A single-page application: paths with no file get index.html, /api/*
+  # goes to the Worker first, and the Worker reads files through ASSETS.
+  app:
+    type: worker
+    build: ./app
+    compatibility_date: "2026-09-01"
+    ports: ["8795:8795"]
+    assets:
+      directory: ./site
+      not_found_handling: single-page-application
+      html_handling: auto-trailing-slash
+      run_worker_first: ["/api/*"]
+      binding: ASSETS
+  # The folder alone: paths with no file go to the Worker, as before.
+  plain:
+    type: worker
+    build: ./plain
+    compatibility_date: "2026-09-01"
+    ports: ["8796:8796"]
+    assets: ./site

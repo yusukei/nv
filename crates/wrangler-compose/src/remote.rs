@@ -1734,6 +1734,13 @@ fn normalize(v: &Value) -> Value {
 /// Dockerfile is on this PC (REQ-020).
 fn portable(cfg: &Value, hashes: &[(String, String)]) -> Value {
     let mut c = cfg.clone();
+    // Static assets by what the folder holds, not where it is.
+    if let Some(a) = c.get_mut("assets").and_then(Value::as_object_mut)
+        && let Some(dir) = a.get("directory").and_then(Value::as_str)
+    {
+        let h = crate::build::folder_hash(Path::new(dir)).unwrap_or_default();
+        a.insert("directory".into(), json!(format!("content:{h}")));
+    }
     if let Some(list) = c.get_mut("containers").and_then(Value::as_array_mut) {
         for k in list {
             let Some(o) = k.as_object_mut() else { continue };
@@ -1850,6 +1857,9 @@ fn wanted_shape(cfg: &Value, secrets: &BTreeMap<String, String>) -> Shape {
     add(&cfg["queues"]["producers"], "binding", "queue");
     add(&cfg["services"], "binding", "service");
     add(&cfg["durable_objects"]["bindings"], "name", "durable_object_namespace");
+    if let Some(name) = cfg["assets"]["binding"].as_str() {
+        sh.bindings.insert(name.to_string(), "assets".to_string());
+    }
     sh
 }
 
@@ -2978,6 +2988,46 @@ mod tests {
             code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h),
             code_tag(&built, &cfg("/home/a/box/Dockerfile"), &h2)
         );
+    }
+
+    #[test]
+    fn the_version_tag_follows_what_the_assets_folder_holds_not_where_it_is() {
+        let built = Built {
+            dir: "/b".into(),
+            entry: "index.js".into(),
+            hash: "h".into(),
+        };
+        let top = std::env::temp_dir().join(format!("wc-assets-tag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&top);
+        for d in ["a/sub", "b/sub"] {
+            std::fs::create_dir_all(top.join(d)).unwrap();
+        }
+        for d in ["a", "b"] {
+            std::fs::write(top.join(d).join("index.html"), "<p>one</p>").unwrap();
+            std::fs::write(top.join(d).join("sub/app.js"), "x()").unwrap();
+        }
+        let cfg = |d: &str| {
+            json!({ "name": "w", "assets": {
+                "directory": top.join(d), "not_found_handling": "single-page-application" } })
+        };
+        let tag = |d: &str| code_tag(&built, &cfg(d), &[]);
+        assert_eq!(tag("a"), tag("b"));
+        std::fs::write(top.join("b/sub/app.js"), "y()").unwrap();
+        assert_ne!(tag("a"), tag("b"));
+        // The settings count too.
+        let mut spa_off = cfg("a");
+        spa_off["assets"]["not_found_handling"] = json!("none");
+        assert_ne!(tag("a"), code_tag(&built, &spa_off, &[]));
+        let _ = std::fs::remove_dir_all(&top);
+    }
+
+    #[test]
+    fn the_assets_binding_is_one_of_the_workers_bindings() {
+        let cfg = json!({ "assets": { "directory": "/x", "binding": "ASSETS" } });
+        let sh = wanted_shape(&cfg, &BTreeMap::new());
+        assert_eq!(sh.bindings.get("ASSETS").map(String::as_str), Some("assets"));
+        let cfg = json!({ "assets": { "directory": "/x" } });
+        assert!(wanted_shape(&cfg, &BTreeMap::new()).bindings.is_empty());
     }
 
     #[test]

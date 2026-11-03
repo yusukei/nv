@@ -191,6 +191,27 @@ fn replace_files(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What a folder of static assets holds (every file, by its path in the
+/// folder and its bytes), the same from every PC: the deploy check uses it
+/// instead of the folder's place, so changed assets deploy again.
+pub fn folder_hash(dir: &Path) -> Result<String> {
+    let mut files = Vec::new();
+    walk_all(dir, dir, &mut files)?;
+    let mut files: Vec<(String, PathBuf)> = files
+        .into_iter()
+        .map(|r| (r.to_string_lossy().replace('\\', "/"), r))
+        .collect();
+    files.sort();
+    let mut h = Sha256::new();
+    for (name, r) in files {
+        h.update(name.as_bytes());
+        h.update([0]);
+        h.update(std::fs::read(dir.join(r))?);
+        h.update([0]);
+    }
+    Ok(crate::files::hex(&h.finalize()))
+}
+
 fn walk_all(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;

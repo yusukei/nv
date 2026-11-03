@@ -24,7 +24,7 @@
 <table>
   <tr><th style="width:30%">種類</th><th>手元で起きること</th><th style="width:14%">根拠</th></tr>
   <tr><td>Durable Objects</td><td>手元で動き、データは手元の置き場。本物の Durable Objects を使いたければ、それを持つ Worker をデプロイし、手元からサービスバインディング(<code>remote: true</code>)で呼ぶ</td><td>実装・資料</td></tr>
-            <tr><td>静的なファイル(<code>assets</code>)</td><td>手元のディスクから配る</td><td>実装・資料</td></tr>
+            <tr><td>静的なファイル(<code>assets</code>)</td><td>手元のディスクから配る。<code>not_found_handling</code>・<code>html_handling</code>・<code>run_worker_first</code>・<code>binding</code> も手元で効く(<code>single-page-application</code>・<code>run_worker_first</code>・<code>binding</code> は <code>tests/assets-smoke.sh</code> で確かめた)</td><td>実装・資料</td></tr>
     <tr><td>変数(<code>vars</code>)・シークレット</td><td><code>.env.local</code>・<code>.dev.vars</code>・設定の <code>vars</code> の値。Cloudflare に入れたシークレットは手元に来ない</td><td>実装・資料・実測</td></tr>
   </table>
 

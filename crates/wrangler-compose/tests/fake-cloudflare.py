@@ -198,6 +198,11 @@ def route(method, path, raw, headers):
         m2 = re.fullmatch(r"/secrets/([^/]+)", rest)
         if m2 and method == "DELETE":
             sc["secrets"].pop(m2.group(1), None); return ok(None)
+        # Static Assets: as on Cloudflare when it has every file already, no
+        # buckets to send, and the session's jwt completes the upload.
+        if rest == "/assets-upload-session" and method == "POST":
+            sys.stderr.write("  ASSETS " + json.dumps(sorted((j or {}).get("manifest", {})))[:800] + "\n")
+            return ok({"jwt": "assets-done", "buckets": []})
         if rest == "/subdomain":
             return ok({"enabled": True, "previews_enabled": False})
         if rest == "/settings":

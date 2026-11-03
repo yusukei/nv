@@ -3,7 +3,7 @@
 //! service name (REQ-006).
 
 use crate::build::Built;
-use crate::compose::{Compose, Kind, Resource, Target, Worker};
+use crate::compose::{Assets, Compose, Kind, Resource, Target, Worker};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -48,6 +48,15 @@ fn settings(cfg: &mut Map<String, Value>, w: &Worker) {
             cfg.insert(key.into(), v.clone());
         }
     }
+}
+
+/// `assets`: the folder, and the Static Assets settings only when written
+/// (the rest are Cloudflare's defaults).
+fn assets(a: &Assets) -> Value {
+    let mut out = Map::new();
+    out.insert("directory".into(), json!(a.directory));
+    out.extend(a.settings.clone());
+    Value::Object(out)
 }
 
 /// The local config of one user Worker, running its built bundle.
@@ -145,8 +154,8 @@ pub fn local_worker(c: &Compose, svc: &str, w: &Worker, built: &Built) -> Value 
     if let Some(e) = crate::remote::do_exports(&w.durable_objects, None) {
         cfg.insert("exports".into(), e);
     }
-    if let Some(dir) = &w.assets {
-        cfg.insert("assets".into(), json!({ "directory": dir }));
+    if let Some(a) = &w.assets {
+        cfg.insert("assets".into(), assets(a));
     }
     if !w.crons.is_empty() {
         cfg.insert("triggers".into(), json!({ "crons": w.crons }));
@@ -316,8 +325,8 @@ pub fn remote_worker(
     if let Some(e) = exports {
         cfg.insert("exports".into(), e);
     }
-    if let Some(dir) = &w.assets {
-        cfg.insert("assets".into(), json!({ "directory": dir }));
+    if let Some(a) = &w.assets {
+        cfg.insert("assets".into(), assets(a));
     }
     // An empty list clears crons set by an earlier deploy.
     cfg.insert("triggers".into(), json!({ "crons": w.crons }));
@@ -1052,6 +1061,49 @@ services:
             for key in ["placement", "observability", "cache"] {
                 assert!(cfg.get(key).is_none(), "{key}");
             }
+        }
+    }
+
+    #[test]
+    fn assets_settings_reach_both_configs_only_when_written() {
+        let (_d, mut c) = project("assets");
+        let mut settings = Map::new();
+        settings.insert("not_found_handling".into(), json!("single-page-application"));
+        settings.insert("binding".into(), json!("ASSETS"));
+        settings.insert("run_worker_first".into(), json!(["/api/*"]));
+        for s in &mut c.services {
+            if let Kind::Worker(w) = &mut s.kind {
+                w.assets = Some(Assets {
+                    directory: PathBuf::from("/site"),
+                    settings: if s.name == "api" {
+                        settings.clone()
+                    } else {
+                        Map::new()
+                    },
+                });
+            }
+        }
+        let ids = Ids::default();
+        for cfg in [
+            local_worker(&c, "api", worker(&c, "api"), &built()),
+            remote_worker("api", worker(&c, "api"), &built(), &ids, "acc", None),
+        ] {
+            assert_eq!(
+                cfg["assets"],
+                json!({
+                    "directory": "/site",
+                    "not_found_handling": "single-page-application",
+                    "binding": "ASSETS",
+                    "run_worker_first": ["/api/*"],
+                })
+            );
+        }
+        // The folder alone, as before: the rest is Cloudflare's defaults.
+        for cfg in [
+            local_worker(&c, "web", worker(&c, "web"), &built()),
+            remote_worker("web", worker(&c, "web"), &built(), &ids, "acc", None),
+        ] {
+            assert_eq!(cfg["assets"], json!({ "directory": "/site" }));
         }
     }
 }

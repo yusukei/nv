@@ -26,6 +26,7 @@
   <li>D1・R2・KV・Queue のそれぞれで、1 つのサービスが資源 1 つになる。<code>buckets</code> などの複数形を書くと、サービスを分けるよう出て止まる。<code>name</code> が同じプロジェクトの別のサービスと重なると止まる</li>
   <li>R2 のバケットの <code>public</code>・<code>cors</code>・<code>lifecycle</code>・<code>notifications</code>・<code>lock</code>・<code>storage_class</code>・<code>jurisdiction</code> が、リモートのバケットの設定に入っている。手元では <code>public</code>・<code>cors</code>・<code>notifications</code> が同じに効き(AC-009 の同じ試験で確かめる)、ほかは効かないことを <code>up</code> が知らせる</li>
   <li><code>environment</code>・<code>routes</code>・<code>crons</code>・<code>assets</code>・<code>compatibility_date</code>・<code>compatibility_flags</code> が、リモートに展開した Worker に効いている</li>
+  <li><code>assets</code> を対応表で書いたときの <code>not_found_handling</code>・<code>html_handling</code>・<code>run_worker_first</code>・<code>binding</code> が、手元とリモートの Worker に効いている(<code>single-page-application</code> ならファイルの無い道に <code>index.html</code> が返る)。文字列で書いた <code>assets</code> は今までどおりフォルダだけになる。値が違えば場所を示して止まる</li>
   <li><code>compatibility_date</code> の無い Worker のサービスは、何もせずに止まる(場所を示す)</li>
 </ul>
 </article>
